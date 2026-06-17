@@ -1,0 +1,7 @@
+The chart illustrates the distribution of leisure time in hours per week across different employment statuses for men and women during the years 1998-1999. 
+
+Overall, it is evident that unemployed individuals enjoyed the most leisure time, while those in full-time employment had the least. Additionally, there is a notable disparity in leisure time between genders, particularly among full-time workers and housewives.
+
+In terms of full-time employment, men averaged 45.3 hours of leisure time, significantly more than women, who had only 38.5 hours. Conversely, part-time employment revealed a stark gender contrast, with men having a mere 0.1 hours of leisure, while women enjoyed 40.1 hours. Unemployed men had the highest leisure time at 84.6 hours, compared to 78.6 hours for unemployed women, indicating that unemployment affords substantial free time for both genders. 
+
+Furthermore, housewives had a minimal amount of leisure time, with men reporting only 0.2 hours, in stark contrast to women who had 50.1 hours. This data suggests that traditional gender roles may have influenced the distribution of leisure time, particularly within the context of household responsibilities.

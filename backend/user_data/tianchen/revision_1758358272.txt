@@ -1,0 +1,7 @@
+The chart illustrates the distribution of telephone calls in Australia across three categories—local fixed line calls, national and international fixed line calls, and mobile calls—over the period from 2001 to 2008.
+
+Overall, the data reveals a significant decline in local fixed line calls, while both national and international fixed line calls and mobile calls exhibited an upward trend. This shift indicates a changing preference in communication methods among Australians during the specified years.
+
+In 2001, local fixed line calls started at 73 billion minutes, peaking at 90 billion minutes in 2005 before experiencing a steady decline to 73 billion minutes by 2008. In contrast, national and international fixed line calls rose consistently from 38 billion minutes in 2001 to 58 billion minutes in 2008, reflecting an increase in long-distance communication. Mobile calls saw a remarkable increase, starting from a mere 3 billion minutes in 2001 and rising sharply to 48 billion minutes by the end of the period, with a notable surge occurring between 2006 and 2008.
+
+The data clearly indicates a transition in communication preferences in Australia, with a marked decline in local fixed line usage and a corresponding rise in mobile communication and long-distance calls.
