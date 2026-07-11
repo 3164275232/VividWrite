@@ -1,10 +1,21 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import os
 import json
+import sys
 from typing import Optional, Tuple
+
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8", errors="replace")
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(BASE_DIR, ".matplotlib"))
+os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+
 from next_sentence import (
     NextSentenceRequest,
     NextSentenceResponse,
@@ -31,6 +42,7 @@ app.include_router(revision_review_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -103,7 +115,7 @@ def analyze_chart(request: ChartAnalysisRequest):
             raise HTTPException(status_code=400, detail="Unsupported chart type")
         
         # 生成图表
-        result = generator.call_gpt_and_generate(
+        result = generator.call_ai_and_generate(
             initial_instruction="Analyze the student's answer and generate visual feedback",
             requirement=request.requirement,
             student_answer=request.student_answer,
@@ -222,8 +234,8 @@ async def deplot_extract(image: UploadFile = File(...)):
     # Persist uploaded file
         with open(image_path, "wb") as f:
             f.write(await image.read())
-    # Invoke DePlot
-        raw_text = extract_table_from_image_deplot(image_path) or ""
+    # Invoke DePlot in a worker thread so first-time model loading does not block the API server.
+        raw_text = await run_in_threadpool(extract_table_from_image_deplot, image_path) or ""
     # Normalize newlines -> <0x0A> (keep consistent with frontend hard-coded examples)
         normalized = raw_text.replace('\r\n', '\n').replace('\r', '\n').replace('\n', '<0x0A>')
         return {
@@ -278,7 +290,7 @@ async def analyze_chart_with_image(
         # 生成图表
         # choose available textual data (prefer new name)
         _txt = deplot_text if (deplot_text and deplot_text.strip()) else (deplot_data or "")
-        result = generator.call_gpt_and_generate(
+        result = generator.call_ai_and_generate(
             initial_instruction="Analyze the student's answer and generate visual feedback",
             requirement=requirement,
             student_answer=student_answer,

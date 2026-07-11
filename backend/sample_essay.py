@@ -2,17 +2,16 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 import os
 from typing import Optional, Dict, Any
-from openai import OpenAI
 from next_sentence import summarize_flowchart
+from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_model
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 router = APIRouter()
 
 class SampleEssayRequest(BaseModel):
     deplot_text: str
     flowchart: dict | None = None  # {nodes:[], edges:[]}
     requirement: Optional[str] = None
-    model: Optional[str] = "gpt-4o-mini"
+    model: Optional[str] = None
     temperature: Optional[float] = 0.6
     min_words: Optional[int] = 150
     use_standard_structure: Optional[bool] = None  # True: use standard structure, False: use flowchart as-is, None: prompt user
@@ -25,11 +24,24 @@ class SampleEssayResponse(BaseModel):
     requires_choice: Optional[bool] = None  # True when user needs to make a structure choice
     choice_info: Optional[Dict[str, Any]] = None  # Information for the choice dialog
 
+def _generate_essay_text(client, model: str, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+    chat = client.chat.completions.create(
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+    return chat.choices[0].message.content.strip() if chat.choices else ""
+
+
 @router.post("/api/generate-sample-essay", response_model=SampleEssayResponse)
 def generate_sample_essay(req: SampleEssayRequest):
     """Generate a full IELTS Task 1 sample essay (>=150 words) based on DePlot data + flowchart."""
-    if not OPENAI_API_KEY:
-        return SampleEssayResponse(success=False, error="OPENAI_API_KEY not configured")
+    if not get_deepseek_api_key():
+        return SampleEssayResponse(success=False, error="DEEPSEEK_API_KEY not configured")
     if not req.deplot_text or not req.deplot_text.strip():
         return SampleEssayResponse(success=False, error="deplot_text required")
     
@@ -81,11 +93,11 @@ def generate_sample_essay(req: SampleEssayRequest):
         # Structure confirmation message
         structure_status = []
         if has_background:
-            structure_status.append("✓ Background")
+            structure_status.append("OK Background")
         if has_presentation:
-            structure_status.append("✓ Presentation of Visuals")
+            structure_status.append("OK Presentation of Visuals")
         if has_comment:
-            structure_status.append("✓ Comment on Result")
+            structure_status.append("OK Comment on Result")
         
         print(f"Flowchart structure confirmed: {' | '.join(structure_status)}")
     else:
@@ -161,7 +173,7 @@ def generate_sample_essay(req: SampleEssayRequest):
         print(f"  - Presentation: {has_presentation}")
         print(f"  - Comment: {has_comment}")
         print(f"  - Presentation sub-options: {presentation_subtypes}")
-        print(f"  - Structure: {' → '.join(structure_parts)}")
+        print(f"  - Structure: {' -> '.join(structure_parts)}")
     
     if req.use_standard_structure:
         system_prompt = (
@@ -230,31 +242,24 @@ def generate_sample_essay(req: SampleEssayRequest):
             
             user_prompt += sub_options_restrictions
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = get_deepseek_client()
+    model = get_deepseek_model(req.model)
     try:
-        chat = client.chat.completions.create(
-            model=req.model or "gpt-4o-mini",
+        essay = _generate_essay_text(
+            client=client,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             temperature=req.temperature if req.temperature is not None else 0.6,
             max_tokens=800,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
         )
-        essay = chat.choices[0].message.content.strip() if chat.choices else ""
-    except AttributeError:
-        composite = f"[SYSTEM]\n{system_prompt}\n\n[USER]\n{user_prompt}\n\n[ASSISTANT]\n"
-        resp = client.responses.create(
-            model=req.model or "gpt-4o-mini",
-            temperature=req.temperature if req.temperature is not None else 0.6,
-            max_output_tokens=800,
-            input=composite,
+    except Exception as e:
+        print(f"DeepSeek sample essay generation failed with model {model}: {e}")
+        return SampleEssayResponse(
+            success=False,
+            error=f"DeepSeek sample essay generation failed with model {model}: {e}",
+            debug={"model": model, "error_type": e.__class__.__name__},
         )
-        parts = []
-        for out in getattr(resp, 'output', []) or []:
-            if getattr(out, 'type', None) == 'output_text':
-                parts.append(getattr(out, 'text', ''))
-        essay = ''.join(parts).strip()
 
     word_count = len(essay.split())
     if word_count < (req.min_words or 150):
@@ -264,7 +269,7 @@ def generate_sample_essay(req: SampleEssayRequest):
         success=True,
         essay=essay,
         debug={
-            "model": req.model or "gpt-4o-mini",
+            "model": model,
             "words": word_count,
             "flowchart_used": bool(flow_summary),
             "has_background": has_background,

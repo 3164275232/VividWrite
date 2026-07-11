@@ -8,16 +8,15 @@ Design goals:
 - Graceful fallback if LLM JSON invalid (simple heuristic keyword overlap)
 - Provide sentence character offsets for frontend highlighting
 
-Environment: requires OPENAI_API_KEY (.env supported)
+Environment: requires DEEPSEEK_API_KEY in environment (.env supported).
 """
 from __future__ import annotations
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import re
 import json
-import os
 from dotenv import load_dotenv
-from openai import OpenAI
+from deepseek_config import get_deepseek_client, get_deepseek_model
 
 load_dotenv()
 
@@ -25,7 +24,7 @@ load_dotenv()
 class SentenceMappingRequest(BaseModel):
     current_text: str
     flowchart: Optional[dict] = None  # expects {nodes:[], edges:[]}
-    model: Optional[str] = "gpt-4o-mini"
+    model: Optional[str] = None
     temperature: Optional[float] = 0.0  # deterministic for mapping
     max_tokens: Optional[int] = 600
 
@@ -233,32 +232,14 @@ def _build_messages(sentences: List[SentenceInfo], nodes: List[NodeInfo]) -> Lis
 # ------------------ LLM Call ------------------
 
 def _call_chat(messages: List[Dict[str, str]], model: str, temperature: float, max_tokens: int) -> str:
-    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-    try:
-        chat = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-        return chat.choices[0].message.content if chat.choices else ""
-    except AttributeError:
-        # fallback to responses
-        composite = []
-        for m in messages:
-            composite.append(f"[{m['role'].upper()}]\n{m['content'].strip()}\n")
-        prompt = "\n".join(composite) + "\n[ASSISTANT]\n"
-        resp = client.responses.create(
-            model=model,
-            input=prompt,
-            max_output_tokens=max_tokens,
-            temperature=temperature,
-        )
-        parts = []
-        for out in resp.output:  # type: ignore
-            if out.type == 'output_text':  # type: ignore
-                parts.append(out.text)  # type: ignore
-        return "".join(parts).strip()
+    client = get_deepseek_client()
+    chat = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return chat.choices[0].message.content if chat.choices else ""
 
 # ------------------ JSON Parsing & Fallback ------------------
 
@@ -445,8 +426,9 @@ def map_sentences(req: SentenceMappingRequest) -> SentenceMappingResponse:
     raw_mapping = ""
     mapping_json: Dict[str, Any] | None = None
     mapping_ok = False
+    model = get_deepseek_model(req.model)
     try:
-        raw_mapping = _call_chat(mapping_messages, req.model or "gpt-4o-mini", req.temperature or 0.0, req.max_tokens or 600)
+        raw_mapping = _call_chat(mapping_messages, model, req.temperature or 0.0, req.max_tokens or 600)
         cleaned = _strip_json(raw_mapping)
         if cleaned:
             mapping_json = json.loads(cleaned)
@@ -499,7 +481,7 @@ def map_sentences(req: SentenceMappingRequest) -> SentenceMappingResponse:
         _add_parent_child_relationships(validated_mappings, nodes)
         
         debug = {
-            "model": req.model,
+            "model": model,
             "temperature": req.temperature,
             "sentence_count": len(sentences),
             "node_count": len(nodes),
@@ -525,7 +507,7 @@ def map_sentences(req: SentenceMappingRequest) -> SentenceMappingResponse:
     missing_nodes = _compute_zero_overlap_nodes(sentences, nodes)
     
     debug = {
-        "model": req.model,
+        "model": model,
         "temperature": req.temperature,
         "sentence_count": len(sentences),
         "node_count": len(nodes),

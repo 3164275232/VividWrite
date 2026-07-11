@@ -126,7 +126,7 @@ def show():
                         with open(text_path, "w", encoding="utf-8") as f:
                             f.write(student_answer)
 
-                        result = generator.call_gpt_and_generate(
+                        result = generator.call_ai_and_generate(
                             initial_instruction=initial_instruction,
                             requirement=requirement,
                             student_answer=student_answer,

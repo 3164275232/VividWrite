@@ -1,4 +1,9 @@
-const BASE = import.meta.env.VITE_API_BASE;
+export const API_BASE = (import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000').replace(/\/$/, '');
+const BASE = API_BASE;
+
+function backendUnavailableMessage(action) {
+  return `${action}: cannot reach backend at ${BASE}. Make sure the FastAPI backend is running and VITE_API_BASE points to it.`;
+}
 
 export async function hello() {
   const res = await fetch(`${BASE}/api/hello`);
@@ -68,10 +73,15 @@ export async function mapSentences(payload) {
 // DePlot extraction (image -> structured text string)
 export async function extractDeplot(formData) {
   // formData should contain { image: File }
-  const res = await fetch(`${BASE}/api/deplot-extract`, {
-    method: 'POST',
-    body: formData
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE}/api/deplot-extract`, {
+      method: 'POST',
+      body: formData
+    });
+  } catch (error) {
+    throw new Error(backendUnavailableMessage('DePlot extraction failed'));
+  }
   if (!res.ok) {
     let errText = `HTTP ${res.status}`;
     try { const data = await res.json(); errText = data.detail || data.error || errText; } catch {}
@@ -107,11 +117,16 @@ export async function saveRevisionText(username, text) {
 
 export async function generateSampleEssay(payload) {
   // payload: { deplot_text, flowchart, requirement? }
-  const res = await fetch(`${BASE}/api/generate-sample-essay`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE}/api/generate-sample-essay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    throw new Error(backendUnavailableMessage('Sample essay generation failed'));
+  }
   if (!res.ok) {
     let t = `HTTP ${res.status}`; try { const d = await res.json(); t = d.detail || d.error || t; } catch {}
     throw new Error(t);

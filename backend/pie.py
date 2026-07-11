@@ -4,7 +4,6 @@ import random
 from io import BytesIO
 import random
 import colorsys
-import openai
 import streamlit as st
 import json
 import re
@@ -14,25 +13,25 @@ import numpy as np
 from typing import Dict, Optional
 from PIL import Image
 from dotenv import load_dotenv
-from openai import OpenAI
 from PIL import Image
 import base64
 import io
 from typing import Tuple, Dict
+from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_model
 
-# # 加载 DePlot 模型（只加载一次）
+# # 鍔犺浇 DePlot 妯″瀷锛堝彧鍔犺浇涓€娆★級
 # deplot_processor, deplot_model = load_deplot()
 
-# API配置
-load_dotenv()  # 加载.env文件
-api_key = os.environ.get("OPENAI_API_KEY")
+# API閰嶇疆
+load_dotenv()  # 鍔犺浇.env鏂囦欢
+api_key = get_deepseek_api_key()
 
-# 调试：检查API密钥是否正确加载
+# 璋冭瘯锛氭鏌PI瀵嗛挜鏄惁姝ｇ‘鍔犺浇
 if not api_key:
-    print("❌ 警告：OPENAI_API_KEY 环境变量未找到！")
-    print("请检查 .env 文件是否存在且格式正确")
+    print("Warning: DEEPSEEK_API_KEY environment variable was not found.")
+    print("Please check that the .env file exists and is formatted correctly.")
 else:
-    print(f"✅ API密钥已加载：{api_key[:10]}...")
+    print("DeepSeek API key loaded.")
 
 def parse_txt_to_dict(txt_content: str) -> Dict[str, Optional[float]]:
     lines = txt_content.strip().splitlines()
@@ -65,7 +64,7 @@ class GraphGenerator:
             "np": np,
             "math": __import__("math")
         }
-        self.client = OpenAI(api_key=api_key)
+        self.client = get_deepseek_client(api_key)
         self.data_save_folder = "generated_data_pie"
 
         if not os.path.exists(self.data_save_folder):
@@ -78,7 +77,7 @@ class GraphGenerator:
         else:
             self.data_counter = 1
 
-    def call_gpt_and_generate(self, initial_instruction: str, requirement: str, student_answer: str,
+    def call_ai_and_generate(self, initial_instruction: str, requirement: str, student_answer: str,
                               image_path: Optional[str] = None, output_format: str = "json", output_path = None,
                               deplot_txt: str = None) -> Dict:
         try:
@@ -104,22 +103,22 @@ class GraphGenerator:
             5. If a category is described **relative to another category** (e.g., "about the same as X", "double of Y", "slightly less than Z"):
                - Estimate the percentage based on the described category.
                - Example:
-                 - "about the same as health" → if health is 15%, estimate it as 15%.
-                 - "double of defence" → if defence is 7%, estimate it as 14%.
-                 - "slightly less than education" → if education is 12%, estimate it as around 10-11%.
+                 - "about the same as health" 鈫?if health is 15%, estimate it as 15%.
+                 - "double of defence" 鈫?if defence is 7%, estimate it as 14%.
+                 - "slightly less than education" 鈫?if education is 12%, estimate it as around 10-11%.
 
             6. Handle **vague or comparative descriptions** smartly:
                - Phrases like "almost the same as", "slightly higher than", "a bit lower than" should be translated to estimated percentages:
-                 - "almost the same as" → ±1~2%
-                 - "slightly higher than" → +2~5%
-                 - "slightly lower than" → -2~5%
+                 - "almost the same as" 鈫?卤1~2%
+                 - "slightly higher than" 鈫?+2~5%
+                 - "slightly lower than" 鈫?-2~5%
                - Example:
-                 - "almost the same as single people" → if single people is 24%, estimate it as 23% or 25%.
-                 - "slightly higher than aged couples" → if aged couples is 9%, estimate it as 11%.
+                 - "almost the same as single people" 鈫?if single people is 24%, estimate it as 23% or 25%.
+                 - "slightly higher than aged couples" 鈫?if aged couples is 9%, estimate it as 11%.
 
             7. Output all values as **percentages**:
                - Final output must only contain percentages (e.g., `15%`).
-               - Do not include raw units like “billion” or “AED”.
+               - Do not include raw units like 鈥渂illion鈥?or 鈥淎ED鈥?
                - If the category is mentioned but has no numerical value, **completely remove it from the output**.
 
             8. Your output must be in plain text, using the following structure:
@@ -148,9 +147,9 @@ class GraphGenerator:
                     """}
             ]
 
-            # 提取
+            # 鎻愬彇
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model=get_deepseek_model(),
                 messages=messages,
                 temperature=0.0,
                 max_tokens=1500,
@@ -164,7 +163,7 @@ class GraphGenerator:
             return {"error": str(e)}
 
     def extract_table_from_image_deplot(self, image_path: str, deplot_txt) -> str:
-        # 原始 DePlot 调用
+        # 鍘熷 DePlot 璋冪敤
         # image = Image.open(image_path).convert("RGB")
         # inputs = deplot_processor(images=image, text="Generate underlying data table of the figure below:",
         #                           return_tensors="pt")
@@ -206,7 +205,7 @@ class GraphGenerator:
         ]
 
         response = self.client.chat.completions.create(
-            model="gpt-4o",
+            model=get_deepseek_model(),
             messages=messages,
             temperature=0.0,
             max_tokens=1500
@@ -218,10 +217,10 @@ class GraphGenerator:
 
     def find_best_match_batch(self, target: str, candidates: list, cutoff=0.85) -> Optional[str]:
         """
-        使用AI模型批量对比目标类别和所有学生类别，返回最接近的匹配项
+        浣跨敤AI妯″瀷鎵归噺瀵规瘮鐩爣绫诲埆鍜屾墍鏈夊鐢熺被鍒紝杩斿洖鏈€鎺ヨ繎鐨勫尮閰嶉」
         """
-        target = target.lower()  # 转为小写字母，标准化输入
-        candidates = [candidate.lower() for candidate in candidates]  # 确保所有候选项都是小写
+        target = target.lower()  # 杞负灏忓啓瀛楁瘝锛屾爣鍑嗗寲杈撳叆
+        candidates = [candidate.lower() for candidate in candidates]  # 纭繚鎵€鏈夊€欓€夐」閮芥槸灏忓啓
 
         system_content = """
                         You are a semantic comparison model. Your task is to compare a target phrase with a list of candidate phrases and return the most semantically similar phrase.
@@ -231,7 +230,7 @@ class GraphGenerator:
                         On the other hand, if the target phrase and the candidate phrase share a common core concept or subject, even if one contains additional details or modifiers (e.g., 'debt' vs 'debt interest'), the similarity score should be significantly **higher**. In these cases, the shared core concept should take precedence in determining similarity, and the presence of additional information should not drastically reduce the score.
                         """
 
-        # 动态构建候选短语描述
+        # 鍔ㄦ€佹瀯寤哄€欓€夌煭璇弿杩?
         candidate_description = "\n".join([f"Candidate {i + 1}: {candidate}" for i, candidate in enumerate(candidates)])
 
         initial_instruction = f"""
@@ -263,51 +262,51 @@ class GraphGenerator:
         ]
 
         response = self.client.chat.completions.create(
-            model="gpt-4o",
+            model=get_deepseek_model(),
             messages=messages,
             max_tokens=100,
             temperature=0
         )
-        print(f"\n{response.choices[0].message.content}")  # 打印响应内容，以便查看格式
+        print(f"\n{response.choices[0].message.content}")  # 鎵撳嵃鍝嶅簲鍐呭锛屼互渚挎煡鐪嬫牸寮?
 
-        # 解析 AI 的响应并找到相似度最高的匹配项
+        # 瑙ｆ瀽 AI 鐨勫搷搴斿苟鎵惧埌鐩镐技搴︽渶楂樼殑鍖归厤椤?
         similarity_scores = response.choices[0].message.content.strip().split('\n')
         best_match = None
         highest_similarity = 0
 
-        # 遍历分数，选择最佳匹配
+        # 閬嶅巻鍒嗘暟锛岄€夋嫨鏈€浣冲尮閰?
         for score in similarity_scores:
             if score:
-                # 检查返回格式，确保存在 ':' 分隔符
+                # 妫€鏌ヨ繑鍥炴牸寮忥紝纭繚瀛樺湪 ':' 鍒嗛殧绗?
                 if ':' in score:
                     phrase, score_value = score.split(':')
                     try:
                         score_value = float(score_value.strip())
-                        # 仅保留相似度高于阈值的类别
+                        # 浠呬繚鐣欑浉浼煎害楂樹簬闃堝€肩殑绫诲埆
                         if score_value > highest_similarity and score_value >= cutoff:
                             highest_similarity = score_value
-                            best_match = phrase.strip()  # 确保提取的是类别名，而非对比信息
+                            best_match = phrase.strip()  # 纭繚鎻愬彇鐨勬槸绫诲埆鍚嶏紝鑰岄潪瀵规瘮淇℃伅
                     except ValueError:
-                        continue  # 如果无法转换为浮动数值，跳过此项
+                        continue  # 濡傛灉鏃犳硶杞崲涓烘诞鍔ㄦ暟鍊硷紝璺宠繃姝ら」
                 else:
-                    print(f"Skipping invalid format: {score}")  # 打印没有符合预期格式的响应
+                    print(f"Skipping invalid format: {score}")  # 鎵撳嵃娌℃湁绗﹀悎棰勬湡鏍煎紡鐨勫搷搴?
 
         return best_match
 
     # def extract_pie_chart_color(self, image_path: str, label_name: str) -> str:
-    #     # ① 读图，转换成 RGB，并转 base64
+    #     # 鈶?璇诲浘锛岃浆鎹㈡垚 RGB锛屽苟杞?base64
     #     with Image.open(image_path) as img:
     #         img.thumbnail((1000, 1000))
     #
-    #         # 转为 JPEG 并压缩保存到内存
+    #         # 杞负 JPEG 骞跺帇缂╀繚瀛樺埌鍐呭瓨
     #         buffer = BytesIO()
     #         img.convert("RGB").save(buffer, format="JPEG", quality=95, optimize=False)
     #
-    #         # 编码为 base64 字符串
+    #         # 缂栫爜涓?base64 瀛楃涓?
     #         encoded_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
     #         data_uri = f"data:image/jpeg;base64,{encoded_data}"
     #
-    #     # ② 构造 messages（把图像和文字放在同一 user 消息里）
+    #     # 鈶?鏋勯€?messages锛堟妸鍥惧儚鍜屾枃瀛楁斁鍦ㄥ悓涓€ user 娑堟伅閲岋級
     #     messages = [
     #         {
     #             "role": "system",
@@ -327,7 +326,7 @@ class GraphGenerator:
     #     ]
     #
     #     rsp = self.client.chat.completions.create(
-    #         model="gpt-4o",
+    #         model=get_deepseek_model(),
     #         messages=messages,
     #         temperature=0,
     #         max_tokens=5,
@@ -356,9 +355,9 @@ class GraphGenerator:
     #     categories_match = []
     #     palette = []
     #
-    #     # 遍历 DePlot 的顺序
+    #     # 閬嶅巻 DePlot 鐨勯『搴?
     #     for cat, deplot_val in deplot_data.items():
-    #         best_match = self.find_best_match_batch(cat, list(student_data.keys()))  # 使用批量对比
+    #         best_match = self.find_best_match_batch(cat, list(student_data.keys()))  # 浣跨敤鎵归噺瀵规瘮
     #         if best_match:
     #             categories_match.append(best_match)
     #             categories.append(cat)
@@ -378,7 +377,7 @@ class GraphGenerator:
     #         categories.append("Missing")
     #         values.append(round(100 - total, 1))
     #         missing_index = len(categories) - 1
-    #         palette.append("#cccccc")  # 给 Missing 塞一只灰色
+    #         palette.append("#cccccc")  # 缁?Missing 濉炰竴鍙伆鑹?
     #     else:
     #         missing_index = None
     #
@@ -397,10 +396,16 @@ class GraphGenerator:
     #         json_output["style"]["missing_index"] = missing_index
     #     return json_output
     def extract_pie_chart_color(self, image_path: str, label_name: str) -> tuple:
+        return (
+            random.random(),
+            random.random(),
+            random.random()
+        )
+
         """
-        读取饼图并返回指定标签的归一化RGB颜色元组(0-1范围)
+        璇诲彇楗煎浘骞惰繑鍥炴寚瀹氭爣绛剧殑褰掍竴鍖朢GB棰滆壊鍏冪粍(0-1鑼冨洿)
         """
-        # 打开并压缩图片
+        # 鎵撳紑骞跺帇缂╁浘鐗?
         with Image.open(image_path) as img:
             img.thumbnail((1000, 1000))
             buffer = BytesIO()
@@ -408,7 +413,7 @@ class GraphGenerator:
             encoded_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
             data_uri = f"data:image/jpeg;base64,{encoded_data}"
 
-        # GPT调用
+        # Previous vision-model call is unreachable after the local color fallback above.
         messages = [
             {"role": "system", "content": (
                 "You are an expert chart analyzer. When I give you a pie-chart image and a target label, "
@@ -420,36 +425,36 @@ class GraphGenerator:
             ]},
         ]
         rsp = self.client.chat.completions.create(
-            model="gpt-4o",
+            model=get_deepseek_model(),
             messages=messages,
             temperature=0,
             max_tokens=10,
         )
         raw = rsp.choices[0].message.content.strip()
 
-        # 解析返回的RGB或UNKNOWN
+        # 瑙ｆ瀽杩斿洖鐨凴GB鎴朥NKNOWN
         if raw.upper() == "UNKNOWN":
-            # 生成随机颜色并归一化到0-1范围
+            # 鐢熸垚闅忔満棰滆壊骞跺綊涓€鍖栧埌0-1鑼冨洿
             return (
                 random.random(),
                 random.random(),
                 random.random()
             )
 
-        # 尝试解析RGB格式
+        # 灏濊瘯瑙ｆ瀽RGB鏍煎紡
         try:
-            # 处理各种可能的格式: "255,0,0", "[255,0,0]", "(255,0,0)"等
+            # 澶勭悊鍚勭鍙兘鐨勬牸寮? "255,0,0", "[255,0,0]", "(255,0,0)"绛?
             clean_raw = raw.strip("[]()")
             r, g, b = map(lambda x: int(x.strip()), clean_raw.split(','))
 
-            # 将0-255范围转换为0-1范围
+            # 灏?-255鑼冨洿杞崲涓?-1鑼冨洿
             return (
                 r / 255.0,
                 g / 255.0,
                 b / 255.0
             )
         except Exception:
-            # 解析失败时返回随机颜色
+            # 瑙ｆ瀽澶辫触鏃惰繑鍥為殢鏈洪鑹?
             return (
                 random.random(),
                 random.random(),
@@ -464,7 +469,7 @@ class GraphGenerator:
         categories, values, palette = [], [], []
         matched = set()
 
-        # 匹配并获取颜色
+        # 鍖归厤骞惰幏鍙栭鑹?
         for cat, _ in deplot_data.items():
             if cat != "title":  # Skip title field
                 best = self.find_best_match_batch(cat, list(student_data.keys()))
@@ -474,7 +479,7 @@ class GraphGenerator:
                     palette.append(self.extract_pie_chart_color(image_path, cat))
                     matched.add(best)
 
-        # 剩余类别
+        # 鍓╀綑绫诲埆
         for cat, val in student_data.items():
             if cat not in matched and cat not in categories and cat!="title":
                 categories.append(cat)
@@ -511,16 +516,16 @@ class GraphGenerator:
 
     def _process_response(self, response, output_format: str, output_path, image_path, deplot_txt) -> Dict:
         """
-        响应处理方法
+        鍝嶅簲澶勭悊鏂规硶
         """
         try:
             student_txt = response.choices[0].message.content
             deplot_txt = self.extract_table_from_image_deplot(image_path, deplot_txt)
             data = self.compare_and_generate_json(deplot_txt, student_txt, image_path)
-            # 调试：将完整返回内容写入 result.json 便于查看
+            # 璋冭瘯锛氬皢瀹屾暣杩斿洖鍐呭鍐欏叆 result.json 渚夸簬鏌ョ湅
             with open("result.json", "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
-            print("=== Raw Response Content 已保存到 result.json ===")
+            print("=== Raw Response Content 宸蹭繚瀛樺埌 result.json ===")
 
             if output_format == "json":
                 self._plot_from_json(data, output_path)
@@ -534,7 +539,7 @@ class GraphGenerator:
             return {"error": str(e)}
 
     def increment_counter(self):
-        """递增计数器并保存到文件中"""
+        """閫掑璁℃暟鍣ㄥ苟淇濆瓨鍒版枃浠朵腑"""
         self.data_counter += 1
         with open(self.counter_file_path, "w") as f:
             f.write(str(self.data_counter))
@@ -547,7 +552,7 @@ class GraphGenerator:
 
         fig, ax = plt.subplots(figsize=(8, 8))
 
-        # 绘制扇形
+        # 缁樺埗鎵囧舰
         wedges, _ = ax.pie(
             values,
             colors=colors,
@@ -556,23 +561,23 @@ class GraphGenerator:
             wedgeprops=dict(width=1.0, edgecolor='white')
         )
 
-        # 若存在 Missing 类，绘制斜线
+        # 鑻ュ瓨鍦?Missing 绫伙紝缁樺埗鏂滅嚎
         missing_indices = data.get("style", {}).get("missing_index")
 
-        # 如果是整数，转成列表（兼容旧代码）
+        # 濡傛灉鏄暣鏁帮紝杞垚鍒楄〃锛堝吋瀹规棫浠ｇ爜锛?
         if isinstance(missing_indices, int):
             missing_indices = [missing_indices]
         elif not isinstance(missing_indices, list):
             missing_indices = []
 
-        # 遍历每个索引，进行高亮处理
+        # 閬嶅巻姣忎釜绱㈠紩锛岃繘琛岄珮浜鐞?
         for idx in missing_indices:
             if 0 <= idx < len(wedges):
-                wedges[idx].set_facecolor((1.0, 0.3, 0.3, 0.4))  # 半透明红色
-                wedges[idx].set_hatch('//')  # 斜线填充
+                wedges[idx].set_facecolor((1.0, 0.3, 0.3, 0.4))  # 鍗婇€忔槑绾㈣壊
+                wedges[idx].set_hatch('//')  # 鏂滅嚎濉厖
                 wedges[idx].set_edgecolor('black')
 
-        # 计算角度，放置 label
+        # 璁＄畻瑙掑害锛屾斁缃?label
         angles = [(wedge.theta2 + wedge.theta1) / 2.0 for wedge in wedges]
 
         for i, angle in enumerate(angles):
@@ -592,25 +597,25 @@ class GraphGenerator:
 
         plt.tight_layout()
 
-        # 保存图像，并使用递增后的计数器作为文件名
+        # 淇濆瓨鍥惧儚锛屽苟浣跨敤閫掑鍚庣殑璁℃暟鍣ㄤ綔涓烘枃浠跺悕
         data_path = output_path
         plt.savefig(data_path)
 
-        # 在图形绘制完成后递增计数器
+        # 鍦ㄥ浘褰㈢粯鍒跺畬鎴愬悗閫掑璁℃暟鍣?
         # self._increment_counter()
 
-        # 显示图像
+        # 鏄剧ず鍥惧儚
         # buf = BytesIO()
         # plt.savefig(buf, format="png")
         # buf.seek(0)
         # st.image(buf, caption="Student Graph", use_container_width=True)
 
-        # 输出图像的路径
+        # 杈撳嚭鍥惧儚鐨勮矾寰?
         print(f"Data saved to: {os.path.abspath(self.data_save_folder)}")
 
     def _safe_execute_code(self, content: str) -> Dict:
         """
-        安全执行代码方法
+        瀹夊叏鎵ц浠ｇ爜鏂规硶
         """
         code_block = self._extract_code(content)
         if not code_block:
@@ -627,15 +632,15 @@ class GraphGenerator:
     @staticmethod
     def _extract_code(content: str) -> Optional[str]:
         """
-        提取代码块方法
+        鎻愬彇浠ｇ爜鍧楁柟娉?
         """
         match = re.search(r"```python\s*(.*?)```", content, re.DOTALL)
         return match.group(1).strip() if match else None
 
 
-# ------------------ 使用示例 ------------------
+# ------------------ 浣跨敤绀轰緥 ------------------
 if __name__ == "__main__":
-    # 输入参数配置
+    # 杈撳叆鍙傛暟閰嶇疆
     initial_instruction = (
         "Now I'll send you the Requirement, graph and Sample answer of the first Writing question of IELTS Academic. "
         "You need to learn how to reverse generate the graph according to the requirement and given answer which "
@@ -683,24 +688,25 @@ As far as the people with no children are concerned, single people were of the h
     #             """
     #         )
 
-    # 初始化生成器
+    # 鍒濆鍖栫敓鎴愬櫒
     generator = GraphGenerator()
     deplot_txt = "TITLE | Proportion of people from each household type living in poverty<0x0A>All households<0x0A>14% | Single aged person<0x0A>7% <0x0A> Aged couple<0x0A>5% | 5% <0x0A> Couple with children<0x0A>15% | 15% <0x0A> Single, no children<0x0A>24% | 24% <0x0A> Sole parent<0x0A>26% | 26% <0x0A> Couple, no children<0x0A>9% | 9%"
-    # 执行API调用
-    result = generator.call_gpt_and_generate(
+    # 鎵цAPI璋冪敤
+    result = generator.call_ai_and_generate(
         initial_instruction=initial_instruction,
         requirement=requirement,
         # sample_answer=sample_answer,
         student_answer=student_answer,
-        image_path="data/pie.png",  # 或指定图片路径
+        image_path="data/pie.png",  # 鎴栨寚瀹氬浘鐗囪矾寰?
         output_format="json",
         output_path="generated_data_pie",
         deplot_txt=deplot_txt
     )
 
-    # 处理结果
+    # 澶勭悊缁撴灉
     if "error" in result:
         print(f"Error: {result['error']}")
     else:
         print("Generated Data:")
         print(json.dumps(result, indent=2))
+

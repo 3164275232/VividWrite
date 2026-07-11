@@ -2,7 +2,6 @@ import colorsys
 import os
 import random
 from io import BytesIO
-import openai
 import streamlit as st
 import json
 import re
@@ -11,20 +10,20 @@ import numpy as np
 from typing import Dict, Optional
 from PIL import Image
 from dotenv import load_dotenv
-from openai import OpenAI
 import base64
 from sklearn.cluster import MiniBatchKMeans
+from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_model
 
 # API配置
 load_dotenv()  # 加载.env文件
-api_key = os.environ.get("OPENAI_API_KEY")
+api_key = get_deepseek_api_key()
 
 # 调试：检查API密钥是否正确加载
 if not api_key:
-    print("❌ 警告：OPENAI_API_KEY 环境变量未找到！")
-    print("请检查 .env 文件是否存在且格式正确")
+    print("Warning: DEEPSEEK_API_KEY environment variable was not found.")
+    print("Please check that the .env file exists and is formatted correctly.")
 else:
-    print(f"✅ API密钥已加载：{api_key[:10]}...")
+    print("DeepSeek API key loaded.")
 
 class GraphGenerator:
     def __init__(self):
@@ -33,7 +32,7 @@ class GraphGenerator:
             "np": np,
             "math": __import__("math")
         }
-        self.client = OpenAI(api_key=api_key)
+        self.client = get_deepseek_client(api_key)
         self.data_save_folder = "generated_data_bar"
 
         if not os.path.exists(self.data_save_folder):
@@ -141,7 +140,7 @@ class GraphGenerator:
         r2, g2, b2 = hex_to_rgb(c2)
         return ((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2) ** 0.5
 
-    def call_gpt_and_generate(self, initial_instruction: str, requirement: str, student_answer: str,
+    def call_ai_and_generate(self, initial_instruction: str, requirement: str, student_answer: str,
                               image_path: Optional[str] = None, output_format: str = "json", output_path=None,
                               deplot_txt: str = None) -> Dict:
         try:
@@ -231,7 +230,7 @@ class GraphGenerator:
             # 提取并添加颜色调色板
             # palette = self.extract_color_palette(image_path)
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model=get_deepseek_model(),
                 messages=messages,
                 temperature=0.0,
                 max_tokens=1500,
@@ -305,6 +304,14 @@ class GraphGenerator:
 
 
     def extract_bar_chart_color(self, image_path: str) -> list:
+        random_chart_color = lambda: '#%02x%02x%02x' % tuple(
+            int(c * 255) for c in colorsys.hls_to_rgb(
+                random.random(), random.uniform(0.4, 0.7), random.uniform(0.5, 0.8)
+            )
+        )
+        palette = self.extract_color_palette(image_path, max_colors=5)
+        return palette or [random_chart_color()]
+
         # ① 读图并转 base-64
         with open(image_path, "rb") as f:
             b64_data = base64.b64encode(f.read()).decode("utf-8")
@@ -334,7 +341,7 @@ class GraphGenerator:
     
         # 调用 API 获取颜色信息
         rsp = self.client.chat.completions.create(
-            model="gpt-4o",  # 使用支持 vision 的模型
+            model=get_deepseek_model(),
             messages=messages,
             temperature=0,
             max_tokens=50,
@@ -440,7 +447,7 @@ class GraphGenerator:
         ]
 
         response = self.client.chat.completions.create(
-            model="gpt-4o",
+            model=get_deepseek_model(),
             messages=messages,
             max_tokens=100,
             temperature=0
@@ -801,7 +808,7 @@ Also, dramatic growth can be seen in mobile calls from 2 billion to 46 billion m
     deplot_txt = "TITLE | Australia telephone calls by category from 2001-2008<0x0A>Year | Local fixed line calls | National and international fixed line calls | Mobile calls<0x0A>2001 | 73 | 38 | 3<0x0A>2002 | 78 | 40 | 6<0x0A>2003 | 83 | 42 | 10<0x0A>2004 | 88 | 45 | 12<0x0A>2005 | 90 | 47 | 15<0x0A>2006 | 85 | 50 | 23<0x0A>2007 | 78 | 52 | 38<0x0A>2008 | 73 | 58 | 48"
 
     # 执行API调用
-    result = generator.call_gpt_and_generate(
+    result = generator.call_ai_and_generate(
         initial_instruction=initial_instruction,
         requirement=requirement,
         # sample_answer=sample_answer,

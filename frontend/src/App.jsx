@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import ErrorBoundary from './ErrorBoundary.jsx';
 import CmEditor from './CmEditor.jsx';
-import { hello, analyzeChart, analyzeChartWithImage, requestNextSentence, mapSentences, extractDeplot, saveFinalImage, saveRevisionText, generateSampleEssay, reviewRevision } from "./api";
+import { API_BASE, hello, analyzeChart, analyzeChartWithImage, requestNextSentence, mapSentences, extractDeplot, saveFinalImage, saveRevisionText, generateSampleEssay, reviewRevision } from "./api";
 import Login from "./Login";
 import Flowchart from "./Flowchart";//对应修改1
 
@@ -104,6 +104,35 @@ export default function App() {
     deplotTaskRef.current.promise = p;
     return p;
   }, []);
+
+  const ensureDeplotText = useCallback(async (file, { errorPrefix = 'DePlot extraction failed' } = {}) => {
+    const cachedText = deplotText.trim();
+    if (cachedText) return deplotText;
+    if (!file) throw new Error('Please upload an image first.');
+
+    setIsExtractingDeplot(true);
+    try {
+      const pendingTask = deplotTaskRef.current?.promise;
+      const res = pendingTask
+        ? await pendingTask
+        : await runDeplotExtraction(file, { showOverlay: false });
+
+      const extracted = res?.extracted_text?.trim() ? res.extracted_text : '';
+      if (!extracted) {
+        throw new Error('DePlot returned empty result. Please try a clearer chart image.');
+      }
+
+      setDeplotText(extracted);
+      setDeplotError('');
+      return extracted;
+    } catch (e) {
+      const message = e?.message || errorPrefix;
+      setDeplotError(message);
+      throw new Error(`${errorPrefix}: ${message}`);
+    } finally {
+      setIsExtractingDeplot(false);
+    }
+  }, [deplotText, runDeplotExtraction]);
   const [missingNodes, setMissingNodes] = useState([]); // array of {id,title,reason}
   const [sentenceRanges, setSentenceRanges] = useState([]); // [{index,start,end,text}]
   const [mappingStatus, setMappingStatus] = useState('idle'); // idle | loading | ok | missing | error
@@ -252,22 +281,15 @@ export default function App() {
       return;
     }
 
-    // In planning: if DePlot not ready, show analyzing overlay first, then open confirm dialog automatically when done
+    // Keep DePlot extraction in the background. Stage changes should not be blocked by
+    // first-time model loading or a slow chart parse.
     if (currentStage === 'planning') {
-      try {
-        if (!deplotText.trim()) {
-          if (deplotTaskRef.current?.promise) {
-            setIsExtractingDeplot(true);
-            try { await deplotTaskRef.current.promise; }
-            finally { setIsExtractingDeplot(false); }
-          } else {
-            await runDeplotExtraction(uploadedImage, { showOverlay: true });
-          }
-        }
-      } catch (e) {
-        // 分析失败也继续弹出确认框（错误信息已在图片区域显示）
+      setIsExtractingDeplot(false);
+      if (!deplotText.trim() && !deplotTaskRef.current?.promise) {
+        runDeplotExtraction(uploadedImage, { showOverlay: false }).catch(() => {
+          // Error is already stored in deplotError; users can still continue drafting.
+        });
       }
-      // 无论成功失败，均继续弹出确认框，避免用户再次点击
     }
 
     setShowStageConfirm(true);
@@ -423,7 +445,7 @@ export default function App() {
         const resolveChartUrl = (u) => {
           if (!u) return null;
           if (/^https?:\/\//i.test(u)) return u; // already absolute
-          const base = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
+          const base = API_BASE;
             if (u.startsWith('/')) return base + u;
             return base + '/' + u;
         };
@@ -468,7 +490,7 @@ export default function App() {
         const resolveChartUrl = (u) => {
           if (!u) return null;
           if (/^https?:\/\//i.test(u)) return u;
-          const base = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
+          const base = API_BASE;
           if (u.startsWith('/')) return base + u;
           return base + '/' + u;
         };
@@ -602,32 +624,22 @@ export default function App() {
   };
 
   const handleGenerateSampleEssay = async () => {
-    // Only allow if image and deplot data available; attempt auto-extract if needed
     if (!uploadedImage) {
       setNextSentenceError("Please upload an image first.");
       return;
     }
-    let dep = deplotText;
-    if (!dep.trim()) {
-      try {
-        setIsExtractingDeplot(true);
-        const fd = new FormData();
-        fd.append('image', uploadedImage);
-        const depRes = await extractDeplot(fd);
-        if (depRes?.extracted_text) {
-          dep = depRes.extracted_text;
-          setDeplotText(dep);
-        }
-      } catch (e) {
-        setNextSentenceError('Failed to extract DePlot data for sample essay');
-      } finally {
-        setIsExtractingDeplot(false);
-      }
-    }
-    if (!dep.trim()) {
-      setNextSentenceError('Missing deplot textual data.');
+
+    setNextSentenceError("");
+    let dep = "";
+    try {
+      dep = await ensureDeplotText(uploadedImage, {
+        errorPrefix: 'Failed to extract DePlot data for sample essay'
+      });
+    } catch (e) {
+      setNextSentenceError(e.message || 'Failed to extract DePlot data for sample essay');
       return;
     }
+
     try {
       setIsSampleEssayLoading(true);
       const requirement = chartType === 'bar'
@@ -997,7 +1009,7 @@ export default function App() {
           )}
 
           {/* Stage transition toast removed */}
-          {isExtractingDeplot && (
+          {isExtractingDeplot && currentStage !== 'planning' && (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2500 }}>
               <div style={{ background: '#fff', padding: '1.5rem 1.25rem 1.25rem', borderRadius: 8, width: 320, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', gap: '0.9rem', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Analyzing Image...</h3>

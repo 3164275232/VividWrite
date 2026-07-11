@@ -1,14 +1,13 @@
 """Next sentence generation module (LLM-only, chat messages version).
 
-Always uses OpenAI chat messages to produce ONE next sentence.
-Requires OPENAI_API_KEY in environment (.env supported).
+Always uses DeepSeek chat messages to produce ONE next sentence.
+Requires DEEPSEEK_API_KEY in environment (.env supported).
 """
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 import re
-import os
 from dotenv import load_dotenv
-from openai import OpenAI
+from deepseek_config import get_deepseek_client, get_deepseek_model
 
 load_dotenv()
 
@@ -20,7 +19,7 @@ class NextSentenceRequest(BaseModel):
     requirement: Optional[str] = None
     candidate_count: int = 3  # number of alternative next sentences wanted
     max_tokens: Optional[int] = 180  # allow enough tokens for multiple short sentences
-    model: Optional[str] = "gpt-4o-mini"
+    model: Optional[str] = None
     temperature: Optional[float] = 0.7
 
 class NextSentenceResponse(BaseModel):
@@ -132,34 +131,14 @@ def _build_messages(req: NextSentenceRequest) -> List[Dict[str, str]]:
 # ---- Chat completion call ----
 
 def _call_chat(messages: List[Dict[str, str]], model: str, temperature: float, max_tokens: int) -> str:
-    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-    # Native chat messages call (OpenAI Chat Completions style)
-    try:
-        chat = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-        content = chat.choices[0].message.content if chat.choices else ""
-    except AttributeError:
-        # Fallback: some SDK variants only expose responses.create; join messages manually
-        composite = []
-        for m in messages:
-            composite.append(f"[{m['role'].upper()}]\n{m['content'].strip()}\n")
-        prompt = "\n".join(composite) + "\n[ASSISTANT]\n"
-        resp = client.responses.create(
-            model=model,
-            input=prompt,
-            max_output_tokens=max_tokens,
-            temperature=temperature,
-        )
-        content_parts = []
-        for out in resp.output:  # type: ignore
-            if out.type == 'output_text':  # type: ignore
-                content_parts.append(out.text)  # type: ignore
-        content = "".join(content_parts).strip()
-
+    client = get_deepseek_client()
+    chat = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    content = chat.choices[0].message.content if chat.choices else ""
     return content or "(No content returned)"
 
 # ---- Public API ----
@@ -178,7 +157,7 @@ def generate_next_sentence(req: NextSentenceRequest) -> NextSentenceResponse:
         messages = _build_messages(req)
         raw = _call_chat(
             messages=messages,
-            model=req.model or "gpt-4o-mini",
+            model=get_deepseek_model(req.model),
             temperature=req.temperature if req.temperature is not None else 0.7,
             max_tokens=req.max_tokens or 48,
         )
@@ -229,7 +208,7 @@ def generate_next_sentence(req: NextSentenceRequest) -> NextSentenceResponse:
         debug = {
             "mode": "llm-chat",
             "messages_count": len(messages),
-            "model": req.model or "gpt-4o-mini",
+            "model": get_deepseek_model(req.model),
             "temperature": req.temperature if req.temperature is not None else 0.7,
             "max_tokens": req.max_tokens or 48,
             "first_user_chars": len(messages[1]['content']) if len(messages) > 1 else 0,

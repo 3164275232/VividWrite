@@ -3,3 +3,10 @@
 **/.env
 **/.env.*
 !.env.example
+__pycache__/
+*.pyc
+backend/.matplotlib/
+backend/.venv/
+backend/venv/
+backend/backend_stdout.log
+backend/backend_stderr.log

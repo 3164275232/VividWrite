@@ -30,11 +30,11 @@ def _char_ranges(text: str, pattern: str):
         yield (m.start(), m.end())
 
 def heuristic_revision_review(payload: RevisionReviewIn) -> RevisionReviewOut:  # Deprecated path
-    return RevisionReviewOut(success=False, error="Heuristic mode disabled; provide OPENAI_API_KEY for LLM review.")
+    return RevisionReviewOut(success=False, error="Heuristic mode disabled; provide DEEPSEEK_API_KEY for LLM review.")
 
 
 def call_llm_revision_review(payload: RevisionReviewIn) -> RevisionReviewOut:
-    """Invoke OpenAI (or compatible) model to produce structured JSON.
+    """Invoke DeepSeek model to produce structured JSON.
     Expected JSON structure now supports grouped categories and per-suggestion single excerpt + replacement:
     {
       overall: { vocabulary:{score,comment}, grammar:{score,comment}, coherence:{score,comment}, summary: str },
@@ -53,13 +53,13 @@ def call_llm_revision_review(payload: RevisionReviewIn) -> RevisionReviewOut:
     Backend resolves excerpt -> character range (range / ranges[0]).
     """
     import os, json, re as _re
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
-        return RevisionReviewOut(success=False, error="Missing OPENAI_API_KEY environment variable.")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        return RevisionReviewOut(success=False, error="Missing DEEPSEEK_API_KEY environment variable.")
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
+        from deepseek_config import get_deepseek_client, get_deepseek_model
+        client = get_deepseek_client(api_key)
+        model = get_deepseek_model()
         system_prompt = (
             "You are an IELTS Task 1 writing reviewer. Return STRICT JSON ONLY — no prose outside JSON. "
             "SCHEMA: {overall:{vocabulary:{score,comment}, grammar:{score,comment}, coherence:{score,comment}, summary:string}, suggestions_by_category:{vocabulary:[Suggestion], grammar:[Suggestion], coherence:[Suggestion]}, suggestions:[Suggestion]?}. "
