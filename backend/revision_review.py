@@ -57,7 +57,7 @@ def call_llm_revision_review(payload: RevisionReviewIn) -> RevisionReviewOut:
     if not api_key:
         return RevisionReviewOut(success=False, error="Missing DEEPSEEK_API_KEY environment variable.")
     try:
-        from deepseek_config import get_deepseek_client, get_deepseek_model
+        from deepseek_config import get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
         client = get_deepseek_client(api_key)
         model = get_deepseek_model()
         system_prompt = (
@@ -90,7 +90,8 @@ def call_llm_revision_review(payload: RevisionReviewIn) -> RevisionReviewOut:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"DATA:\n{json.dumps(user_payload, ensure_ascii=False)}"}
             ],
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            extra_body=get_deepseek_extra_body(),
         )
         content = completion.choices[0].message.content
         print(f"AI model raw response: {content}")

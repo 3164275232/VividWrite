@@ -49,7 +49,7 @@ export default function App() {
   //添加图片上传功能
   const [uploadedImage, setUploadedImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
-  const [chartType, setChartType] = useState("bar"); // 添加图表类型状态
+  const [chartType, setChartType] = useState("bar"); // All types use the same unified chart pipeline.
   const [flowchartData, setFlowchartData] = useState({ nodes: [], edges: [] });
   const [isNextSentenceLoading, setIsNextSentenceLoading] = useState(false);
   const [isSampleEssayLoading, setIsSampleEssayLoading] = useState(false); // separate loading state
@@ -430,12 +430,7 @@ export default function App() {
         const formData = new FormData();
         formData.append('image', uploadedImage);
         formData.append('chart_type', chartType);
-        let requirement;
-        if (chartType === "bar") {
-          requirement = 'The bar chart below shows the total number of minutes (in billions) of telephone calls in Australia, divided into three categories, from 2001- 2008. Summarise the information by selecting and reporting the main features and make comparisons where relevant. Write at least 150 words.';
-        } else if (chartType === "pie") {
-          requirement = 'The pie chart below shows the proportion of different categories of families living in poverty in UK in 2002. Summarise the information by selecting and reporting the main features, and make comparisons where relevant. Write at least 150 words.';
-        } else { requirement = ''; }
+        const requirement = `This is an IELTS Academic Task 1 ${chartType === 'auto' ? 'chart' : chartType + ' chart'}. Summarise the main features and make relevant comparisons.`;
         formData.append('requirement', requirement);
         formData.append('student_answer', text);
         formData.append('deplot_text', deplotForAnalysis);
@@ -475,14 +470,7 @@ export default function App() {
         const formData = new FormData();
         formData.append('image', uploadedImage);
         formData.append('chart_type', chartType);
-        let requirement;
-        if (chartType === "bar") {
-          requirement = 'The bar chart below shows the total number of minutes (in billions) of telephone calls in Australia, divided into three categories, from 2001- 2008. Summarise the information by selecting and reporting the main features and make comparisons where relevant. Write at least 150 words.';
-        } else if (chartType === "pie") {
-          requirement = 'The pie chart below shows the proportion of different categories of families living in poverty in UK in 2002. Summarise the information by selecting and reporting the main features, and make comparisons where relevant. Write at least 150 words.';
-        } else {
-          requirement = '';
-        }
+        const requirement = `This is an IELTS Academic Task 1 ${chartType === 'auto' ? 'chart' : chartType + ' chart'}. Summarise the main features and make relevant comparisons.`;
         formData.append('requirement', requirement);
         formData.append('student_answer', text);
         if (!deplotForAnalysis.trim()) deplotForAnalysis = '(No DePlot data extracted)';
@@ -642,11 +630,7 @@ export default function App() {
 
     try {
       setIsSampleEssayLoading(true);
-      const requirement = chartType === 'bar'
-        ? 'Summarise the information by selecting and reporting the main features and make comparisons where relevant.'
-        : chartType === 'pie'
-          ? 'Summarise the information by selecting and reporting the main features and make comparisons where relevant.'
-          : 'Write an IELTS Academic Task 1 report.';
+      const requirement = `Write an IELTS Academic Task 1 report for this ${chartType === 'auto' ? 'chart' : chartType + ' chart'}.`;
       const requestData = { deplot_text: dep, flowchart: flowchartData, requirement };
       const res = await generateSampleEssay(requestData);
       
@@ -1097,8 +1081,13 @@ export default function App() {
                         maxWidth: "200px"
                       }}
                     >
+                      <option value="auto">Auto Detect</option>
                       <option value="bar">Bar Chart</option>
+                      <option value="line">Line Chart</option>
+                      <option value="area">Area Chart</option>
                       <option value="pie">Pie Chart</option>
+                      <option value="scatter">Scatter Plot</option>
+                      <option value="map" disabled>Map Task (vision model required)</option>
                     </select>
                   </div>
                 )}

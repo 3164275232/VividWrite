@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 import re
 from dotenv import load_dotenv
-from deepseek_config import get_deepseek_client, get_deepseek_model
+from deepseek_config import get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
 
 load_dotenv()
 
@@ -137,6 +137,7 @@ def _call_chat(messages: List[Dict[str, str]], model: str, temperature: float, m
         messages=messages,
         max_tokens=max_tokens,
         temperature=temperature,
+        extra_body=get_deepseek_extra_body(),
     )
     content = chat.choices[0].message.content if chat.choices else ""
     return content or "(No content returned)"

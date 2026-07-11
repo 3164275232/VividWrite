@@ -12,7 +12,7 @@ from PIL import Image
 from dotenv import load_dotenv
 import base64
 from sklearn.cluster import MiniBatchKMeans
-from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_model
+from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
 
 # API配置
 load_dotenv()  # 加载.env文件
@@ -234,6 +234,7 @@ class GraphGenerator:
                 messages=messages,
                 temperature=0.0,
                 max_tokens=1500,
+                extra_body=get_deepseek_extra_body(),
             )
             print(response.choices[0].message.content)
             student_txt=response.choices[0].message.content
@@ -345,6 +346,7 @@ class GraphGenerator:
             messages=messages,
             temperature=0,
             max_tokens=50,
+            extra_body=get_deepseek_extra_body(),
         )
     
         # 生成随机颜色
@@ -450,7 +452,8 @@ class GraphGenerator:
             model=get_deepseek_model(),
             messages=messages,
             max_tokens=100,
-            temperature=0
+            temperature=0,
+            extra_body=get_deepseek_extra_body(),
         )
         print(f"\n{response.choices[0].message.content}")  # 打印响应内容，以便查看格式
 

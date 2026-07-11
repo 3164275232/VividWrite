@@ -17,7 +17,7 @@ from PIL import Image
 import base64
 import io
 from typing import Tuple, Dict
-from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_model
+from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
 
 # # 鍔犺浇 DePlot 妯″瀷锛堝彧鍔犺浇涓€娆★級
 # deplot_processor, deplot_model = load_deplot()
@@ -153,6 +153,7 @@ class GraphGenerator:
                 messages=messages,
                 temperature=0.0,
                 max_tokens=1500,
+                extra_body=get_deepseek_extra_body(),
             )
             print(response.choices[0].message.content)
 
@@ -208,7 +209,8 @@ class GraphGenerator:
             model=get_deepseek_model(),
             messages=messages,
             temperature=0.0,
-            max_tokens=1500
+            max_tokens=1500,
+            extra_body=get_deepseek_extra_body(),
         )
         print(f"\n{response.choices[0].message.content}")
 
@@ -265,7 +267,8 @@ class GraphGenerator:
             model=get_deepseek_model(),
             messages=messages,
             max_tokens=100,
-            temperature=0
+            temperature=0,
+            extra_body=get_deepseek_extra_body(),
         )
         print(f"\n{response.choices[0].message.content}")  # 鎵撳嵃鍝嶅簲鍐呭锛屼互渚挎煡鐪嬫牸寮?
 
@@ -429,6 +432,7 @@ class GraphGenerator:
             messages=messages,
             temperature=0,
             max_tokens=10,
+            extra_body=get_deepseek_extra_body(),
         )
         raw = rsp.choices[0].message.content.strip()
 

@@ -9,6 +9,7 @@ load_dotenv()
 
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro"
+DEFAULT_DEEPSEEK_THINKING = "disabled"
 
 
 def get_deepseek_api_key() -> str | None:
@@ -22,6 +23,13 @@ def get_deepseek_base_url() -> str:
 def get_deepseek_model(requested_model: str | None = None) -> str:
     model = (requested_model or os.getenv("DEEPSEEK_MODEL") or DEFAULT_DEEPSEEK_MODEL).strip()
     return model or DEFAULT_DEEPSEEK_MODEL
+
+
+def get_deepseek_extra_body() -> dict:
+    thinking = (os.getenv("DEEPSEEK_THINKING") or DEFAULT_DEEPSEEK_THINKING).strip().lower()
+    if thinking in {"enabled", "disabled"}:
+        return {"thinking": {"type": thinking}}
+    return {"thinking": {"type": DEFAULT_DEEPSEEK_THINKING}}
 
 
 def get_deepseek_client(api_key: str | None = None) -> OpenAI:

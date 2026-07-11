@@ -3,7 +3,7 @@ from pydantic import BaseModel
 import os
 from typing import Optional, Dict, Any
 from next_sentence import summarize_flowchart
-from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_model
+from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
 
 router = APIRouter()
 
@@ -29,12 +29,17 @@ def _generate_essay_text(client, model: str, system_prompt: str, user_prompt: st
         model=model,
         temperature=temperature,
         max_tokens=max_tokens,
+        extra_body=get_deepseek_extra_body(),
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
     )
-    return chat.choices[0].message.content.strip() if chat.choices else ""
+    if not chat.choices:
+        return ""
+    message = chat.choices[0].message
+    content = getattr(message, "content", None) or ""
+    return content.strip()
 
 
 @router.post("/api/generate-sample-essay", response_model=SampleEssayResponse)
@@ -262,6 +267,17 @@ def generate_sample_essay(req: SampleEssayRequest):
         )
 
     word_count = len(essay.split())
+    if word_count == 0:
+        return SampleEssayResponse(
+            success=False,
+            error=(
+                f"DeepSeek returned an empty essay with model {model}. "
+                "The request reached the model, but no final answer content was produced. "
+                "Please try again, or set DEEPSEEK_THINKING=disabled and restart the backend."
+            ),
+            debug={"model": model, "words": 0},
+        )
+
     if word_count < (req.min_words or 150):
         essay += f"\n\n(Note: Model returned only {word_count} words; please extend to meet the minimum word requirement.)"
 

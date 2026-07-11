@@ -21,8 +21,7 @@ from next_sentence import (
     NextSentenceResponse,
     generate_next_sentence,
 )
-from bar import GraphGenerator as BarGraphGenerator
-from pie import GraphGenerator as PieGraphGenerator
+from chart_feedback import ChartFeedbackService
 from sentence_mapping import (
     SentenceMappingRequest,
     SentenceMappingResponse,
@@ -49,12 +48,13 @@ app.add_middleware(
 )
 
 # 创建静态文件目录
-os.makedirs("generated_charts", exist_ok=True)
+CHARTS_DIR = os.path.join(BASE_DIR, "generated_charts")
+os.makedirs(CHARTS_DIR, exist_ok=True)
 os.makedirs("uploaded_images", exist_ok=True)
 os.makedirs("user_data", exist_ok=True)  # NEW root for per-user data
 
 # 挂载静态文件服务
-app.mount("/charts", StaticFiles(directory="generated_charts"), name="charts")
+app.mount("/charts", StaticFiles(directory=CHARTS_DIR), name="charts")
 app.mount("/uploads", StaticFiles(directory="uploaded_images"), name="uploads")
 
 # ---- 健康检查（可选）----
@@ -88,7 +88,7 @@ def echo(payload: EchoIn):
 
 # ---- 图表分析API ----
 class ChartAnalysisRequest(BaseModel):
-    chart_type: str  # "bar" or "pie"
+    chart_type: str  # "auto", "bar", "line", "area", "pie" or "scatter"
     requirement: str
     student_answer: str
     deplot_text: str  # renamed from deplot_data for consistency with next-sentence
@@ -106,36 +106,22 @@ class ChartAnalysisResponse(BaseModel):
 @app.post("/api/analyze-chart", response_model=ChartAnalysisResponse)
 def analyze_chart(request: ChartAnalysisRequest):
     try:
-        # Select proper generator based on chart type
-        if request.chart_type == "bar":
-            generator = BarGraphGenerator()
-        elif request.chart_type == "pie":
-            generator = PieGraphGenerator()
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported chart type")
+        # Every statistical chart type uses the same alignment and rendering service.
+        service = ChartFeedbackService(CHARTS_DIR)
         
         # 生成图表
-        result = generator.call_ai_and_generate(
-            initial_instruction="Analyze the student's answer and generate visual feedback",
+        result, filename = service.generate(
+            chart_type=request.chart_type,
             requirement=request.requirement,
             student_answer=request.student_answer,
-            image_path=request.image_path,
-            output_format="json",
-            output_path=f"generated_charts/{request.chart_type}_chart_{generator.data_counter}.png",
-            deplot_txt=request.deplot_text
+            deplot_text=request.deplot_text,
         )
-        
-        if "error" in result:
-            return ChartAnalysisResponse(
-                success=False,
-                error=result["error"]
-            )
         
         # 生成修订建议
         revision_suggestions = generate_revision_suggestions(result, request.student_answer)
         
         # 生成图表URL
-        chart_url = f"/charts/{request.chart_type}_chart_{generator.data_counter}.png"
+        chart_url = f"/charts/{filename}"
         
         return ChartAnalysisResponse(
             success=True,
@@ -154,34 +140,32 @@ def generate_revision_suggestions(chart_data: dict, student_answer: str) -> list
     """Generate revision suggestions based on chart data and student answer."""
     suggestions = []
     
-    # Check data completeness
-    if chart_data.get("chart_type") == "pie":
-        total_percentage = sum(chart_data.get("series", [{}])[0].get("values", []))
-        if total_percentage < 100:
-            suggestions.append({
-                "type": "data_completeness",
-                "message": f"Data incomplete: total percentage is {total_percentage}%, consider adding the missing portions",
-                "severity": "medium"
-            })
+    records = chart_data.get("records") if isinstance(chart_data.get("records"), list) else []
+    missing_count = sum(1 for record in records if record.get("missing"))
+    if missing_count:
+        suggestions.append({
+            "type": "data_completeness",
+            "message": f"Your answer leaves {missing_count} item(s) from the original chart unspecified.",
+            "severity": "medium"
+        })
     
     # Check estimated values
-    estimated_values = chart_data.get("style", {}).get("estimated_values", [])
-    if estimated_values:
+    estimated_count = sum(1 for record in records if record.get("estimated"))
+    if estimated_count:
         suggestions.append({
             "type": "data_accuracy",
-            "message": f"Detected {len(estimated_values)} estimated value(s); provide more precise data if possible",
+            "message": f"The visual feedback contains {estimated_count} inferred value(s); use exact figures where possible.",
             "severity": "low"
         })
     
     # Check multi-series structure clarity
-    if chart_data.get("chart_type") == "bar":
-        series_count = len(chart_data.get("series", []))
-        if series_count > 1:
-            suggestions.append({
-                "type": "structure",
-                "message": f"Chart contains {series_count} data series; compare them more clearly in your description",
-                "severity": "low"
-            })
+    series_count = len({record.get("series") for record in records if record.get("series")})
+    if series_count > 1:
+        suggestions.append({
+            "type": "structure",
+            "message": f"The chart contains {series_count} series; make their comparisons explicit.",
+            "severity": "low"
+        })
     
     # Check length requirement
     if len(student_answer.split()) < 150:
@@ -279,38 +263,26 @@ async def analyze_chart_with_image(
             content = await image.read()
             buffer.write(content)
         
-    # Select generator based on chart type
-        if chart_type == "bar":
-            generator = BarGraphGenerator()
-        elif chart_type == "pie":
-            generator = PieGraphGenerator()
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported chart type")
+        # Every statistical chart type uses the same alignment and rendering service.
+        service = ChartFeedbackService(CHARTS_DIR)
         
         # 生成图表
         # choose available textual data (prefer new name)
         _txt = deplot_text if (deplot_text and deplot_text.strip()) else (deplot_data or "")
-        result = generator.call_ai_and_generate(
-            initial_instruction="Analyze the student's answer and generate visual feedback",
+        result, filename = await run_in_threadpool(
+            service.generate,
+            chart_type=chart_type,
             requirement=requirement,
             student_answer=student_answer,
+            deplot_text=_txt,
             image_path=image_path,
-            output_format="json",
-            output_path=f"generated_charts/{chart_type}_chart_{generator.data_counter}.png",
-            deplot_txt=_txt
         )
-        
-        if "error" in result:
-            return ChartAnalysisResponse(
-                success=False,
-                error=result["error"]
-            )
         
         # 生成修订建议
         revision_suggestions = generate_revision_suggestions(result, student_answer)
         
         # 生成图表URL
-        chart_url = f"/charts/{chart_type}_chart_{generator.data_counter}.png"
+        chart_url = f"/charts/{filename}"
         
         return ChartAnalysisResponse(
             success=True,
