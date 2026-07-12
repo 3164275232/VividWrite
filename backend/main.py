@@ -21,7 +21,7 @@ from next_sentence import (
     NextSentenceResponse,
     generate_next_sentence,
 )
-from chart_feedback import ChartFeedbackService
+from hybrid_feedback import HybridFeedbackService
 from sentence_mapping import (
     SentenceMappingRequest,
     SentenceMappingResponse,
@@ -88,7 +88,7 @@ def echo(payload: EchoIn):
 
 # ---- 图表分析API ----
 class ChartAnalysisRequest(BaseModel):
-    chart_type: str  # "auto", "bar", "line", "area", "pie" or "scatter"
+    chart_type: str  # Statistical chart, "map", or "process"
     requirement: str
     student_answer: str
     deplot_text: str  # renamed from deplot_data for consistency with next-sentence
@@ -106,8 +106,7 @@ class ChartAnalysisResponse(BaseModel):
 @app.post("/api/analyze-chart", response_model=ChartAnalysisResponse)
 def analyze_chart(request: ChartAnalysisRequest):
     try:
-        # Every statistical chart type uses the same alignment and rendering service.
-        service = ChartFeedbackService(CHARTS_DIR)
+        service = HybridFeedbackService(CHARTS_DIR)
         
         # 生成图表
         result, filename = service.generate(
@@ -263,8 +262,7 @@ async def analyze_chart_with_image(
             content = await image.read()
             buffer.write(content)
         
-        # Every statistical chart type uses the same alignment and rendering service.
-        service = ChartFeedbackService(CHARTS_DIR)
+        service = HybridFeedbackService(CHARTS_DIR)
         
         # 生成图表
         # choose available textual data (prefer new name)

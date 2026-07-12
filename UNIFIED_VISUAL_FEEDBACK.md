@@ -39,12 +39,32 @@ The currently enabled chart types are bar, line, area, pie, and scatter. The
 same framework can add another statistical mark without a new merge algorithm
 or a new Python plotting module.
 
-## Map-task boundary
+## Hybrid rendering for spatial tasks
 
-IELTS map tasks describe spatial objects and before/after relationships rather
-than a numerical table. DePlot does not extract this scene structure, and a
-DeepSeek text model cannot recover it from image pixels. Map support therefore
-needs a domestic vision model adapter that outputs a scene graph (objects,
-positions, connections, and states). Once that scene graph exists, it can use
-the same alignment contract, but it should not be represented as fake tabular
-data.
+IELTS map and process tasks describe spatial objects, changes, stages and
+connections rather than numerical tables. They now bypass DePlot and use the
+uploaded image as a reference for Alibaba Cloud Wan2.7 image editing.
+
+```text
+bar/line/pie/area/scatter -> DeepSeek records -> Vega-Lite -> PNG
+map/process                -> original image + essay -> Wan2.7 -> local PNG
+```
+
+Configure the spatial renderer in `backend/.env`:
+
+```env
+WAN_API_KEY=your_dashscope_api_key
+WAN_IMAGE_MODEL=wan2.7-image-pro
+WAN_WORKSPACE_ID=your_bailian_workspace_id
+WAN_API_ENDPOINT=
+```
+
+`WAN_WORKSPACE_ID` selects Alibaba Cloud Model Studio's China (Beijing)
+workspace endpoint. `WAN_API_ENDPOINT` can override the complete endpoint.
+The returned temporary image URL is downloaded immediately and stored under
+`backend/generated_charts`, so the frontend always uses a stable local URL.
+
+Spatial feedback remains generative. It can contain label or layout mistakes,
+so the response metadata marks it as `manual-review-required`. Next Sentence
+and Sample Essay are disabled for map/process tasks until a vision-language
+model is added for those writing features.

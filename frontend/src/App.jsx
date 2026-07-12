@@ -5,6 +5,15 @@ import { API_BASE, hello, analyzeChart, analyzeChartWithImage, requestNextSenten
 import Login from "./Login";
 import Flowchart from "./Flowchart";//对应修改1
 
+const SPATIAL_TASK_TYPES = new Set(['map', 'process']);
+
+function taskTypeLabel(type) {
+  if (type === 'map') return 'map task';
+  if (type === 'process') return 'process diagram';
+  if (type === 'auto') return 'statistical chart';
+  return `${type} chart`;
+}
+
 export default function App() {
   // Dev debug flag (set VITE_SHOW_DEBUG=true in .env to enable)
   const SHOW_DEBUG = import.meta.env.VITE_SHOW_DEBUG === 'true';
@@ -50,6 +59,7 @@ export default function App() {
   const [uploadedImage, setUploadedImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [chartType, setChartType] = useState("bar"); // All types use the same unified chart pipeline.
+  const isSpatialTask = SPATIAL_TASK_TYPES.has(chartType);
   const [flowchartData, setFlowchartData] = useState({ nodes: [], edges: [] });
   const [isNextSentenceLoading, setIsNextSentenceLoading] = useState(false);
   const [isSampleEssayLoading, setIsSampleEssayLoading] = useState(false); // separate loading state
@@ -283,7 +293,7 @@ export default function App() {
 
     // Keep DePlot extraction in the background. Stage changes should not be blocked by
     // first-time model loading or a slow chart parse.
-    if (currentStage === 'planning') {
+    if (currentStage === 'planning' && !isSpatialTask) {
       setIsExtractingDeplot(false);
       if (!deplotText.trim() && !deplotTaskRef.current?.promise) {
         runDeplotExtraction(uploadedImage, { showOverlay: false }).catch(() => {
@@ -349,8 +359,10 @@ export default function App() {
       // Reset previous DePlot results and errors
       setDeplotText("");
       setDeplotError("");
-      // Start an invisible DePlot extraction in the background
-      runDeplotExtraction(file, { showOverlay: false }).catch(() => {/* error already recorded; keep silent here */});
+      // Spatial tasks go directly to the reference-image renderer and do not use DePlot.
+      if (!isSpatialTask) {
+        runDeplotExtraction(file, { showOverlay: false }).catch(() => {/* error already recorded; keep silent here */});
+      }
     }
   };
 
@@ -400,8 +412,8 @@ export default function App() {
     setAnalysisError("");
 
     // 若还没有 DePlot 文本，先尝试自动提取一次
-    let deplotForAnalysis = deplotText;
-    if (!deplotForAnalysis.trim()) {
+    let deplotForAnalysis = isSpatialTask ? '(Not required for spatial tasks)' : deplotText;
+    if (!isSpatialTask && !deplotForAnalysis.trim()) {
       try {
         setIsExtractingDeplot(true);
         const fd = new FormData();
@@ -430,7 +442,7 @@ export default function App() {
         const formData = new FormData();
         formData.append('image', uploadedImage);
         formData.append('chart_type', chartType);
-        const requirement = `This is an IELTS Academic Task 1 ${chartType === 'auto' ? 'chart' : chartType + ' chart'}. Summarise the main features and make relevant comparisons.`;
+        const requirement = `This is an IELTS Academic Task 1 ${taskTypeLabel(chartType)}. Summarise the main features and make relevant comparisons.`;
         formData.append('requirement', requirement);
         formData.append('student_answer', text);
         formData.append('deplot_text', deplotForAnalysis);
@@ -470,7 +482,7 @@ export default function App() {
         const formData = new FormData();
         formData.append('image', uploadedImage);
         formData.append('chart_type', chartType);
-        const requirement = `This is an IELTS Academic Task 1 ${chartType === 'auto' ? 'chart' : chartType + ' chart'}. Summarise the main features and make relevant comparisons.`;
+        const requirement = `This is an IELTS Academic Task 1 ${taskTypeLabel(chartType)}. Summarise the main features and make relevant comparisons.`;
         formData.append('requirement', requirement);
         formData.append('student_answer', text);
         if (!deplotForAnalysis.trim()) deplotForAnalysis = '(No DePlot data extracted)';
@@ -574,6 +586,10 @@ export default function App() {
       setLastAddition(null);
       setAiCandidates([]);
       setShowCandidatePanel(false);
+      if (isSpatialTask) {
+        setNextSentenceError('Next Sentence for map/process tasks needs a vision-language model and is not enabled yet.');
+        return;
+      }
       if (!uploadedImage) {
         setNextSentenceError("Please upload an image first.");
         return;
@@ -616,6 +632,10 @@ export default function App() {
       setNextSentenceError("Please upload an image first.");
       return;
     }
+    if (isSpatialTask) {
+      setNextSentenceError('Sample Essay for map/process tasks needs a vision-language model and is not enabled yet.');
+      return;
+    }
 
     setNextSentenceError("");
     let dep = "";
@@ -630,7 +650,7 @@ export default function App() {
 
     try {
       setIsSampleEssayLoading(true);
-      const requirement = `Write an IELTS Academic Task 1 report for this ${chartType === 'auto' ? 'chart' : chartType + ' chart'}.`;
+      const requirement = `Write an IELTS Academic Task 1 report for this ${taskTypeLabel(chartType)}.`;
       const requestData = { deplot_text: dep, flowchart: flowchartData, requirement };
       const res = await generateSampleEssay(requestData);
       
@@ -1071,7 +1091,19 @@ export default function App() {
                     </label>
                     <select
                       value={chartType}
-                      onChange={(e) => setChartType(e.target.value)}
+                      onChange={(e) => {
+                        const nextType = e.target.value;
+                        setChartType(nextType);
+                        setDeplotError("");
+                        if (SPATIAL_TASK_TYPES.has(nextType)) {
+                          deplotTaskRef.current.seq += 1;
+                          deplotTaskRef.current.promise = null;
+                          setDeplotText("");
+                          setIsExtractingDeplot(false);
+                        } else if (uploadedImage && !deplotText.trim()) {
+                          runDeplotExtraction(uploadedImage, { showOverlay: false }).catch(() => {});
+                        }
+                      }}
                       style={{
                         padding: "0.5rem",
                         borderRadius: "4px",
@@ -1087,7 +1119,8 @@ export default function App() {
                       <option value="area">Area Chart</option>
                       <option value="pie">Pie Chart</option>
                       <option value="scatter">Scatter Plot</option>
-                      <option value="map" disabled>Map Task (vision model required)</option>
+                      <option value="map">Map Task</option>
+                      <option value="process">Process Diagram</option>
                     </select>
                   </div>
                 )}
@@ -1286,36 +1319,36 @@ export default function App() {
                         <>
                           <button
                             onClick={handleNextSentence}
-                            disabled={isNextSentenceLoading || !uploadedImage}
+                            disabled={isNextSentenceLoading || !uploadedImage || isSpatialTask}
                             style={{
                               padding: '0.5rem 0.9rem',
-                              background: isNextSentenceLoading || !uploadedImage ? '#888' : '#6f42c1',
+                              background: isNextSentenceLoading || !uploadedImage || isSpatialTask ? '#888' : '#6f42c1',
                               color: '#fff',
                               border: 'none',
                               borderRadius: 4,
-                              cursor: isNextSentenceLoading || !uploadedImage ? 'not-allowed' : 'pointer',
+                              cursor: isNextSentenceLoading || !uploadedImage || isSpatialTask ? 'not-allowed' : 'pointer',
                               fontSize: '0.85rem',
                               display: 'flex',
                               alignItems: 'center',
                               gap: '0.3rem'
                             }}
-                            title="AI suggest the next sentence"
+                            title={isSpatialTask ? 'Requires a vision-language model for spatial tasks' : 'AI suggest the next sentence'}
                           >
                             {isNextSentenceLoading ? 'Thinking...' : 'Next Sentence ✨'}
                           </button>
                           <button
                             onClick={handleGenerateSampleEssay}
-                            disabled={isSampleEssayLoading || !uploadedImage}
+                            disabled={isSampleEssayLoading || !uploadedImage || isSpatialTask}
                             style={{
                               padding: '0.5rem 0.9rem',
-                              background: isSampleEssayLoading || !uploadedImage ? '#888' : '#20c997',
+                              background: isSampleEssayLoading || !uploadedImage || isSpatialTask ? '#888' : '#20c997',
                               color: '#fff',
                               border: 'none',
                               borderRadius: 4,
-                              cursor: isSampleEssayLoading || !uploadedImage ? 'not-allowed' : 'pointer',
+                              cursor: isSampleEssayLoading || !uploadedImage || isSpatialTask ? 'not-allowed' : 'pointer',
                               fontSize: '0.85rem'
                             }}
-                            title="Generate a full sample essay (overwrites current text)"
+                            title={isSpatialTask ? 'Requires a vision-language model for spatial tasks' : 'Generate a full sample essay (overwrites current text)'}
                           >
                             {isSampleEssayLoading ? 'Thinking...' : 'Sample Essay 📝'}
                           </button>
