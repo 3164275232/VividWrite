@@ -1,5 +1,0 @@
-The data illustrates the trends in telephone calls made in Australia across three categories—local fixed line calls, national and international fixed line calls, and mobile calls—over a period from 2001 to 2008.
-
-In summary, local fixed line calls experienced a gradual increase until 2005, reaching a peak of 90 billion calls, before declining to 73 billion by 2008. National and international fixed line calls showed a consistent upward trend throughout the period, rising from 38 billion calls in 2001 to 58 billion in 2008. In stark contrast, mobile calls exhibited a significant growth trajectory, escalating from a mere 3 billion calls in 2001 to 48 billion calls by 2008.
-
-These results highlight a notable shift in communication preferences among Australians. While the reliance on local fixed line calls diminished over the years, national and international fixed line calls maintained a steady increase. However, the most striking change was seen in mobile calls, which surged dramatically, indicating a clear transition towards mobile communication as the preferred method of contact in Australia during this period.
