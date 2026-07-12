@@ -1,25 +1,16 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import ErrorBoundary from './ErrorBoundary.jsx';
 import CmEditor from './CmEditor.jsx';
-import { API_BASE, hello, analyzeChart, analyzeChartWithImage, requestNextSentence, mapSentences, extractDeplot, saveFinalImage, saveRevisionText, generateSampleEssay, reviewRevision } from "./api";
+import { analyzeChartWithImage, requestNextSentence, mapSentences, extractDeplot, saveFinalImage, saveRevisionText, generateSampleEssay, reviewRevision, resolveBackendUrl } from "./api";
 import Login from "./Login";
 import Flowchart from "./Flowchart";//对应修改1
 
-const SPATIAL_TASK_TYPES = new Set(['map', 'process']);
-
-function taskTypeLabel(type) {
-  if (type === 'map') return 'map task';
-  if (type === 'process') return 'process diagram';
-  if (type === 'auto') return 'statistical chart';
-  return `${type} chart`;
-}
+import { analysisRequirement, sampleEssayRequirement, SPATIAL_TASK_TYPES } from './utils/taskTypes';
 
 export default function App() {
   // Dev debug flag (set VITE_SHOW_DEBUG=true in .env to enable)
   const SHOW_DEBUG = import.meta.env.VITE_SHOW_DEBUG === 'true';
 
-  const [msg, setMsg] = useState("Loading...");
-  const [err, setErr] = useState("");
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [username, setUsername] = useState(""); // NEW: current logged in user
   const [leftWidth, setLeftWidth] = useState(60); // Percentage width of the left pane
@@ -41,14 +32,11 @@ export default function App() {
   // Stage transition notification removed
   // Save reminder states
   const [showSaveReminder, setShowSaveReminder] = useState(false);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   //修改1
   const [rightContent, setRightContent] = useState("Flowchart");
-  const [showFeedbackSubmenu, setShowFeedbackSubmenu] = useState(false);
   
   // Removed chartData debug state per request
   const [chartUrl, setChartUrl] = useState(null);
-  const [revisionSuggestions, setRevisionSuggestions] = useState([]);
   // New revision review data (vocabulary / grammar / coherence / overall) with mapped suggestions
   const [revisionReview, setRevisionReview] = useState(null); // {overall:{...}, suggestions:[...]}
   const [reviewSuggestions, setReviewSuggestions] = useState([]); // normalized list with id, category, message, severity, ranges
@@ -147,11 +135,9 @@ export default function App() {
   const [sentenceRanges, setSentenceRanges] = useState([]); // [{index,start,end,text}]
   const [mappingStatus, setMappingStatus] = useState('idle'); // idle | loading | ok | missing | error
   // Missing states (restored)
-  const [mappingData, setMappingData] = useState(null); // full response from structure analyze
   const [nodeToSentenceIndices, setNodeToSentenceIndices] = useState({}); // { nodeId: [sentenceIndex,...] }
   const [lastAddition, setLastAddition] = useState(null); // { start,end,prevText }
   const editorRef = useRef(null);
-  const [editorFocused, setEditorFocused] = useState(false);
 
   // Helper: build highlight ranges from sentence indices
   const buildHighlightRanges = (indices) => {
@@ -176,7 +162,6 @@ export default function App() {
     }
     mapSentences({ current_text: text, flowchart: flowchartData })
       .then(res => {
-        setMappingData(res);
         if (res.error) {
           setMappingStatus('error');
           return;
@@ -257,12 +242,6 @@ export default function App() {
     editorRef.current.highlightSentenceRanges(ranges);
   };
 
-  useEffect(() => {
-    hello()
-      .then((data) => setMsg(data.message))
-      .catch((e) => setErr(e.message));
-  }, []);
-
   const handleLogin = (uname) => {
     setUsername(uname);
     setIsLoggedIn(true);
@@ -286,7 +265,6 @@ export default function App() {
     // Only show save reminder in revision stage (not in drafting)
     if (text.trim() && currentStage === 'revision') {
       console.log('Has unsaved text in revision, showing save reminder');
-      setHasUnsavedChanges(true);
       setShowSaveReminder(true);
       return;
     }
@@ -307,8 +285,6 @@ export default function App() {
 
   const confirmStageAdvance = async () => {
     setShowStageConfirm(false);
-    const fromStage = stages[stageIndex];
-    const toStage = stages[stageIndex + 1];
     
     // Save final image when leaving planning (non-blocking)
     setDeplotError("");
@@ -327,13 +303,11 @@ export default function App() {
   
   const handleSaveReminderConfirm = () => {
     setShowSaveReminder(false);
-    setHasUnsavedChanges(false);
     setShowStageConfirm(true);
   };
   
   const handleSaveReminderCancel = () => {
     setShowSaveReminder(false);
-    setHasUnsavedChanges(false);
   };
 
   // Keep rightContent consistent with stage rules (now allow Flowchart also in revision)
@@ -376,23 +350,7 @@ export default function App() {
     setDeplotError("");
   };
 //修改2
-  const handleFlowchartClick = () => {
-    setRightContent("Flowchart");
-    setShowFeedbackSubmenu(false);
-  };
-
-  const handleFeedbackClick = () => {
-    setShowFeedbackSubmenu(true);
     // 默认显示Visual Feedback
-    if (rightContent === "Flowchart") {
-      setRightContent("Visual Feedback");
-    }
-  };
-
-  const handleSubmenuClick = (content) => {
-    setRightContent(content);
-  };
-
   const handleAnalyzeText = async () => {
     if (!text.trim()) {
   setAnalysisError("Please enter text to analyze");
@@ -426,7 +384,7 @@ export default function App() {
         } else {
     setDeplotError("DePlot returned empty result, continuing with placeholder text");
         }
-      } catch (e) {
+      } catch {
   setDeplotError("Automatic DePlot extraction failed, continuing with placeholder text");
       } finally {
         setIsExtractingDeplot(false);
@@ -442,21 +400,13 @@ export default function App() {
         const formData = new FormData();
         formData.append('image', uploadedImage);
         formData.append('chart_type', chartType);
-        const requirement = `This is an IELTS Academic Task 1 ${taskTypeLabel(chartType)}. Summarise the main features and make relevant comparisons.`;
+        const requirement = analysisRequirement(chartType);
         formData.append('requirement', requirement);
         formData.append('student_answer', text);
         formData.append('deplot_text', deplotForAnalysis);
         const chartPromise = analyzeChartWithImage(formData);
         const [reviewRes, chartRes] = await Promise.allSettled([reviewPromise, chartPromise]);
         // helper to normalize chart URL (backend returns /charts/.. relative to backend origin)
-        const resolveChartUrl = (u) => {
-          if (!u) return null;
-          if (/^https?:\/\//i.test(u)) return u; // already absolute
-          const base = API_BASE;
-            if (u.startsWith('/')) return base + u;
-            return base + '/' + u;
-        };
-
         if (reviewRes.status === 'fulfilled' && reviewRes.value.success) {
           console.log('Revision review response:', reviewRes.value);
           console.log('Total suggestions received:', (reviewRes.value.suggestions || []).length);
@@ -469,35 +419,26 @@ export default function App() {
           setAnalysisError(reviewRes.reason?.message || 'Revision review failed');
         }
         if (chartRes.status === 'fulfilled' && chartRes.value.success) {
-          setChartUrl(resolveChartUrl(chartRes.value.chart_url));
+          setChartUrl(resolveBackendUrl(chartRes.value.chart_url));
         } else if (chartRes.status === 'fulfilled') {
           setAnalysisError(prev => prev ? prev + '; ' + (chartRes.value.error || 'Chart analysis failed') : (chartRes.value.error || 'Chart analysis failed'));
         } else {
           setAnalysisError(prev => prev ? prev + '; ' + (chartRes.reason?.message || 'Chart analysis failed') : (chartRes.reason?.message || 'Chart analysis failed'));
         }
         // remove older simple revisionSuggestions list (not used in revision now)
-        setRevisionSuggestions([]);
       } else {
         // Planning/drafting keep previous analyze (chart + simple suggestions)
         const formData = new FormData();
         formData.append('image', uploadedImage);
         formData.append('chart_type', chartType);
-        const requirement = `This is an IELTS Academic Task 1 ${taskTypeLabel(chartType)}. Summarise the main features and make relevant comparisons.`;
+        const requirement = analysisRequirement(chartType);
         formData.append('requirement', requirement);
         formData.append('student_answer', text);
         if (!deplotForAnalysis.trim()) deplotForAnalysis = '(No DePlot data extracted)';
         formData.append('deplot_text', deplotForAnalysis);
-        const resolveChartUrl = (u) => {
-          if (!u) return null;
-          if (/^https?:\/\//i.test(u)) return u;
-          const base = API_BASE;
-          if (u.startsWith('/')) return base + u;
-          return base + '/' + u;
-        };
         const result = await analyzeChartWithImage(formData);
         if (result.success) {
-          setChartUrl(resolveChartUrl(result.chart_url));
-          setRevisionSuggestions(result.revision_suggestions || []);
+          setChartUrl(resolveBackendUrl(result.chart_url));
         } else {
           setAnalysisError(result.error || "分析失败");
         }
@@ -650,7 +591,7 @@ export default function App() {
 
     try {
       setIsSampleEssayLoading(true);
-      const requirement = `Write an IELTS Academic Task 1 report for this ${taskTypeLabel(chartType)}.`;
+      const requirement = sampleEssayRequirement(chartType);
       const requestData = { deplot_text: dep, flowchart: flowchartData, requirement };
       const res = await generateSampleEssay(requestData);
       
@@ -877,7 +818,7 @@ export default function App() {
               </div>
               {/* Removed inline status badges in favor of modal */}
               <button
-                onClick={(e) => {
+                onClick={() => {
                   console.log('Button clicked!', { stageIndex, stagesLength: stages.length, disabled: stageIndex === stages.length - 1 });
                   handleNextStage();
                 }}
@@ -1263,8 +1204,6 @@ export default function App() {
                         borderRadius: 6,
                         background: '#f0f0f0'
                       }}
-                      onFocus={() => setEditorFocused(true)}
-                      onBlur={() => setEditorFocused(false)}
                     >
                       <CmEditor
                         ref={editorRef}

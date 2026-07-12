@@ -6,10 +6,10 @@ import { placeholder as cmPlaceholder } from '@codemirror/view';
 import { history, historyKeymap, defaultKeymap } from '@codemirror/commands';
 
 // Effect to set transient highlight ranges
-export const setTransientHighlights = StateEffect.define({});
+const setTransientHighlights = StateEffect.define({});
 
 // Effect to set persistent highlight ranges (future use)
-export const setPersistentHighlights = StateEffect.define({});
+const setPersistentHighlights = StateEffect.define({});
 
 // Build a decoration for yellow highlight
 const yellowMark = Decoration.mark({ class: 'cm-hl-yellow' });
@@ -99,6 +99,7 @@ function updateIfChanged(view, newValue) {
 const CmEditor = forwardRef(function CmEditor({ value, onChange, style, placeholder = '' }, ref) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
+  const initialValueRef = useRef(value);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -107,7 +108,7 @@ const CmEditor = forwardRef(function CmEditor({ value, onChange, style, placehol
       dynamicExtensions.push(cmPlaceholder(placeholder));
     }
     const state = EditorState.create({
-      doc: value || '',
+      doc: initialValueRef.current || '',
       extensions: [
         ...baseExtensions,
         ...dynamicExtensions,
@@ -121,7 +122,7 @@ const CmEditor = forwardRef(function CmEditor({ value, onChange, style, placehol
     const view = new EditorView({ state, parent: hostRef.current });
     viewRef.current = view;
     return () => view.destroy();
-  }, []);
+  }, [onChange, placeholder]);
 
   // External value sync
   useEffect(() => {

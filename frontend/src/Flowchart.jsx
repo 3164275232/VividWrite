@@ -118,21 +118,6 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
   const canvasRef = useRef(null);
   const dragInfoRef = useRef(null); // { id, offsetX, offsetY }
 
-  // Keyboard deletion
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedNodeId) {
-          deleteSelectedNode();
-        } else if (selectedEdgeId) {
-          deleteSelectedEdge();
-        }
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [selectedNodeId, selectedEdgeId]);
-
   const getNodeById = (id) => nodes.find(n => n.id === id);
 
   const handleMouseDownNode = (e, node) => {
@@ -264,6 +249,19 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
     setEdges(prev => prev.filter(e => e.id !== selectedEdgeId));
     setSelectedEdgeId(null);
   }, [selectedEdgeId, readOnly]);
+
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+      if (selectedNodeId) {
+        deleteSelectedNode();
+      } else if (selectedEdgeId) {
+        deleteSelectedEdge();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedNodeId, selectedEdgeId, deleteSelectedNode, deleteSelectedEdge]);
 
   const unifiedDelete = () => {
     if (readOnly) return;
@@ -477,9 +475,9 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
               <div style={{ fontWeight: 'bold', fontSize: 13, marginBottom: 4, marginTop: 20 }}
                 contentEditable={!readOnly}
                 suppressContentEditableWarning
-                onDoubleClick={(e) => { if (disabled) return; e.stopPropagation(); setSelectedNodeId(node.id); }}
+                onDoubleClick={(e) => { if (editingDisabled) return; e.stopPropagation(); setSelectedNodeId(node.id); }}
                 onBlur={(e) => updateNodeTitle(node.id, e.currentTarget.textContent.slice(0,60))}
-                onMouseDown={(e) => { if (disabled) return; e.stopPropagation(); }}
+                onMouseDown={(e) => { if (editingDisabled) return; e.stopPropagation(); }}
               >
                 {node.title}
               </div>

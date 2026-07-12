@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from wan_image_renderer import WanImageRendererError, WanSpatialFeedbackService
+from wan_image_renderer import WanImageRendererError, WanSpatialFeedbackService, get_wan_endpoint
 
 
 def png_bytes() -> bytes:
@@ -107,6 +107,25 @@ class WanSpatialFeedbackTests(unittest.TestCase):
                     student_answer="The material is heated.",
                     image_path=reference,
                 )
+
+    def test_workspace_endpoint_accepts_short_id_or_full_hostname(self):
+        with patch.dict(os.environ, {"WAN_API_ENDPOINT": "", "WAN_WORKSPACE_ID": "ws-example"}, clear=False):
+            self.assertEqual(
+                get_wan_endpoint(),
+                "https://ws-example.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+            )
+        with patch.dict(
+            os.environ,
+            {
+                "WAN_API_ENDPOINT": "",
+                "WAN_WORKSPACE_ID": "ws-example.cn-beijing.maas.aliyuncs.com",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                get_wan_endpoint(),
+                "https://ws-example.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+            )
 
 
 if __name__ == "__main__":

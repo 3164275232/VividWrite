@@ -1,150 +1,82 @@
 export const API_BASE = (import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000').replace(/\/$/, '');
-const BASE = API_BASE;
 
 function backendUnavailableMessage(action) {
-  return `${action}: cannot reach backend at ${BASE}. Make sure the FastAPI backend is running and VITE_API_BASE points to it.`;
+  return `${action}: cannot reach backend at ${API_BASE}. Make sure the FastAPI backend is running and VITE_API_BASE points to it.`;
 }
 
-export async function hello() {
-  const res = await fetch(`${BASE}/api/hello`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
-
-export async function analyzeChart(chartData) {
-  const res = await fetch(`${BASE}/api/analyze-chart`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(chartData),
-  });
-  
-  if (!res.ok) {
-    const errorData = await res.json();
-    throw new Error(errorData.error || `HTTP ${res.status}`);
-  }
-  
-  return res.json();
-}
-
-export async function analyzeChartWithImage(formData) {
-  const res = await fetch(`${BASE}/api/analyze-chart-with-image`, {
-    method: 'POST',
-    body: formData, // 不设置Content-Type，让浏览器自动设置multipart/form-data
-  });
-  
-  if (!res.ok) {
-    const errorData = await res.json();
-    throw new Error(errorData.error || `HTTP ${res.status}`);
-  }
-  
-  return res.json();
-}
-
-export async function requestNextSentence(payload) {
-  const res = await fetch(`${BASE}/api/next-sentence`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  if (!res.ok) {
-    let errText = `HTTP ${res.status}`;
-    try { const data = await res.json(); errText = data.error || errText; } catch {}
-    throw new Error(errText);
-  }
-  return res.json();
-}
-
-export async function mapSentences(payload) {
-  const res = await fetch(`${BASE}/api/map-sentences`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  if (!res.ok) {
-    let errText = `HTTP ${res.status}`;
-    try { const data = await res.json(); errText = data.error || errText; } catch {}
-    throw new Error(errText);
-  }
-  return res.json();
-}
-
-// DePlot extraction (image -> structured text string)
-export async function extractDeplot(formData) {
-  // formData should contain { image: File }
-  let res;
+async function requestJson(path, options, action) {
+  let response;
   try {
-    res = await fetch(`${BASE}/api/deplot-extract`, {
-      method: 'POST',
-      body: formData
-    });
-  } catch (error) {
-    throw new Error(backendUnavailableMessage('DePlot extraction failed'));
+    response = await fetch(`${API_BASE}${path}`, options);
+  } catch {
+    throw new Error(backendUnavailableMessage(action));
   }
-  if (!res.ok) {
-    let errText = `HTTP ${res.status}`;
-    try { const data = await res.json(); errText = data.detail || data.error || errText; } catch {}
-    throw new Error(errText);
-  }
-  return res.json();
-}
 
-export async function saveFinalImage(username, file) {
-  const fd = new FormData();
-  fd.append('username', username);
-  fd.append('image', file);
-  const res = await fetch(`${BASE}/api/save-final-image`, { method: 'POST', body: fd });
-  if (!res.ok) {
-    let t = `HTTP ${res.status}`; try { const d = await res.json(); t = d.detail || d.error || t; } catch {}
-    throw new Error(t);
-  }
-  return res.json();
-}
-
-export async function saveRevisionText(username, text) {
-  const res = await fetch(`${BASE}/api/save-revision-text`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, text })
-  });
-  if (!res.ok) {
-    let t = `HTTP ${res.status}`; try { const d = await res.json(); t = d.detail || d.error || t; } catch {}
-    throw new Error(t);
-  }
-  return res.json();
-}
-
-export async function generateSampleEssay(payload) {
-  // payload: { deplot_text, flowchart, requirement? }
-  let res;
+  let data = {};
   try {
-    res = await fetch(`${BASE}/api/generate-sample-essay`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-  } catch (error) {
-    throw new Error(backendUnavailableMessage('Sample essay generation failed'));
+    data = await response.json();
+  } catch {
+    // Preserve the HTTP status when the backend returns a non-JSON response.
   }
-  if (!res.ok) {
-    let t = `HTTP ${res.status}`; try { const d = await res.json(); t = d.detail || d.error || t; } catch {}
-    throw new Error(t);
+  if (!response.ok) {
+    throw new Error(data.detail || data.error || data.message || `HTTP ${response.status}`);
   }
-  return res.json();
+  return data;
 }
 
-// Revision stage comprehensive review (vocabulary / grammar / coherence / overall)
-export async function reviewRevision(payload) {
-  // payload: { text, flowchart, deplot_text }
-  const res = await fetch(`${BASE}/api/revision-review`, {
+function postJson(path, payload, action) {
+  return requestJson(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  if (!res.ok) {
-    let t = `HTTP ${res.status}`; try { const d = await res.json(); t = d.detail || d.error || t; } catch {}
-    throw new Error(t);
-  }
-  return res.json();
+    body: JSON.stringify(payload),
+  }, action);
+}
+
+export function resolveBackendUrl(url) {
+  if (!url || /^https?:\/\//i.test(url)) return url || null;
+  return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
+export function analyzeChartWithImage(formData) {
+  return requestJson('/api/analyze-chart-with-image', {
+    method: 'POST',
+    body: formData,
+  }, 'Chart analysis failed');
+}
+
+export function requestNextSentence(payload) {
+  return postJson('/api/next-sentence', payload, 'Next sentence generation failed');
+}
+
+export function mapSentences(payload) {
+  return postJson('/api/map-sentences', payload, 'Sentence mapping failed');
+}
+
+export function extractDeplot(formData) {
+  return requestJson('/api/deplot-extract', {
+    method: 'POST',
+    body: formData,
+  }, 'DePlot extraction failed');
+}
+
+export function saveFinalImage(username, file) {
+  const formData = new FormData();
+  formData.append('username', username);
+  formData.append('image', file);
+  return requestJson('/api/save-final-image', {
+    method: 'POST',
+    body: formData,
+  }, 'Saving the final image failed');
+}
+
+export function saveRevisionText(username, text) {
+  return postJson('/api/save-revision-text', { username, text }, 'Saving revision text failed');
+}
+
+export function generateSampleEssay(payload) {
+  return postJson('/api/generate-sample-essay', payload, 'Sample essay generation failed');
+}
+
+export function reviewRevision(payload) {
+  return postJson('/api/revision-review', payload, 'Revision review failed');
 }

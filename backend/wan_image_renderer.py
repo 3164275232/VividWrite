@@ -8,6 +8,7 @@ import os
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 from dotenv import load_dotenv
@@ -39,8 +40,15 @@ def get_wan_endpoint() -> str:
         return explicit
     workspace_id = (os.getenv("WAN_WORKSPACE_ID") or "").strip()
     if workspace_id:
+        # Accept the short ws-* ID, the workspace hostname, or a full workspace URL.
+        parsed = urlparse(workspace_id if "://" in workspace_id else f"//{workspace_id}")
+        hostname = (parsed.hostname or workspace_id).strip().rstrip("/")
+        if hostname.endswith(".maas.aliyuncs.com"):
+            base = f"https://{hostname}"
+        else:
+            base = f"https://{hostname}.cn-beijing.maas.aliyuncs.com"
         return (
-            f"https://{workspace_id}.cn-beijing.maas.aliyuncs.com/api/v1/services/"
+            f"{base}/api/v1/services/"
             "aigc/multimodal-generation/generation"
         )
     return DEFAULT_WAN_ENDPOINT
@@ -92,6 +100,11 @@ STRICT CONTENT RULES:
 5. For a map, maintain north/south/east/west and relative positions. For a process,
    maintain the described sequence and arrow direction.
 6. Output one flat, professional IELTS-style diagram, not a mockup or screenshot.
+7. Replace an original title when it conflicts with the state described by the student
+   (for example, change "before redevelopment" to "after redevelopment"). Never leave a
+   title that describes the wrong time or version of the diagram.
+8. Give every explicitly changed object a short exact English label when space permits,
+   such as "Pedestrian bridge", "Public park" or "Car park".
 
 TASK REQUIREMENT:
 {requirement.strip() or '(No separate task wording supplied.)'}
