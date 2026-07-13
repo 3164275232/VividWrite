@@ -161,9 +161,10 @@ estimated or missing. The overall upward relationship should remain visible.
 8. Confirm that stated facts are shown, omitted facts are absent, and inferred
    facts are treated as estimates rather than copied from the original.
 9. Repeat steps 3-8 for all five images.
-10. Finally, repeat one bar or line test with `Auto Detect`. If Auto Detect picks
-    the wrong visual mark, record it separately; DePlot extracts table content
-    but does not reliably preserve the original mark type.
+10. Finally, repeat the pie test with `Auto Detect`. A clearly colored circular
+    chart should be detected locally as a pie before DeepSeek alignment. Then
+    repeat one bar or line test to confirm those images are not misclassified
+    as pies.
 
 For the first acceptance round, treat Bar and Line as pass/fail product tests.
 Treat Area, Pie, and Scatter as diagnostic tests: inspect the DePlot result and

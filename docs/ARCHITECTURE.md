@@ -25,6 +25,8 @@ flowchart LR
 - `storage.py` validates filenames and usernames and centralizes persistence.
 - `hybrid_feedback.py` is the only module that chooses a rendering pipeline.
 - `chart_feedback.py` asks DeepSeek for one common long-form record structure.
+- `chart_detection.py` performs high-confidence local pie detection for Auto
+  Detect, avoiding another paid model request.
 - `chart_renderer.py` validates and renders Vega-Lite specifications.
 - `wan_image_renderer.py` handles reference-image generation for spatial tasks.
 - `api.js` is the frontend's only direct HTTP boundary.
@@ -56,6 +58,10 @@ Vega-Lite is the deterministic renderer for statistical charts. Wan is used
 only where a declarative statistical chart cannot express spatial changes,
 namely IELTS map and process tasks. Wan results require manual review because
 generative images can alter labels or geometry.
+
+The renderer also enforces presentation invariants after model output: nominal
+domains retain source order, colors stay bound to that order, and pie charts
+always receive a category-and-value text layer.
 
 ## Runtime data
 

@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from chart_detection import detect_chart_type
 from chart_renderer import InvalidChartSpec, extract_image_palette, render_vega_lite_png
 from deepseek_config import get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
 
@@ -62,6 +63,9 @@ Vega-Lite rules:
 - Do not use URL data, href, calculate, expr, signal or external assets.
 - Make omissions visible as gaps. Do not invent placeholder numerical heights.
 - For pie charts use value as theta and category or series as color.
+- Preserve category and series order exactly as they first appear in the official DePlot
+  framework. Never alphabetically reorder legend entries.
+- For pie charts include readable category-and-value labels on the slices.
 - For temporal trends, preserve the official period/category order using ordinal encoding
   unless genuine machine-readable dates are certain.
 
@@ -123,7 +127,8 @@ def _clean_record(record: dict) -> dict:
 
 
 def _normalise_result(raw: dict, requested_type: str) -> dict:
-    chart_type = str(raw.get("chart_type") or requested_type or "").lower().strip()
+    model_type = str(raw.get("chart_type") or "").lower().strip()
+    chart_type = requested_type if requested_type and requested_type != "auto" else model_type
     if chart_type not in SUPPORTED_CHART_TYPES - {"auto"}:
         raise UnifiedChartFeedbackError(f"DeepSeek returned unsupported chart type: {chart_type}")
     records_raw = raw.get("records")
@@ -183,8 +188,11 @@ class ChartFeedbackService:
         if not deplot_text.strip() or deplot_text.strip() == "(No DePlot data extracted)":
             raise UnifiedChartFeedbackError("DePlot textual data is required for the official chart framework.")
 
+        detected_type = detect_chart_type(image_path) if requested_type == "auto" else None
+        effective_type = detected_type or requested_type
         user_payload = {
-            "requested_chart_type": requested_type,
+            "requested_chart_type": effective_type,
+            "auto_detected_from_image": detected_type,
             "task_requirement": requirement,
             "official_deplot_text": deplot_text,
             "student_answer": student_answer,
@@ -203,7 +211,7 @@ class ChartFeedbackService:
         if not response.choices:
             raise UnifiedChartFeedbackError("DeepSeek returned no chart choices.")
         raw = _extract_json_object(response.choices[0].message.content or "")
-        result = _normalise_result(raw, requested_type)
+        result = _normalise_result(raw, effective_type)
 
         filename = f"visual_feedback_{uuid.uuid4().hex}.png"
         output_path = self.output_dir / filename
@@ -216,6 +224,8 @@ class ChartFeedbackService:
                 result["title"],
                 output_path,
                 palette,
+                chart_type=result["chart_type"],
+                unit=f'{result["axes"]["unit"]} {result["axes"]["y_label"]}'.strip(),
             )
         except InvalidChartSpec as exc:
             raise UnifiedChartFeedbackError(f"DeepSeek produced an unsafe or invalid chart specification: {exc}") from exc
