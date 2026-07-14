@@ -19,6 +19,15 @@ from PIL import Image
 
 ALLOWED_MARKS = {"arc", "area", "bar", "line", "point", "rect", "rule", "text", "tick"}
 FORBIDDEN_KEYS = {"url", "href", "calculate", "expr", "signal"}
+TEXT_OUTLINE_KEYS = {
+    "stroke",
+    "strokeWidth",
+    "strokeOpacity",
+    "strokeDash",
+    "strokeDashOffset",
+    "strokeJoin",
+    "strokeMiterLimit",
+}
 
 
 class InvalidChartSpec(ValueError):
@@ -170,6 +179,29 @@ def _mark_type(mark: Any) -> str | None:
     return None
 
 
+def _remove_text_outlines(value: Any) -> None:
+    """Keep all Vega text marks free of halo/outline styling."""
+    if isinstance(value, list):
+        for item in value:
+            _remove_text_outlines(item)
+        return
+    if not isinstance(value, dict):
+        return
+
+    if _mark_type(value.get("mark")) == "text":
+        mark = value.get("mark")
+        if isinstance(mark, dict):
+            for key in TEXT_OUTLINE_KEYS:
+                mark.pop(key, None)
+        encoding = value.get("encoding")
+        if isinstance(encoding, dict):
+            for key in TEXT_OUTLINE_KEYS:
+                encoding.pop(key, None)
+
+    for child in value.values():
+        _remove_text_outlines(child)
+
+
 def _validate_tree(value: Any, *, depth: int = 0) -> None:
     if depth > 20:
         raise InvalidChartSpec("Chart specification is too deeply nested.")
@@ -315,8 +347,6 @@ def _prepare_pie_chart(
                     "fontSize": 12,
                     "fontWeight": "bold",
                     "fill": "white",
-                    "stroke": "#111827",
-                    "strokeWidth": 0.8,
                 },
                 "encoding": {
                     "theta": theta,
@@ -338,19 +368,21 @@ def prepare_vega_lite_spec(
     chart_type: str | None = None,
     unit: str = "",
 ) -> dict:
-    if not isinstance(spec, dict):
-        raise InvalidChartSpec("DeepSeek did not return a Vega-Lite object.")
     if not records:
         raise InvalidChartSpec("No chart records were produced from the student answer.")
-    if "mark" not in spec and "layer" not in spec:
-        raise InvalidChartSpec("Vega-Lite specification needs a mark or layer.")
-
-    prepared = copy.deepcopy(spec)
-    _validate_tree(prepared)
-    _remove_nested_data(prepared)
-    render_records = records
     if chart_type == "pie":
         prepared, render_records = _prepare_pie_chart(records, unit)
+    else:
+        if not isinstance(spec, dict):
+            raise InvalidChartSpec("DeepSeek did not return a Vega-Lite object.")
+        if "mark" not in spec and "layer" not in spec:
+            raise InvalidChartSpec("Vega-Lite specification needs a mark or layer.")
+        prepared = copy.deepcopy(spec)
+        _validate_tree(prepared)
+        _remove_nested_data(prepared)
+        render_records = records
+    _validate_tree(prepared)
+    _remove_text_outlines(prepared)
     _apply_encoding_order(prepared, render_records, palette)
     prepared["$schema"] = "https://vega.github.io/schema/vega-lite/v6.json"
     prepared["data"] = {"values": render_records}
@@ -372,6 +404,7 @@ def prepare_vega_lite_spec(
                 "titleLimit": 320,
             },
             "title": {"fontSize": 16, "anchor": "middle", "offset": 16},
+            "text": {"stroke": None, "strokeWidth": 0, "strokeOpacity": 0},
             "view": {"stroke": None},
         }
     )

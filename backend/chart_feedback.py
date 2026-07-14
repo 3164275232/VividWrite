@@ -197,38 +197,62 @@ class ChartFeedbackService:
             "official_deplot_text": deplot_text,
             "student_answer": student_answer,
         }
-        response = self.client.chat.completions.create(
-            model=get_deepseek_model(),
-            temperature=0,
-            max_tokens=5000,
-            response_format={"type": "json_object"},
-            extra_body=get_deepseek_extra_body(),
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-            ],
-        )
-        if not response.choices:
-            raise UnifiedChartFeedbackError("DeepSeek returned no chart choices.")
-        raw = _extract_json_object(response.choices[0].message.content or "")
-        result = _normalise_result(raw, effective_type)
-
         filename = f"visual_feedback_{uuid.uuid4().hex}.png"
         output_path = self.output_dir / filename
         palette = extract_image_palette(image_path)
-        result["style"] = {"color_palette": palette, "renderer": "vega-lite"}
-        try:
-            result["vega_lite_spec"] = render_vega_lite_png(
-                result["vega_lite_spec"],
-                result["records"],
-                result["title"],
-                output_path,
-                palette,
-                chart_type=result["chart_type"],
-                unit=f'{result["axes"]["unit"]} {result["axes"]["y_label"]}'.strip(),
+        validation_error: str | None = None
+        for attempt in range(2):
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+            ]
+            if validation_error:
+                messages.insert(
+                    1,
+                    {
+                        "role": "system",
+                        "content": (
+                            "The previous chart JSON was rejected by the local validator: "
+                            f"{validation_error}. Regenerate the entire JSON object without forbidden "
+                            "Vega-Lite properties. In particular, never use calculate, expr, signal, "
+                            "href, url, or external data."
+                        ),
+                    },
+                )
+            response = self.client.chat.completions.create(
+                model=get_deepseek_model(),
+                temperature=0,
+                max_tokens=5000,
+                response_format={"type": "json_object"},
+                extra_body=get_deepseek_extra_body(),
+                messages=messages,
             )
-        except InvalidChartSpec as exc:
-            raise UnifiedChartFeedbackError(f"DeepSeek produced an unsafe or invalid chart specification: {exc}") from exc
-        except Exception as exc:
-            raise UnifiedChartFeedbackError(f"Vega-Lite rendering failed: {exc}") from exc
-        return result, filename
+            try:
+                if not response.choices:
+                    raise UnifiedChartFeedbackError("DeepSeek returned no chart choices.")
+                raw = _extract_json_object(response.choices[0].message.content or "")
+                result = _normalise_result(raw, effective_type)
+                result["style"] = {"color_palette": palette, "renderer": "vega-lite"}
+                result["vega_lite_spec"] = render_vega_lite_png(
+                    result["vega_lite_spec"],
+                    result["records"],
+                    result["title"],
+                    output_path,
+                    palette,
+                    chart_type=result["chart_type"],
+                    unit=f'{result["axes"]["unit"]} {result["axes"]["y_label"]}'.strip(),
+                )
+                result["style"]["alignment_attempts"] = attempt + 1
+                return result, filename
+            except (InvalidChartSpec, UnifiedChartFeedbackError) as exc:
+                validation_error = str(exc)
+                if attempt == 0:
+                    continue
+                raise UnifiedChartFeedbackError(
+                    "DeepSeek produced invalid chart JSON after one automatic retry: "
+                    f"{validation_error}"
+                ) from exc
+            except Exception as exc:
+                raise UnifiedChartFeedbackError(f"Vega-Lite rendering failed: {exc}") from exc
+
+        raise UnifiedChartFeedbackError("Chart generation failed unexpectedly.")

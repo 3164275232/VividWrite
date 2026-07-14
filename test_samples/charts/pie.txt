@@ -1,0 +1,9 @@
+The bar chart delineates the distribution of average household expenditure across six principal categories in Canada for the year 2024.
+
+In summary, housing constituted the most substantial financial outlay, absorbing nearly a third of the total budget, while the remaining categories accounted for comparatively modest and relatively balanced proportions. A clear hierarchy of spending is evident, with essential shelter costs dominating all other expenditures.
+
+Specifically, housing commanded 32% of the average household budget, a figure that is more than double the allocation for any other single category. Transport represented the next highest expense at 17%, followed by utilities and leisure, which constituted 12% and 11% respectively. Food and the miscellaneous ‘other’ category each accounted for an equal 8% of total spending, representing the smallest shares.
+
+Referencing the detailed breakdown, the dominance of housing at 32% starkly contrasts with the minimal 8% apportioned to food and other items, indicating the significant financial pressure exerted by accommodation costs. The 17% spent on transport is notably higher than the 12% for utilities, suggesting that mobility and home energy are secondary but distinct priorities. Furthermore, the parity between leisure (11%) and utilities (12%) reveals a comparable investment in recreation and essential household operations.
+
+In conclusion, the data underscores a pronounced imbalance in Canadian household spending, with shelter costs overwhelming other areas of consumption and leaving a tightly constrained portion of the budget for all remaining needs.

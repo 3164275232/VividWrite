@@ -64,8 +64,10 @@ class FakeCompletions:
     def __init__(self, payload):
         self.payload = payload
         self.kwargs = None
+        self.call_count = 0
 
     def create(self, **kwargs):
+        self.call_count += 1
         self.kwargs = kwargs
         message = SimpleNamespace(content=json.dumps(self.payload))
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
@@ -74,6 +76,23 @@ class FakeCompletions:
 class FakeClient:
     def __init__(self, payload):
         self.completions = FakeCompletions(payload)
+        self.chat = SimpleNamespace(completions=self.completions)
+
+
+class SequenceCompletions(FakeCompletions):
+    def __init__(self, payloads):
+        super().__init__(payloads[0])
+        self.payloads = payloads
+
+    def create(self, **kwargs):
+        payload = self.payloads[min(self.call_count, len(self.payloads) - 1)]
+        self.payload = payload
+        return super().create(**kwargs)
+
+
+class SequenceClient:
+    def __init__(self, payloads):
+        self.completions = SequenceCompletions(payloads)
         self.chat = SimpleNamespace(completions=self.completions)
 
 
@@ -166,6 +185,52 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
             ["Housing 60 (60%)", "Other 40 (40%)"],
         )
 
+    def test_pie_labels_have_no_text_outline(self):
+        prepared = prepare_vega_lite_spec(
+            {"mark": "arc", "encoding": {}},
+            [
+                {"category": "Housing", "value": 60.0},
+                {"category": "Other", "value": 40.0},
+            ],
+            "Spending",
+            chart_type="pie",
+            unit="%",
+        )
+
+        text_mark = prepared["layer"][1]["mark"]
+        self.assertNotIn("stroke", text_mark)
+        self.assertNotIn("strokeWidth", text_mark)
+        self.assertEqual(prepared["config"]["text"]["strokeWidth"], 0)
+
+    def test_ai_text_labels_cannot_add_an_outline_to_other_charts(self):
+        prepared = prepare_vega_lite_spec(
+            {
+                "layer": [
+                    {"mark": "bar", "encoding": {"x": {"field": "category"}, "y": {"field": "value"}}},
+                    {
+                        "mark": {
+                            "type": "text",
+                            "stroke": "black",
+                            "strokeWidth": 2,
+                            "fill": "white",
+                        },
+                        "encoding": {
+                            "text": {"field": "value"},
+                            "stroke": {"value": "black"},
+                        },
+                    },
+                ]
+            },
+            [{"category": "Housing", "value": 60.0}],
+            "Spending",
+            chart_type="bar",
+        )
+
+        text_layer = prepared["layer"][1]
+        self.assertNotIn("stroke", text_layer["mark"])
+        self.assertNotIn("strokeWidth", text_layer["mark"])
+        self.assertNotIn("stroke", text_layer["encoding"])
+
     def test_auto_detection_distinguishes_pie_from_map_blocks(self):
         with tempfile.TemporaryDirectory() as folder:
             pie_path = Path(folder) / "pie.png"
@@ -211,6 +276,49 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(result["chart_type"], "pie")
         self.assertEqual(client.completions.kwargs["messages"][1]["content"].count('"requested_chart_type": "pie"'), 1)
         self.assertEqual(result["vega_lite_spec"]["layer"][1]["mark"]["type"], "text")
+
+    def test_pie_discards_unsafe_model_spec_because_renderer_is_canonical(self):
+        payload = _model_payload("pie")
+        payload["records"] = [
+            {"category": "Housing", "value": 60, "confidence": 1},
+            {"category": "Other", "value": 40, "confidence": 1},
+        ]
+        payload["vega_lite_spec"] = {
+            "mark": "arc",
+            "transform": [{"calculate": "datum.value + '%'", "as": "label"}],
+            "encoding": {},
+        }
+        client = FakeClient(payload)
+        with tempfile.TemporaryDirectory() as folder:
+            result, _ = ChartFeedbackService(folder, client=client).generate(
+                chart_type="pie",
+                requirement="Summarise the chart.",
+                student_answer="Housing was 60%, while other spending was 40%.",
+                deplot_text="Category | Percentage<0x0A>Housing | 60<0x0A>Other | 40",
+            )
+
+        self.assertEqual(client.completions.call_count, 1)
+        self.assertEqual(result["style"]["alignment_attempts"], 1)
+        self.assertEqual(result["vega_lite_spec"]["layer"][1]["mark"]["type"], "text")
+
+    def test_invalid_statistical_spec_is_retried_once(self):
+        invalid = _model_payload("bar")
+        invalid["vega_lite_spec"]["transform"] = [
+            {"calculate": "datum.value", "as": "display_value"}
+        ]
+        client = SequenceClient([invalid, _model_payload("bar")])
+        with tempfile.TemporaryDirectory() as folder:
+            result, filename = ChartFeedbackService(folder, client=client).generate(
+                chart_type="bar",
+                requirement="Summarise the chart.",
+                student_answer="Local calls were 72 billion minutes in 2001.",
+                deplot_text="Year | Local<0x0A>2001 | 72",
+            )
+            self.assertTrue((Path(folder) / filename).exists())
+
+        self.assertEqual(client.completions.call_count, 2)
+        self.assertEqual(result["style"]["alignment_attempts"], 2)
+        self.assertIn("previous chart JSON was rejected", client.completions.kwargs["messages"][1]["content"])
 
 
 if __name__ == "__main__":

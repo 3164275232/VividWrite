@@ -4,6 +4,7 @@ import os
 from typing import Optional, Dict, Any
 from next_sentence import summarize_flowchart
 from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
+from chart_text import InvalidExtractedChartData, parse_validated_pie_table
 
 router = APIRouter()
 
@@ -15,6 +16,7 @@ class SampleEssayRequest(BaseModel):
     temperature: Optional[float] = 0.6
     min_words: Optional[int] = 150
     use_standard_structure: Optional[bool] = None  # True: use standard structure, False: use flowchart as-is, None: prompt user
+    chart_type: Optional[str] = None
 
 class SampleEssayResponse(BaseModel):
     success: bool
@@ -112,6 +114,18 @@ def generate_sample_essay(req: SampleEssayRequest):
         )
 
     normalized_deplot = (req.deplot_text or '').replace('<0x0A>', '\n')[:8000]
+    is_pie_chart = req.chart_type == "pie" or "CHART TYPE | Pie chart" in normalized_deplot
+    if is_pie_chart:
+        try:
+            parse_validated_pie_table(normalized_deplot)
+        except InvalidExtractedChartData as exc:
+            return SampleEssayResponse(
+                success=False,
+                error=(
+                    f"Pie chart data extraction is inconsistent: {exc} "
+                    "Please upload the image again so DePlot can re-extract the isolated pie plot."
+                ),
+            )
     flow_summary = summarize_flowchart(req.flowchart)
     requirement = req.requirement or (
         "Write an descriptive academic report (at least 150 words， such as IELTS Task 1) summarizing the main features and making relevant comparisons."
@@ -184,6 +198,8 @@ def generate_sample_essay(req: SampleEssayRequest):
         system_prompt = (
             "You are an expert of descriptive academic writing, such as IELTS Task 1, data commentary. Produce a high-quality sample response. "
             "Neutral objective tone; no bullet points; no first-person; no speculative data beyond given facts. "
+            "The chart table is the factual source of truth. Preserve every category-value pairing exactly, and silently verify all numeric claims before answering. "
+            "Do not infer causes, motives, priorities, perceptions, or whether a cost is fixed or discretionary unless the chart explicitly states them. "
             f"{structure_guidance}"
             "For Presentation of Visual, choose appropriate sub-options (Summary, Results, or Reference & Explanation) based on the data type and requirements. "
             "Use the standard IELTS Task 1 structure regardless of the flowchart provided."
@@ -192,6 +208,8 @@ def generate_sample_essay(req: SampleEssayRequest):
         system_prompt = (
             "You are an expert of descriptive academic writing, such as IELTS Task 1, data commentary. Produce a high-quality sample response. "
             "Neutral objective tone; no bullet points; no first-person; no speculative data beyond given facts. "
+            "The chart table is the factual source of truth. Preserve every category-value pairing exactly, and silently verify all numeric claims before answering. "
+            "Do not infer causes, motives, priorities, perceptions, or whether a cost is fixed or discretionary unless the chart explicitly states them. "
             f"{structure_guidance}"
             "For Presentation of Visual, choose appropriate sub-options (Summary, Results, or Reference & Explanation) based on the data type and requirements. "
             "CRITICAL RESTRICTION: You MUST ONLY include sections that are explicitly present in the flowchart structure. "

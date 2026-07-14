@@ -39,11 +39,14 @@ def _dilate(mask: list[list[bool]], passes: int = 2) -> list[list[bool]]:
     return current
 
 
-def _large_round_component(mask: list[list[bool]]) -> bool:
+def _large_round_component_bounds(
+    mask: list[list[bool]],
+) -> tuple[int, int, int, int] | None:
     height = len(mask)
     width = len(mask[0]) if height else 0
     visited: set[tuple[int, int]] = set()
     minimum_diameter = max(34, int(min(width, height) * 0.2))
+    best: tuple[int, int, int, int, int] | None = None
 
     for start_y in range(height):
         for start_x in range(width):
@@ -78,8 +81,43 @@ def _large_round_component(mask: list[list[bool]]) -> bool:
             # A filled circle occupies about 79% of its square bounding box.
             # The upper bound rejects map regions and square legend swatches.
             if 0.78 <= aspect_ratio <= 1.28 and 0.52 <= fill_ratio <= 0.9:
-                return True
-    return False
+                candidate = (min_x, min_y, max_x + 1, max_y + 1, count)
+                if best is None or candidate[4] > best[4]:
+                    best = candidate
+    return best[:4] if best else None
+
+
+def _large_round_component(mask: list[list[bool]]) -> bool:
+    return _large_round_component_bounds(mask) is not None
+
+
+def crop_pie_plot(image: Image.Image) -> Image.Image | None:
+    """Crop a pie plot away from legends that can confuse chart-to-table OCR."""
+    original = image.convert("RGB")
+    preview = original.copy()
+    preview.thumbnail((480, 480))
+    bounds = _large_round_component_bounds(_dilate(_foreground_mask(preview)))
+    if bounds is None:
+        return None
+
+    left, top, right, bottom = bounds
+    scale_x = original.width / preview.width
+    scale_y = original.height / preview.height
+    left = int(left * scale_x)
+    top = int(top * scale_y)
+    right = int(right * scale_x)
+    bottom = int(bottom * scale_y)
+
+    diameter = max(right - left, bottom - top)
+    horizontal_margin = max(16, int(diameter * 0.16))
+    vertical_margin = max(8, int(diameter * 0.05))
+    crop_box = (
+        max(0, left - horizontal_margin),
+        max(0, top - vertical_margin),
+        min(original.width, right + horizontal_margin),
+        min(original.height, bottom + vertical_margin),
+    )
+    return original.crop(crop_box)
 
 
 def detect_chart_type(image_path: str | Path | None) -> str | None:

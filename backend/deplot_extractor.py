@@ -4,6 +4,9 @@ from typing import Any, Optional
 
 from PIL import Image
 
+from chart_detection import crop_pie_plot, detect_chart_type
+from chart_text import InvalidExtractedChartData, normalize_pie_deplot_text
+
 try:
     from transformers import Pix2StructForConditionalGeneration, Pix2StructProcessor
 except ImportError:
@@ -37,6 +40,20 @@ def extract_table_from_image_deplot(image_path: str) -> str:
 
     with Image.open(image_path) as source:
         image = source.convert("RGB")
+
+    full_text = _generate_table(image)
+    if detect_chart_type(image_path) != "pie":
+        return full_text
+
+    plot_image = crop_pie_plot(image)
+    if plot_image is None:
+        raise InvalidExtractedChartData("A pie chart was detected, but its plot area could not be isolated.")
+    plot_text = _generate_table(plot_image)
+    return normalize_pie_deplot_text(full_text, plot_text)
+
+
+def _generate_table(image: Image.Image) -> str:
+    assert _processor is not None and _model is not None
     inputs = _processor(
         images=image,
         text="Generate underlying data table of the figure below:",

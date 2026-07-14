@@ -592,7 +592,7 @@ export default function App() {
     try {
       setIsSampleEssayLoading(true);
       const requirement = sampleEssayRequirement(chartType);
-      const requestData = { deplot_text: dep, flowchart: flowchartData, requirement };
+      const requestData = { deplot_text: dep, flowchart: flowchartData, requirement, chart_type: chartType };
       const res = await generateSampleEssay(requestData);
       
       if (res.requires_choice) {
