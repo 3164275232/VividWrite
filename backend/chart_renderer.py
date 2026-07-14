@@ -18,7 +18,7 @@ from PIL import Image
 
 
 ALLOWED_MARKS = {"arc", "area", "bar", "line", "point", "rect", "rule", "text", "tick"}
-FORBIDDEN_KEYS = {"url", "href", "calculate", "expr", "signal"}
+FORBIDDEN_KEYS = {"url", "href", "calculate", "expr", "signal", "transform"}
 TEXT_OUTLINE_KEYS = {
     "stroke",
     "strokeWidth",
@@ -143,22 +143,31 @@ def extract_image_palette(image_path: str | Path | None, max_colors: int = 8) ->
     try:
         with Image.open(path) as source:
             image = source.convert("RGB")
-            palette_image = image.copy()
-            palette_image.thumbnail((320, 320))
             legend_image = image.copy()
             legend_image.thumbnail((640, 640))
-            quantized = palette_image.quantize(
-                colors=max_colors * 3, method=Image.Quantize.MEDIANCUT
-            ).convert("RGB")
-            colors = quantized.getcolors(maxcolors=320 * 320) or []
+            color_area = image.width * image.height
+            colors = image.getcolors(maxcolors=color_area)
+            if colors is None:
+                palette_image = image.copy()
+                palette_image.thumbnail((640, 640))
+                quantized = palette_image.quantize(
+                    colors=max_colors * 4, method=Image.Quantize.MEDIANCUT
+                ).convert("RGB")
+                color_area = quantized.width * quantized.height
+                colors = quantized.getcolors(maxcolors=color_area) or []
     except (OSError, ValueError):
         return []
 
     palette: list[str] = []
-    for _, (red, green, blue) in sorted(colors, reverse=True):
+    for count, (red, green, blue) in sorted(colors, reverse=True):
         brightness = (red + green + blue) / 3
         saturation = max(red, green, blue) - min(red, green, blue)
-        if brightness < 35 or brightness > 240 or saturation < 28:
+        neutral_chart_colour = (
+            saturation < 28
+            and 55 <= brightness <= 190
+            and count >= color_area * 0.005
+        )
+        if brightness < 35 or brightness > 240 or (saturation < 28 and not neutral_chart_colour):
             continue
         rgb = (red, green, blue)
         existing = [tuple(int(color[index : index + 2], 16) for index in (1, 3, 5)) for color in palette]
@@ -200,6 +209,33 @@ def _remove_text_outlines(value: Any) -> None:
 
     for child in value.values():
         _remove_text_outlines(child)
+
+
+def _normalise_line_marks(value: Any) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _normalise_line_marks(item)
+        return
+    if not isinstance(value, dict):
+        return
+
+    if _mark_type(value.get("mark")) == "line":
+        mark = value.get("mark")
+        if isinstance(mark, str):
+            mark = {"type": "line"}
+            value["mark"] = mark
+        if isinstance(mark, dict):
+            mark.setdefault("strokeWidth", 2.5)
+            if not mark.get("point"):
+                mark["point"] = {"filled": True, "size": 60}
+        encoding = value.get("encoding")
+        if isinstance(encoding, dict) and isinstance(encoding.get("y"), dict):
+            scale = encoding["y"].setdefault("scale", {})
+            if isinstance(scale, dict):
+                scale.setdefault("zero", False)
+
+    for child in value.values():
+        _normalise_line_marks(child)
 
 
 def _validate_tree(value: Any, *, depth: int = 0) -> None:
@@ -383,6 +419,8 @@ def prepare_vega_lite_spec(
         render_records = records
     _validate_tree(prepared)
     _remove_text_outlines(prepared)
+    if chart_type == "line":
+        _normalise_line_marks(prepared)
     _apply_encoding_order(prepared, render_records, palette)
     prepared["$schema"] = "https://vega.github.io/schema/vega-lite/v6.json"
     prepared["data"] = {"values": render_records}

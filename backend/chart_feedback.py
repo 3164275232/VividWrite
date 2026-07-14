@@ -10,6 +10,7 @@ from typing import Any
 
 from chart_detection import detect_chart_type
 from chart_renderer import InvalidChartSpec, extract_image_palette, render_vega_lite_png
+from chart_text import parse_series_framework
 from deepseek_config import get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
 
 
@@ -31,6 +32,10 @@ Data ownership rules:
   when the essay omits it.
 - You may estimate an intermediate value only when the student's explicit range, trend or
   comparison logically supports it. Mark estimated=true and lower confidence.
+- For line and area charts, when the student explicitly describes a series as steady,
+  consistent or continuous and provides surrounding values, interpolate omitted official
+  periods instead of leaving the whole trend disconnected. Mark every interpolated point
+  estimated=true and use lower confidence.
 - Semantically align student labels to official labels. Do not create duplicate synonyms.
 
 Return exactly one JSON object with this shape:
@@ -60,7 +65,7 @@ Vega-Lite rules:
   estimated, missing and confidence.
 - Put {"values": []} in data; the backend will inject validated records.
 - Use bar, line, area, arc, point, rect, rule, text or tick marks.
-- Do not use URL data, href, calculate, expr, signal or external assets.
+- Do not use transforms, URL data, href, calculate, expr, signal or external assets.
 - Make omissions visible as gaps. Do not invent placeholder numerical heights.
 - For pie charts use value as theta and category or series as color.
 - Preserve category and series order exactly as they first appear in the official DePlot
@@ -161,6 +166,185 @@ def _normalise_result(raw: dict, requested_type: str) -> dict:
     }
 
 
+def _key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+
+
+def _series_aliases(value: str) -> set[str]:
+    key = _key(value)
+    if not key or " " in key:
+        return {key}
+    aliases = {key, f"{key}s", f"{key}es"}
+    if key.endswith("s"):
+        aliases.add(f"{key}es")
+    return aliases
+
+
+def _matching_record(records: list[dict], period: str, series: str) -> dict | None:
+    period_key = _key(period)
+    aliases = _series_aliases(series)
+    for record in records:
+        record_period = record.get("period") or record.get("category")
+        if _key(record_period) == period_key and _key(record.get("series")) in aliases:
+            return record
+    return None
+
+
+def _sentence_has_series(sentence: str, series: str) -> bool:
+    sentence_key = f" {_key(sentence)} "
+    return any(f" {alias} " in sentence_key for alias in _series_aliases(series))
+
+
+_CONTINUOUS_TREND_RE = re.compile(
+    r"\b(?:"
+    r"(?:steady|steadily|consistent|consistently|continuous|continuously|sustained)\b.{0,30}\b"
+    r"(?:rise|rose|rising|increase|increased|increasing|growth|grew|climb|climbed|climbing|"
+    r"fall|fell|falling|decline|declined|declining|decrease|decreased|decreasing|drop|dropped|"
+    r"upward|downward|trajectory|trend)"
+    r"|(?:rise|rose|rising|increase|increased|increasing|grew|climb|climbed|climbing|"
+    r"fall|fell|falling|decline|declined|declining|decrease|decreased|decreasing|drop|dropped)"
+    r"\b.{0,20}\b(?:steadily|consistently|continuously)"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _supports_continuous_trend(student_answer: str, series: str) -> bool:
+    sentences = re.split(r"(?<=[.!?])\s+|[\r\n]+", student_answer)
+    return any(
+        _sentence_has_series(sentence, series) and _CONTINUOUS_TREND_RE.search(sentence)
+        for sentence in sentences
+    )
+
+
+def _period_coordinate(period: str, fallback: int) -> float:
+    match = re.search(r"-?\d+(?:\.\d+)?", str(period))
+    return float(match.group()) if match else float(fallback)
+
+
+def _interpolate_supported_temporal_gaps(
+    result: dict,
+    deplot_text: str,
+    student_answer: str,
+) -> None:
+    """Fill internal line gaps only when the student's wording supports continuity."""
+    if result.get("chart_type") not in {"line", "area"}:
+        return
+    framework = parse_series_framework(deplot_text)
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    if not framework or not records:
+        return
+
+    periods = list(dict.fromkeys(period for period, _ in framework))
+    series_names = list(dict.fromkeys(series for _, series in framework))
+    comparison = result.get("comparison")
+    if not isinstance(comparison, dict):
+        comparison = {}
+        result["comparison"] = comparison
+    uncertain_items = comparison.setdefault("uncertain_items", [])
+
+    for series in series_names:
+        if not _supports_continuous_trend(student_answer, series):
+            continue
+        series_records = [_matching_record(records, period, series) for period in periods]
+        known_indices = [
+            index
+            for index, record in enumerate(series_records)
+            if record is not None and isinstance(record.get("value"), (int, float))
+        ]
+        if len(known_indices) < 2:
+            continue
+
+        first_known, last_known = known_indices[0], known_indices[-1]
+        coordinates = [_period_coordinate(period, index) for index, period in enumerate(periods)]
+        if any(right <= left for left, right in zip(coordinates, coordinates[1:])):
+            coordinates = [float(index) for index in range(len(periods))]
+
+        for index in range(first_known + 1, last_known):
+            record = series_records[index]
+            if record is None or isinstance(record.get("value"), (int, float)):
+                continue
+            left_index = max(item for item in known_indices if item < index)
+            right_index = min(item for item in known_indices if item > index)
+            left_record = series_records[left_index]
+            right_record = series_records[right_index]
+            if left_record is None or right_record is None:
+                continue
+            left_value = float(left_record["value"])
+            right_value = float(right_record["value"])
+            distance = coordinates[right_index] - coordinates[left_index]
+            if distance <= 0:
+                continue
+            ratio = (coordinates[index] - coordinates[left_index]) / distance
+            record["value"] = round(left_value + (right_value - left_value) * ratio, 6)
+            record["missing"] = False
+            record["estimated"] = True
+            record["confidence"] = min(
+                0.6,
+                float(left_record.get("confidence") or 0.5),
+                float(right_record.get("confidence") or 0.5),
+            )
+            note = (
+                f"{series} at {periods[index]} was linearly estimated from the student's "
+                "continuous-trend description and surrounding stated values."
+            )
+            if note not in uncertain_items:
+                uncertain_items.append(note)
+
+
+def _validate_temporal_record_coverage(
+    result: dict,
+    deplot_text: str,
+    student_answer: str,
+) -> None:
+    if result.get("chart_type") not in {"line", "area"}:
+        return
+    framework = parse_series_framework(deplot_text)
+    if not framework:
+        return
+
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    absent = [
+        f"{series} at {period}"
+        for period, series in framework
+        if _matching_record(records, period, series) is None
+    ]
+    if absent:
+        raise UnifiedChartFeedbackError(
+            "Official framework cells are absent from records: " + ", ".join(absent[:20])
+        )
+
+    official_periods = {_key(period) for period, _ in framework}
+    explicit_claims: set[tuple[str, str]] = set()
+    sentences = [
+        part
+        for part in re.split(r"(?<=[.!?])\s+|[\r\n]+", student_answer)
+        if part.strip()
+    ]
+    for sentence in sentences:
+        numbers = {_key(match) for match in re.findall(r"\d+(?:\.\d+)?", sentence)}
+        if not numbers - official_periods:
+            continue
+        for period, series in framework:
+            if (
+                re.search(rf"(?<!\d){re.escape(period)}(?!\d)", sentence)
+                and _sentence_has_series(sentence, series)
+            ):
+                explicit_claims.add((period, series))
+
+    incorrectly_missing = [
+        f"{series} at {period}"
+        for period, series in sorted(explicit_claims)
+        if (_matching_record(records, period, series) or {}).get("value") is None
+    ]
+    if incorrectly_missing:
+        raise UnifiedChartFeedbackError(
+            "The student explicitly states values for records marked missing: "
+            + ", ".join(incorrectly_missing[:20])
+            + ". Extract the student's stated values into those records."
+        )
+
+
 class ChartFeedbackService:
     def __init__(self, output_dir: str | Path, client=None):
         self.output_dir = Path(output_dir)
@@ -213,8 +397,9 @@ class ChartFeedbackService:
                         "role": "system",
                         "content": (
                             "The previous chart JSON was rejected by the local validator: "
-                            f"{validation_error}. Regenerate the entire JSON object without forbidden "
-                            "Vega-Lite properties. In particular, never use calculate, expr, signal, "
+                            f"{validation_error}. Correct that data or specification error and regenerate "
+                            "the entire JSON object. Include every official framework cell and every value "
+                            "explicitly stated by the student. Never use transforms, calculate, expr, signal, "
                             "href, url, or external data."
                         ),
                     },
@@ -232,6 +417,8 @@ class ChartFeedbackService:
                     raise UnifiedChartFeedbackError("DeepSeek returned no chart choices.")
                 raw = _extract_json_object(response.choices[0].message.content or "")
                 result = _normalise_result(raw, effective_type)
+                _validate_temporal_record_coverage(result, deplot_text, student_answer)
+                _interpolate_supported_temporal_gaps(result, deplot_text, student_answer)
                 result["style"] = {"color_palette": palette, "renderer": "vega-lite"}
                 result["vega_lite_spec"] = render_vega_lite_png(
                     result["vega_lite_spec"],
@@ -249,7 +436,7 @@ class ChartFeedbackService:
                 if attempt == 0:
                     continue
                 raise UnifiedChartFeedbackError(
-                    "DeepSeek produced invalid chart JSON after one automatic retry: "
+                    "DeepSeek produced invalid chart data or specification after one automatic retry: "
                     f"{validation_error}"
                 ) from exc
             except Exception as exc:

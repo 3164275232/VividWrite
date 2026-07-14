@@ -1,10 +1,17 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 import os
+import re
 from typing import Optional, Dict, Any
 from next_sentence import summarize_flowchart
 from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
-from chart_text import InvalidExtractedChartData, parse_validated_pie_table
+from chart_text import (
+    CHART_TYPE_LABELS,
+    InvalidExtractedChartData,
+    build_table_fact_checks,
+    find_table_fact_contradictions,
+    parse_validated_pie_table,
+)
 
 router = APIRouter()
 
@@ -13,7 +20,7 @@ class SampleEssayRequest(BaseModel):
     flowchart: dict | None = None  # {nodes:[], edges:[]}
     requirement: Optional[str] = None
     model: Optional[str] = None
-    temperature: Optional[float] = 0.6
+    temperature: Optional[float] = 0.2
     min_words: Optional[int] = 150
     use_standard_structure: Optional[bool] = None  # True: use standard structure, False: use flowchart as-is, None: prompt user
     chart_type: Optional[str] = None
@@ -114,6 +121,17 @@ def generate_sample_essay(req: SampleEssayRequest):
         )
 
     normalized_deplot = (req.deplot_text or '').replace('<0x0A>', '\n')[:8000]
+    visual_label = CHART_TYPE_LABELS.get((req.chart_type or "").casefold())
+    marker = re.search(r"^CHART TYPE\s*\|\s*(.+)$", normalized_deplot, flags=re.MULTILINE | re.IGNORECASE)
+    if marker:
+        visual_label = marker.group(1).strip()
+    visual_label = visual_label or "chart"
+    visual_type_instruction = (
+        f"The original source visual is a {visual_label}. The textual table is only an internal "
+        f"machine-readable representation. Refer to the source as a {visual_label}, never as a table. "
+    )
+    fact_checks = build_table_fact_checks(normalized_deplot)
+    fact_check_block = fact_checks or "No additional deterministic comparisons were available."
     is_pie_chart = req.chart_type == "pie" or "CHART TYPE | Pie chart" in normalized_deplot
     if is_pie_chart:
         try:
@@ -199,7 +217,9 @@ def generate_sample_essay(req: SampleEssayRequest):
             "You are an expert of descriptive academic writing, such as IELTS Task 1, data commentary. Produce a high-quality sample response. "
             "Neutral objective tone; no bullet points; no first-person; no speculative data beyond given facts. "
             "The chart table is the factual source of truth. Preserve every category-value pairing exactly, and silently verify all numeric claims before answering. "
+            "Never contradict the deterministic rankings or crossing statements supplied in the user message. "
             "Do not infer causes, motives, priorities, perceptions, or whether a cost is fixed or discretionary unless the chart explicitly states them. "
+            f"{visual_type_instruction}"
             f"{structure_guidance}"
             "For Presentation of Visual, choose appropriate sub-options (Summary, Results, or Reference & Explanation) based on the data type and requirements. "
             "Use the standard IELTS Task 1 structure regardless of the flowchart provided."
@@ -209,7 +229,9 @@ def generate_sample_essay(req: SampleEssayRequest):
             "You are an expert of descriptive academic writing, such as IELTS Task 1, data commentary. Produce a high-quality sample response. "
             "Neutral objective tone; no bullet points; no first-person; no speculative data beyond given facts. "
             "The chart table is the factual source of truth. Preserve every category-value pairing exactly, and silently verify all numeric claims before answering. "
+            "Never contradict the deterministic rankings or crossing statements supplied in the user message. "
             "Do not infer causes, motives, priorities, perceptions, or whether a cost is fixed or discretionary unless the chart explicitly states them. "
+            f"{visual_type_instruction}"
             f"{structure_guidance}"
             "For Presentation of Visual, choose appropriate sub-options (Summary, Results, or Reference & Explanation) based on the data type and requirements. "
             "CRITICAL RESTRICTION: You MUST ONLY include sections that are explicitly present in the flowchart structure. "
@@ -229,7 +251,9 @@ def generate_sample_essay(req: SampleEssayRequest):
     if req.use_standard_structure:
         user_prompt = (
             f"OFFICIAL REQUIREMENT:\n{requirement}\n\n"
+            f"ORIGINAL VISUAL TYPE:\n{visual_label}\n\n"
             f"CHART TEXTUAL DATA (primary facts, may contain minor OCR noise):\n{normalized_deplot}\n\n"
+            f"DETERMINISTIC COMPARISON CHECKS (must not be contradicted):\n{fact_check_block}\n\n"
             f"TASK: Write the full report using the standard Background → Presentation → Comment structure. Minimum {req.min_words or 150} words. "
             f"{essay_structure}"
             "Do NOT include any meta explanations or headings. Return ONLY the raw essay text."
@@ -237,7 +261,9 @@ def generate_sample_essay(req: SampleEssayRequest):
     else:
         user_prompt = (
             f"OFFICIAL REQUIREMENT:\n{requirement}\n\n"
+            f"ORIGINAL VISUAL TYPE:\n{visual_label}\n\n"
             f"CHART TEXTUAL DATA (primary facts, may contain minor OCR noise):\n{normalized_deplot}\n\n"
+            f"DETERMINISTIC COMPARISON CHECKS (must not be contradicted):\n{fact_check_block}\n\n"
             f"FLOWCHART STRUCTURE (writer plan - follow this structure EXACTLY):\n{flow_summary}\n\n"
             f"TASK: Write the full report following the flowchart structure EXACTLY. Minimum {req.min_words or 150} words. "
             f"{essay_structure}\n\n"
@@ -273,9 +299,38 @@ def generate_sample_essay(req: SampleEssayRequest):
             model=model,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            temperature=req.temperature if req.temperature is not None else 0.6,
+            temperature=req.temperature if req.temperature is not None else 0.2,
             max_tokens=800,
         )
+        fact_attempts = 1
+        contradictions = find_table_fact_contradictions(normalized_deplot, essay)
+        if contradictions:
+            correction_prompt = (
+                f"{user_prompt}\n\n"
+                "REWRITE REQUIRED: The previous draft failed deterministic factual validation.\n"
+                + "\n".join(f"- {item}" for item in contradictions)
+                + "\nRewrite the complete report and correct every issue above. Return only the raw essay text.\n\n"
+                f"PREVIOUS DRAFT:\n{essay}"
+            )
+            essay = _generate_essay_text(
+                client=client,
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=correction_prompt,
+                temperature=0,
+                max_tokens=800,
+            )
+            fact_attempts = 2
+            contradictions = find_table_fact_contradictions(normalized_deplot, essay)
+            if contradictions:
+                return SampleEssayResponse(
+                    success=False,
+                    error=(
+                        "DeepSeek generated a sample essay that still contradicts the extracted chart "
+                        "after one automatic rewrite: " + " ".join(contradictions)
+                    ),
+                    debug={"model": model, "fact_validation_attempts": fact_attempts},
+                )
     except Exception as e:
         print(f"DeepSeek sample essay generation failed with model {model}: {e}")
         return SampleEssayResponse(
@@ -305,6 +360,7 @@ def generate_sample_essay(req: SampleEssayRequest):
         debug={
             "model": model,
             "words": word_count,
+            "fact_validation_attempts": fact_attempts,
             "flowchart_used": bool(flow_summary),
             "has_background": has_background,
             "structure_check": {

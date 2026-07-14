@@ -1,10 +1,49 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from sample_essay import SampleEssayRequest, generate_sample_essay
 
 
 class SampleEssayTests(unittest.TestCase):
+    @patch("sample_essay.get_deepseek_api_key", return_value="test-key")
+    def test_line_prompt_names_the_original_visual_instead_of_the_internal_table(self, _key):
+        captured = {}
+
+        class Completions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                message = SimpleNamespace(content="The line graph compares public transport use over time.")
+                return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+        request = SampleEssayRequest(
+            chart_type="line",
+            min_words=1,
+            deplot_text=(
+                "TITLE | Passengers<0x0A>CHART TYPE | Line graph<0x0A>"
+                "Year | Bus | Rail<0x0A>2010 | 1.8 | 1.1<0x0A>2020 | 1.3 | 2.2"
+            ),
+            flowchart={
+                "nodes": [
+                    {"type": "background"},
+                    {"type": "presentation"},
+                    {"type": "comment"},
+                ],
+                "edges": [],
+            },
+        )
+
+        with patch("sample_essay.get_deepseek_client", return_value=client):
+            response = generate_sample_essay(request)
+
+        self.assertTrue(response.success)
+        self.assertEqual(captured["temperature"], 0.2)
+        self.assertIn("never as a table", captured["messages"][0]["content"])
+        self.assertIn("ORIGINAL VISUAL TYPE:\nLine graph", captured["messages"][1]["content"])
+        self.assertIn("2020 ranking: Rail (2.2) > Bus (1.3)", captured["messages"][1]["content"])
+        self.assertIn("Rail overtakes Bus", captured["messages"][1]["content"])
+
     @patch("sample_essay.get_deepseek_client")
     @patch("sample_essay.get_deepseek_api_key", return_value="test-key")
     def test_invalid_pie_data_is_rejected_before_calling_deepseek(self, _key, client):
@@ -29,6 +68,64 @@ class SampleEssayTests(unittest.TestCase):
         self.assertFalse(response.success)
         self.assertIn("expected about 100%", response.error or "")
         client.assert_not_called()
+
+    @patch("sample_essay.get_deepseek_api_key", return_value="test-key")
+    def test_false_line_comparisons_trigger_one_automatic_rewrite(self, _key):
+        drafts = [
+            (
+                "The graph covers an eleven-year period from 2010 to 2020. "
+                "Overall, bus usage experienced a consistent decline. "
+                "In 2016, rail equalled bus usage."
+            ),
+            (
+                "Bus usage rose initially and then declined, while rail increased throughout. "
+                "In 2016, rail carried 1.8 million passengers, exceeding the bus figure of 1.6 million."
+            ),
+        ]
+
+        class Completions:
+            def __init__(self):
+                self.call_count = 0
+                self.calls = []
+
+            def create(self, **kwargs):
+                self.calls.append(kwargs)
+                content = drafts[min(self.call_count, len(drafts) - 1)]
+                self.call_count += 1
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+                )
+
+        completions = Completions()
+        client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+        request = SampleEssayRequest(
+            chart_type="line",
+            min_words=1,
+            deplot_text=(
+                "TITLE | Passengers<0x0A>CHART TYPE | Line graph<0x0A>"
+                "Year | Bus | Rail<0x0A>2010 | 1.8 | 1.1<0x0A>2012 | 1.9 | 1.3<0x0A>"
+                "2014 | 1.7 | 1.5<0x0A>2016 | 1.6 | 1.8<0x0A>"
+                "2018 | 1.5 | 2.0<0x0A>2020 | 1.3 | 2.2"
+            ),
+            flowchart={
+                "nodes": [
+                    {"type": "background"},
+                    {"type": "presentation"},
+                    {"type": "comment"},
+                ],
+                "edges": [],
+            },
+        )
+
+        with patch("sample_essay.get_deepseek_client", return_value=client):
+            response = generate_sample_essay(request)
+
+        self.assertTrue(response.success)
+        self.assertEqual(completions.call_count, 2)
+        self.assertIn("exceeding the bus figure", response.essay or "")
+        self.assertIn("equality claim for 2016 is false", completions.calls[1]["messages"][1]["content"])
+        self.assertIn("is 10 years, not 11 years", completions.calls[1]["messages"][1]["content"])
+        self.assertEqual((response.debug or {}).get("fact_validation_attempts"), 2)
 
 
 if __name__ == "__main__":

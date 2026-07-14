@@ -121,10 +121,17 @@ def map_sentences_endpoint(request: SentenceMappingRequest):
 
 
 @app.post("/api/deplot-extract")
-async def deplot_extract(image: UploadFile = File(...)):
+async def deplot_extract(
+    image: UploadFile = File(...),
+    chart_type: Optional[str] = Form(None),
+):
     try:
         image_path = await save_uploaded_file(image, UPLOADS_DIR)
-        raw_text = await run_in_threadpool(extract_table_from_image_deplot, str(image_path)) or ""
+        raw_text = await run_in_threadpool(
+            extract_table_from_image_deplot,
+            str(image_path),
+            chart_type,
+        ) or ""
         normalized = raw_text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<0x0A>")
         return {
             "extracted_text": normalized,

@@ -148,6 +148,35 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
 
         self.assertEqual(palette[:2], ["#2f6690", "#d97706"])
 
+    def test_line_palette_preserves_all_thin_series_colours(self):
+        source = Path(__file__).parents[2] / "test_samples" / "charts" / "02_line_daily_passengers.png"
+
+        self.assertEqual(
+            extract_image_palette(source)[:3],
+            ["#c2413b", "#287271", "#e9c46a"],
+        )
+
+    def test_line_renderer_adds_points_and_does_not_force_zero(self):
+        prepared = prepare_vega_lite_spec(
+            {
+                "mark": "line",
+                "encoding": {
+                    "x": {"field": "period", "type": "ordinal"},
+                    "y": {"field": "value", "type": "quantitative"},
+                    "color": {"field": "series", "type": "nominal"},
+                },
+            },
+            [
+                {"period": "2010", "series": "Bus", "value": 1.8},
+                {"period": "2020", "series": "Bus", "value": 1.3},
+            ],
+            "Passengers",
+            chart_type="line",
+        )
+
+        self.assertEqual(prepared["mark"]["point"], {"filled": True, "size": 60})
+        self.assertFalse(prepared["encoding"]["y"]["scale"]["zero"])
+
     def test_pie_renderer_adds_category_and_percentage_labels(self):
         records = [
             {"category": "Housing", "series": None, "value": 32.0},
@@ -319,6 +348,149 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(client.completions.call_count, 2)
         self.assertEqual(result["style"]["alignment_attempts"], 2)
         self.assertIn("previous chart JSON was rejected", client.completions.kwargs["messages"][1]["content"])
+
+    def test_temporal_claims_marked_missing_are_retried(self):
+        periods = ["2010", "2012", "2014", "2016", "2018", "2020"]
+        series_values = {
+            "Bus": [1.8, 1.9, 1.7, 1.6, 1.5, 1.3],
+            "Rail": [1.1, 1.3, 1.5, 1.8, 2.0, 2.2],
+            "Metro": [0.8, 1.0, 1.2, 1.5, 1.7, 1.9],
+        }
+
+        def payload(include_2010):
+            result = _model_payload("line")
+            result["records"] = []
+            for series, values in series_values.items():
+                for period, value in zip(periods, values):
+                    present = include_2010 or period != "2010"
+                    result["records"].append(
+                        {
+                            "period": period,
+                            "category": period,
+                            "series": series,
+                            "value": value if present else None,
+                            "missing": not present,
+                            "estimated": False,
+                            "confidence": 1,
+                        }
+                    )
+            result["vega_lite_spec"] = {
+                "mark": "line",
+                "encoding": {
+                    "x": {"field": "period", "type": "ordinal"},
+                    "y": {"field": "value", "type": "quantitative"},
+                    "color": {"field": "series", "type": "nominal"},
+                },
+            }
+            return result
+
+        client = SequenceClient([payload(False), payload(True)])
+        deplot = (
+            "Year | Bus | Rail | Metro<0x0A>2010 | 1.8 | 1.1 | 0.8<0x0A>"
+            "2012 | 1.9 | 1.3 | 1.0<0x0A>2014 | 1.7 | 1.5 | 1.2<0x0A>"
+            "2016 | 1.6 | 1.8 | 1.5<0x0A>2018 | 1.5 | 2.0 | 1.7<0x0A>"
+            "2020 | 1.3 | 2.2 | 1.9"
+        )
+        answer = "In 2010, buses carried 1.8 million passengers, compared with 1.1 million for rail and 0.8 million for metro."
+
+        with tempfile.TemporaryDirectory() as folder:
+            result, _ = ChartFeedbackService(folder, client=client).generate(
+                chart_type="line",
+                requirement="Summarise the line graph.",
+                student_answer=answer,
+                deplot_text=deplot,
+            )
+
+        self.assertEqual(client.completions.call_count, 2)
+        first_period = [record for record in result["records"] if record["period"] == "2010"]
+        self.assertTrue(all(record["value"] is not None for record in first_period))
+        self.assertIn("explicitly states values", client.completions.kwargs["messages"][1]["content"])
+
+    def test_continuous_trend_interpolates_internal_line_gaps(self):
+        periods = ["2010", "2012", "2014", "2016", "2018", "2020"]
+        payload = _model_payload("line")
+        payload["records"] = []
+        for period in periods:
+            value = {"2010": 0.8, "2020": 1.9}.get(period)
+            payload["records"].append(
+                {
+                    "period": period,
+                    "category": period,
+                    "series": "Metro",
+                    "value": value,
+                    "missing": value is None,
+                    "estimated": False,
+                    "confidence": 1,
+                }
+            )
+        payload["vega_lite_spec"] = {
+            "mark": "line",
+            "encoding": {
+                "x": {"field": "period", "type": "ordinal"},
+                "y": {"field": "value", "type": "quantitative"},
+                "color": {"field": "series", "type": "nominal"},
+            },
+        }
+        deplot = (
+            "Year | Metro | Other<0x0A>2010 | 0.8 | 1<0x0A>2012 | 1 | 1<0x0A>"
+            "2014 | 1.2 | 1<0x0A>2016 | 1.5 | 1<0x0A>2018 | 1.7 | 1<0x0A>2020 | 1.9 | 1"
+        )
+        for period in periods:
+            payload["records"].append(
+                {
+                    "period": period,
+                    "category": period,
+                    "series": "Other",
+                    "value": 1,
+                    "missing": False,
+                    "estimated": False,
+                    "confidence": 1,
+                }
+            )
+
+        with tempfile.TemporaryDirectory() as folder:
+            result, _ = ChartFeedbackService(folder, client=FakeClient(payload)).generate(
+                chart_type="line",
+                requirement="Summarise the line graph.",
+                student_answer="Metro usage rose steadily from 0.8 million in 2010 to 1.9 million in 2020.",
+                deplot_text=deplot,
+            )
+
+        metro = [record for record in result["records"] if record["series"] == "Metro"]
+        self.assertTrue(all(record["value"] is not None for record in metro))
+        self.assertTrue(all(record["estimated"] for record in metro[1:-1]))
+        self.assertAlmostEqual(metro[3]["value"], 1.46)
+
+    def test_line_gap_remains_without_continuous_trend_wording(self):
+        payload = _model_payload("line")
+        payload["records"] = [
+            {"period": "2010", "category": "2010", "series": "Bus", "value": 1.8},
+            {"period": "2012", "category": "2012", "series": "Bus", "value": None},
+            {"period": "2010", "category": "2010", "series": "Rail", "value": 1.1},
+            {"period": "2012", "category": "2012", "series": "Rail", "value": 1.3},
+        ]
+        payload["vega_lite_spec"] = {
+            "mark": "line",
+            "encoding": {
+                "x": {"field": "period", "type": "ordinal"},
+                "y": {"field": "value", "type": "quantitative"},
+                "color": {"field": "series", "type": "nominal"},
+            },
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            result, _ = ChartFeedbackService(folder, client=FakeClient(payload)).generate(
+                chart_type="line",
+                requirement="Summarise the line graph.",
+                student_answer="Bus use was 1.8 million in 2010.",
+                deplot_text="Year | Bus | Rail<0x0A>2010 | 1.8 | 1.1<0x0A>2012 | 1.9 | 1.3",
+            )
+
+        missing = next(
+            record for record in result["records"]
+            if record["series"] == "Bus" and record["period"] == "2012"
+        )
+        self.assertIsNone(missing["value"])
+        self.assertTrue(missing["missing"])
 
 
 if __name__ == "__main__":

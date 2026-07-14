@@ -5,7 +5,12 @@ from typing import Any, Optional
 from PIL import Image
 
 from chart_detection import crop_pie_plot, detect_chart_type
-from chart_text import InvalidExtractedChartData, normalize_pie_deplot_text
+from chart_text import (
+    InvalidExtractedChartData,
+    add_chart_type_metadata,
+    normalize_deplot_numeric_precision,
+    normalize_pie_deplot_text,
+)
 
 try:
     from transformers import Pix2StructForConditionalGeneration, Pix2StructProcessor
@@ -33,7 +38,7 @@ def _ensure_model_loaded() -> None:
         raise RuntimeError(f"Failed to load DePlot model: {exc}") from exc
 
 
-def extract_table_from_image_deplot(image_path: str) -> str:
+def extract_table_from_image_deplot(image_path: str, chart_type: str | None = None) -> str:
     """Extract an underlying data table from a chart image."""
     _ensure_model_loaded()
     assert _processor is not None and _model is not None
@@ -42,8 +47,12 @@ def extract_table_from_image_deplot(image_path: str) -> str:
         image = source.convert("RGB")
 
     full_text = _generate_table(image)
-    if detect_chart_type(image_path) != "pie":
-        return full_text
+    requested_type = (chart_type or "").casefold().strip()
+    detected_type = detect_chart_type(image_path) if requested_type in {"", "auto"} else None
+    effective_type = detected_type or requested_type
+    if effective_type != "pie":
+        normalized = normalize_deplot_numeric_precision(full_text)
+        return add_chart_type_metadata(normalized, effective_type)
 
     plot_image = crop_pie_plot(image)
     if plot_image is None:

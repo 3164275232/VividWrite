@@ -65,12 +65,16 @@ export default function App() {
   // Track background DePlot extraction task without showing UI
   const deplotTaskRef = useRef({ seq: 0, promise: null });
   // Helper to run DePlot extraction; if showOverlay=true, show analyzing modal while waiting
-  const runDeplotExtraction = useCallback(async (file, { showOverlay = false } = {}) => {
+  const runDeplotExtraction = useCallback(async (
+    file,
+    { showOverlay = false, chartTypeOverride = null } = {}
+  ) => {
     if (!file) return Promise.reject(new Error('No image file'));
     // bump sequence to invalidate older responses when starting a new task
     const seq = ++deplotTaskRef.current.seq;
     const fd = new FormData();
     fd.append('image', file);
+    fd.append('chart_type', chartTypeOverride || chartType);
     const exec = async () => {
       try {
         if (showOverlay) setIsExtractingDeplot(true);
@@ -101,7 +105,7 @@ export default function App() {
     const p = exec();
     deplotTaskRef.current.promise = p;
     return p;
-  }, []);
+  }, [chartType]);
 
   const ensureDeplotText = useCallback(async (file, { errorPrefix = 'DePlot extraction failed' } = {}) => {
     const cachedText = deplotText.trim();
@@ -376,6 +380,7 @@ export default function App() {
         setIsExtractingDeplot(true);
         const fd = new FormData();
         fd.append('image', uploadedImage);
+        fd.append('chart_type', chartType);
         const depRes = await extractDeplot(fd);
         if (depRes?.extracted_text && depRes.extracted_text.trim()) {
           deplotForAnalysis = depRes.extracted_text;
@@ -1036,13 +1041,16 @@ export default function App() {
                         const nextType = e.target.value;
                         setChartType(nextType);
                         setDeplotError("");
+                        deplotTaskRef.current.seq += 1;
+                        deplotTaskRef.current.promise = null;
+                        setDeplotText("");
                         if (SPATIAL_TASK_TYPES.has(nextType)) {
-                          deplotTaskRef.current.seq += 1;
-                          deplotTaskRef.current.promise = null;
-                          setDeplotText("");
                           setIsExtractingDeplot(false);
-                        } else if (uploadedImage && !deplotText.trim()) {
-                          runDeplotExtraction(uploadedImage, { showOverlay: false }).catch(() => {});
+                        } else if (uploadedImage) {
+                          runDeplotExtraction(uploadedImage, {
+                            showOverlay: false,
+                            chartTypeOverride: nextType,
+                          }).catch(() => {});
                         }
                       }}
                       style={{

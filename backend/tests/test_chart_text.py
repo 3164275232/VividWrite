@@ -6,7 +6,11 @@ from PIL import Image
 from chart_detection import crop_pie_plot, detect_chart_type
 from chart_text import (
     InvalidExtractedChartData,
+    add_chart_type_metadata,
+    build_table_fact_checks,
+    normalize_deplot_numeric_precision,
     normalize_pie_deplot_text,
+    parse_series_framework,
     parse_validated_pie_table,
 )
 
@@ -26,6 +30,26 @@ ISOLATED_PLOT_TEXT = (
 
 
 class ChartTextTests(unittest.TestCase):
+    def test_line_table_snaps_deplot_noise_to_the_shared_tenth_grid(self):
+        raw = (
+            "TITLE | Passengers<0x0A>Year | Bus | Rail | Metro<0x0A>"
+            "2010 | 1.80 | 1.06 | 0.80<0x0A>2012 | 1.90 | 1.33 | 1<0x0A>"
+            "2014 | 1.70 | 1.49 | 1.20<0x0A>2016 | 1.60 | 1.80 | 1.50<0x0A>"
+            "2018 | 1.50 | 2 | 1.70<0x0A>2020 | 1.30 | 2.20 | 1.90"
+        )
+
+        normalized = add_chart_type_metadata(normalize_deplot_numeric_precision(raw), "line")
+
+        self.assertIn("CHART TYPE | Line graph", normalized)
+        self.assertIn("2010 | 1.8 | 1.1 | 0.8", normalized)
+        self.assertIn("2012 | 1.9 | 1.3 | 1", normalized)
+        self.assertIn("2014 | 1.7 | 1.5 | 1.2", normalized)
+        self.assertEqual(len(parse_series_framework(normalized)), 18)
+        facts = build_table_fact_checks(normalized)
+        self.assertIn("2016 ranking: Rail (1.8) > Bus (1.6) > Metro (1.5)", facts)
+        self.assertIn("Between 2014 and 2016, Rail overtakes Bus", facts)
+        self.assertIn("Between 2016 and 2018, Metro overtakes Bus", facts)
+
     def test_pie_normalization_uses_full_metadata_and_isolated_values(self):
         normalized = normalize_pie_deplot_text(FULL_DEPLOT_TEXT, ISOLATED_PLOT_TEXT)
 

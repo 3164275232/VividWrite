@@ -14,6 +14,15 @@ _NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
 _LABELLED_PERCENT_RE = re.compile(
     r"^(?P<label>.+?)\s+(?P<value>-?\d+(?:\.\d+)?)\s*%\s*$"
 )
+_NUMERIC_CELL_RE = re.compile(r"^(?P<value>-?\d+(?:\.\d+)?)(?P<suffix>\s*%?)$")
+
+CHART_TYPE_LABELS = {
+    "bar": "Bar chart",
+    "line": "Line graph",
+    "area": "Area chart",
+    "pie": "Pie chart",
+    "scatter": "Scatter plot",
+}
 
 
 def _lines(text: str) -> list[str]:
@@ -34,6 +43,303 @@ def _key(value: str) -> str:
 
 def _format_number(value: float) -> str:
     return str(int(value)) if value.is_integer() else f"{value:g}"
+
+
+def add_chart_type_metadata(text: str, chart_type: str | None) -> str:
+    """Record the original visual type so an LLM does not call it a table."""
+    label = CHART_TYPE_LABELS.get((chart_type or "").casefold())
+    if not label:
+        return "\n".join(_lines(text))
+
+    lines = [line for line in _lines(text) if not line.casefold().startswith("chart type |")]
+    marker = f"CHART TYPE | {label}"
+    insert_at = 1 if lines and _cells(lines[0])[0].casefold() == "title" else 0
+    lines.insert(insert_at, marker)
+    return "\n".join(lines)
+
+
+def normalize_deplot_numeric_precision(text: str) -> str:
+    """Remove implausible DePlot decimals when a table strongly follows a coarser grid."""
+    rows = [_cells(line) for line in _lines(text)]
+    header_index = next(
+        (
+            index
+            for index, cells in enumerate(rows)
+            if len(cells) >= 3 and cells[0].casefold() not in {"title", "chart type"}
+        ),
+        None,
+    )
+    if header_index is None:
+        return "\n".join(" | ".join(cells) for cells in rows)
+
+    numeric_cells: list[tuple[int, int, float, str]] = []
+    for row_index in range(header_index + 1, len(rows)):
+        for column_index in range(1, len(rows[row_index])):
+            match = _NUMERIC_CELL_RE.match(rows[row_index][column_index])
+            if match:
+                numeric_cells.append(
+                    (
+                        row_index,
+                        column_index,
+                        float(match.group("value")),
+                        match.group("suffix"),
+                    )
+                )
+    if len(numeric_cells) < 6:
+        return "\n".join(" | ".join(cells) for cells in rows)
+
+    chosen_step: float | None = None
+    for step in (1.0, 0.5, 0.2, 0.1, 0.05):
+        residuals = [abs(value - round(value / step) * step) for _, _, value, _ in numeric_cells]
+        if max(residuals) <= step * 0.45 and sum(residuals) / len(residuals) <= step * 0.08:
+            chosen_step = step
+            break
+    if chosen_step is None:
+        return "\n".join(" | ".join(cells) for cells in rows)
+
+    for row_index, column_index, value, suffix in numeric_cells:
+        snapped = round(value / chosen_step) * chosen_step
+        rows[row_index][column_index] = f"{_format_number(snapped)}{suffix}"
+    return "\n".join(" | ".join(cells) for cells in rows)
+
+
+def parse_series_framework(text: str) -> list[tuple[str, str]]:
+    """Return the complete period/category by series grid from a DePlot table."""
+    rows = [_cells(line) for line in _lines(text)]
+    header_index = next(
+        (
+            index
+            for index, cells in enumerate(rows)
+            if len(cells) >= 3 and cells[0].casefold() not in {"title", "chart type"}
+        ),
+        None,
+    )
+    if header_index is None:
+        return []
+
+    series = [cell for cell in rows[header_index][1:] if cell]
+    framework: list[tuple[str, str]] = []
+    for cells in rows[header_index + 1 :]:
+        if not cells or not cells[0]:
+            continue
+        framework.extend((cells[0], name) for name in series)
+    return framework
+
+
+def build_table_fact_checks(text: str) -> str:
+    """Derive rankings and crossings that generated prose must not contradict."""
+    rows = [_cells(line) for line in _lines(text)]
+    header_index = next(
+        (
+            index
+            for index, cells in enumerate(rows)
+            if len(cells) >= 3 and cells[0].casefold() not in {"title", "chart type"}
+        ),
+        None,
+    )
+    if header_index is None:
+        return ""
+
+    series = rows[header_index][1:]
+    periods: list[tuple[str, list[float]]] = []
+    for cells in rows[header_index + 1 :]:
+        if len(cells) < len(series) + 1:
+            continue
+        values: list[float] = []
+        for cell in cells[1 : len(series) + 1]:
+            match = _NUMERIC_CELL_RE.match(cell)
+            if match is None:
+                values = []
+                break
+            values.append(float(match.group("value")))
+        if values:
+            periods.append((cells[0], values))
+    if not periods:
+        return ""
+
+    facts: list[str] = []
+    for period, values in periods:
+        ranking = sorted(zip(series, values), key=lambda item: item[1], reverse=True)
+        ranking_text = ""
+        for index, (name, value) in enumerate(ranking):
+            if index:
+                separator = " = " if value == ranking[index - 1][1] else " > "
+                ranking_text += separator
+            ranking_text += f"{name} ({_format_number(value)})"
+        facts.append(f"{period} ranking: {ranking_text}.")
+
+    for left_index in range(len(series)):
+        for right_index in range(left_index + 1, len(series)):
+            left_name, right_name = series[left_index], series[right_index]
+            for (previous_period, previous), (current_period, current) in zip(periods, periods[1:]):
+                previous_difference = previous[left_index] - previous[right_index]
+                current_difference = current[left_index] - current[right_index]
+                if previous_difference * current_difference < 0:
+                    higher = left_name if current_difference > 0 else right_name
+                    lower = right_name if current_difference > 0 else left_name
+                    facts.append(
+                        f"Between {previous_period} and {current_period}, {higher} overtakes {lower}."
+                    )
+                elif current_difference == 0 and previous_difference != 0:
+                    facts.append(f"In {current_period}, {left_name} and {right_name} are equal.")
+    return "\n".join(facts)
+
+
+_EQUALITY_RE = re.compile(
+    r"\b(?:equal(?:s|ed|led|ing)?|same as|identical to|drew level|level(?:led)? with|matched)\b",
+    flags=re.IGNORECASE,
+)
+_STEADY_UP_RE = re.compile(
+    r"\b(?:steady|consistent|continuous|sustained)\s+(?:growth|increase|rise|upward trend)\b"
+    r"|\b(?:rose|grew|increased|climbed)\s+(?:steadily|consistently|continuously)\b",
+    flags=re.IGNORECASE,
+)
+_STEADY_DOWN_RE = re.compile(
+    r"\b(?:steady|consistent|continuous|sustained)\s+(?:decline|decrease|fall|drop|downward trend)\b"
+    r"|\b(?:fell|declined|decreased|dropped)\s+(?:steadily|consistently|continuously)\b",
+    flags=re.IGNORECASE,
+)
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+}
+_DURATION_RE = re.compile(
+    r"\b(?P<duration>\d+|" + "|".join(_NUMBER_WORDS) + r")-year period\b"
+    r".{0,80}?\bfrom\s+(?P<start>\d{4})\s+to\s+(?P<end>\d{4})\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _parse_numeric_series_table(text: str) -> tuple[list[str], list[tuple[str, list[float]]]]:
+    rows = [_cells(line) for line in _lines(text)]
+    header_index = next(
+        (
+            index
+            for index, cells in enumerate(rows)
+            if len(cells) >= 3 and cells[0].casefold() not in {"title", "chart type"}
+        ),
+        None,
+    )
+    if header_index is None:
+        return [], []
+
+    series = rows[header_index][1:]
+    periods: list[tuple[str, list[float]]] = []
+    for cells in rows[header_index + 1 :]:
+        if len(cells) < len(series) + 1:
+            continue
+        values: list[float] = []
+        for cell in cells[1 : len(series) + 1]:
+            match = _NUMERIC_CELL_RE.match(cell)
+            if match is None:
+                values = []
+                break
+            values.append(float(match.group("value")))
+        if values:
+            periods.append((cells[0], values))
+    return series, periods
+
+
+def _contains_series(text: str, series: str) -> bool:
+    text_key = f" {_key(text)} "
+    series_key = _key(series)
+    aliases = {series_key}
+    if series_key and " " not in series_key:
+        aliases.add(f"{series_key}s")
+        if series_key.endswith("s"):
+            aliases.add(series_key[:-1])
+    return any(f" {alias} " in text_key for alias in aliases if alias)
+
+
+def find_table_fact_contradictions(table_text: str, prose: str) -> list[str]:
+    """Find direct equality and whole-period monotonic claims contradicted by the table."""
+    series, periods = _parse_numeric_series_table(table_text)
+    if len(series) < 2 or len(periods) < 2:
+        return []
+
+    contradictions: list[str] = []
+    sentences = [
+        part.strip()
+        for part in re.split(r"(?<=[.!?])\s+|[\r\n]+", prose)
+        if part.strip()
+    ]
+    value_by_period = {
+        period: dict(zip(series, values))
+        for period, values in periods
+    }
+
+    for sentence in sentences:
+        for duration_match in _DURATION_RE.finditer(sentence):
+            duration_text = duration_match.group("duration").casefold()
+            claimed_duration = int(duration_text) if duration_text.isdigit() else _NUMBER_WORDS[duration_text]
+            start = int(duration_match.group("start"))
+            end = int(duration_match.group("end"))
+            actual_duration = abs(end - start)
+            if claimed_duration != actual_duration:
+                contradictions.append(
+                    f"The period from {start} to {end} is {actual_duration} years, not "
+                    f"{claimed_duration} years."
+                )
+
+        equality = _EQUALITY_RE.search(sentence)
+        if equality:
+            mentioned_series = [name for name in series if _contains_series(sentence, name)]
+            period_mentions = [
+                (match.start(), period)
+                for period, _ in periods
+                for match in re.finditer(rf"(?<!\d){re.escape(period)}(?!\d)", sentence)
+            ]
+            if len(mentioned_series) >= 2 and period_mentions:
+                preceding = [item for item in period_mentions if item[0] < equality.start()]
+                _, period = max(preceding or period_mentions, key=lambda item: item[0])
+                values = [(name, value_by_period[period][name]) for name in mentioned_series]
+                if max(value for _, value in values) - min(value for _, value in values) > 1e-9:
+                    details = ", ".join(
+                        f"{name} is {_format_number(value)}" for name, value in values
+                    )
+                    contradictions.append(
+                        f"The equality claim for {period} is false: {details}."
+                    )
+
+        for clause in re.split(r"[,;]|\b(?:while|whereas|although|but)\b", sentence, flags=re.IGNORECASE):
+            if any(re.search(rf"(?<!\d){re.escape(period)}(?!\d)", clause) for period, _ in periods):
+                continue
+            direction = 1 if _STEADY_UP_RE.search(clause) else -1 if _STEADY_DOWN_RE.search(clause) else 0
+            if not direction:
+                continue
+            for index, name in enumerate(series):
+                if not _contains_series(clause, name):
+                    continue
+                values = [row_values[index] for _, row_values in periods]
+                violates = any(
+                    (current < previous if direction > 0 else current > previous)
+                    for previous, current in zip(values, values[1:])
+                )
+                if violates:
+                    trend = "increase" if direction > 0 else "decline"
+                    contradictions.append(
+                        f"The whole-period claim of a consistent {trend} for {name} is false."
+                    )
+
+    return list(dict.fromkeys(contradictions))
 
 
 def _extract_title(text: str) -> str:
