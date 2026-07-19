@@ -84,6 +84,14 @@ def generate_revision_suggestions(chart_data: dict, student_answer: str) -> list
             "severity": "low",
         })
 
+    incorrect_count = sum(1 for record in records if record.get("incorrect"))
+    if incorrect_count:
+        suggestions.append({
+            "type": "data_accuracy",
+            "message": f"Your answer contains {incorrect_count} pie-chart value(s) that differ from the original chart.",
+            "severity": "high",
+        })
+
     series_count = len({record.get("series") for record in records if record.get("series")})
     if series_count > 1:
         suggestions.append({

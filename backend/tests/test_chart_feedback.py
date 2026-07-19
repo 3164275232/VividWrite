@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from PIL import Image, ImageDraw
 
 from chart_detection import detect_chart_type
-from chart_feedback import ChartFeedbackService, _normalise_result
+from chart_feedback import ChartFeedbackService, _annotate_pie_accuracy, _normalise_result
 from chart_renderer import InvalidChartSpec, extract_image_palette, prepare_vega_lite_spec
 
 
@@ -194,8 +194,17 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual([layer["mark"]["type"] for layer in prepared["layer"]], ["arc", "text"])
         self.assertEqual(
             [record["_display_label"] for record in prepared["data"]["values"]],
-            ["Housing 32%", "Food 21%", "Other 8%"],
+            ["Housing 32%", "Food 21%", "Other 8%", "MISSING 39%"],
         )
+        missing = prepared["data"]["values"][-1]
+        self.assertEqual(missing["feedback_status"], "missing_total")
+        self.assertEqual((missing["_main_start"], missing["_main_end"]), (61.0, 100.0))
+        self.assertEqual(prepared["title"], "Spending")
+        values = prepared["data"]["values"]
+        self.assertEqual([record["_label_mid"] for record in values], [16.0, 42.5, 57.0, 80.5])
+        text_encoding = prepared["layer"][-1]["encoding"]
+        self.assertEqual(text_encoding["theta"]["field"], "_label_mid")
+        self.assertNotIn("theta2", text_encoding)
 
     def test_pie_renderer_computes_shares_when_unit_is_missing(self):
         records = [
@@ -213,6 +222,107 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
             [record["_display_label"] for record in prepared["data"]["values"]],
             ["Housing 60 (60%)", "Other 40 (40%)"],
         )
+
+    def test_pie_accuracy_is_compared_with_official_values_locally(self):
+        result = {
+            "chart_type": "pie",
+            "records": [
+                {"category": "Housing", "value": 30.0, "missing": False},
+                {"category": "Food", "value": 23.0, "missing": False},
+            ],
+            "comparison": {"omitted_official_items": []},
+        }
+
+        _annotate_pie_accuracy(
+            result,
+            "Category | Percentage<0x0A>Housing | 32%<0x0A>Food | 21%<0x0A>Other | 47%",
+        )
+
+        self.assertEqual([record["category"] for record in result["records"]], ["Housing", "Food", "Other"])
+        self.assertTrue(result["records"][0]["incorrect"])
+        self.assertEqual(result["records"][0]["official_value"], 32.0)
+        self.assertTrue(result["records"][2]["missing"])
+        self.assertEqual(result["comparison"]["student_percentage_total"], 53.0)
+        self.assertEqual(result["comparison"]["percentage_balance"], "under")
+
+    def test_incorrect_pie_slices_get_red_error_rings_and_labels(self):
+        records = [
+            {
+                "category": "Housing",
+                "value": 30.0,
+                "official_value": 32.0,
+                "incorrect": True,
+                "feedback_status": "incorrect",
+            },
+            {
+                "category": "Food",
+                "value": 23.0,
+                "official_value": 21.0,
+                "incorrect": True,
+                "feedback_status": "incorrect",
+            },
+            {
+                "category": "Other",
+                "value": 47.0,
+                "official_value": 47.0,
+                "incorrect": False,
+                "feedback_status": "correct",
+            },
+        ]
+
+        prepared = prepare_vega_lite_spec(
+            {"mark": "arc", "encoding": {}},
+            records,
+            "Spending",
+            ["#355c7d", "#6c5b7b", "#84949c"],
+            chart_type="pie",
+            unit="%",
+        )
+
+        self.assertEqual([layer["mark"]["type"] for layer in prepared["layer"]], ["arc", "arc", "text"])
+        self.assertEqual(prepared["layer"][1]["mark"]["color"], "#991b1b")
+        self.assertEqual(prepared["data"]["values"][0]["_display_label"], "Housing 30% !")
+        self.assertEqual(prepared["title"], "Spending")
+
+    def test_pie_total_over_100_uses_a_separate_excess_ring(self):
+        prepared = prepare_vega_lite_spec(
+            {"mark": "arc", "encoding": {}},
+            [
+                {
+                    "category": "Housing",
+                    "value": 60.0,
+                    "official_value": 60.0,
+                    "incorrect": False,
+                    "feedback_status": "correct",
+                },
+                {
+                    "category": "Other",
+                    "value": 50.0,
+                    "official_value": 40.0,
+                    "incorrect": True,
+                    "feedback_status": "incorrect",
+                },
+            ],
+            "Spending",
+            chart_type="pie",
+            unit="%",
+        )
+
+        excess = prepared["data"]["values"][-1]
+        self.assertEqual(excess["feedback_status"], "excess_total")
+        self.assertEqual((excess["_excess_start"], excess["_excess_end"]), (0.0, 10.0))
+        self.assertEqual(
+            [layer["mark"]["type"] for layer in prepared["layer"]],
+            ["arc", "arc", "text", "text"],
+        )
+        red_arcs = [
+            layer
+            for layer in prepared["layer"]
+            if layer["mark"]["type"] == "arc" and layer["mark"].get("color") in {"#dc2626", "#991b1b"}
+        ]
+        self.assertEqual(len(red_arcs), 1)
+        self.assertEqual(red_arcs[0]["mark"]["color"], "#dc2626")
+        self.assertEqual(prepared["title"], "Spending")
 
     def test_pie_labels_have_no_text_outline(self):
         prepared = prepare_vega_lite_spec(

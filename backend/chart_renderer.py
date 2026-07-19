@@ -28,6 +28,18 @@ TEXT_OUTLINE_KEYS = {
     "strokeJoin",
     "strokeMiterLimit",
 }
+PIE_ALERT_COLOR = "#dc2626"
+PIE_ALERT_DARK = "#991b1b"
+PIE_FALLBACK_PALETTE = [
+    "#355c7d",
+    "#6c5b7b",
+    "#b56576",
+    "#e56b6f",
+    "#eaac8b",
+    "#84949c",
+    "#2f6690",
+    "#d97706",
+]
 
 
 class InvalidChartSpec(ValueError):
@@ -338,61 +350,232 @@ def _number_label(value: Any) -> str:
 
 
 def _prepare_pie_chart(
-    records: list[dict], unit: str
+    records: list[dict], unit: str, palette: list[str] | None
 ) -> tuple[dict, list[dict]]:
     label_field = _pie_label_field(records)
     values = [record.get("value") for record in records]
-    total = sum(value for value in values if isinstance(value, (int, float)))
-    values_are_percentages = "%" in unit or "percent" in unit.lower()
+    student_total = sum(float(value) for value in values if isinstance(value, (int, float)))
+    values_are_percentages = (
+        "%" in unit
+        or "percent" in unit.lower()
+        or any(isinstance(record.get("official_value"), (int, float)) for record in records)
+    )
+    angle_total = (
+        max(100.0, student_total)
+        if values_are_percentages
+        else max(student_total, 1.0)
+    )
+    source_palette = palette or PIE_FALLBACK_PALETTE
     labelled_records = copy.deepcopy(records)
+    cumulative = 0.0
+
     for index, record in enumerate(labelled_records):
-        category = record.get(label_field) or "Item"
+        category = record.get(label_field) or record.get("category") or "Item"
         value = record.get("value")
         number = _number_label(value)
         record["_order"] = index
+        record["_legend_label"] = str(category)
+        record["_display_color"] = source_palette[index % len(source_palette)]
+        record["_main_start"] = None
+        record["_main_end"] = None
+        record["_label_mid"] = None
+        record["_error_start"] = None
+        record["_error_end"] = None
+        record["_excess_start"] = None
+        record["_excess_end"] = None
+        record["_excess_mid"] = None
+        record["_excess_label"] = None
+
         if values_are_percentages:
-            displayed_value = f"{number}%"
-        elif isinstance(value, (int, float)) and total > 0:
-            share = value / total * 100
+            displayed_value = f"{number}%" if number else ""
+        elif isinstance(value, (int, float)) and student_total > 0:
+            share = value / student_total * 100
             share_label = f"{share:.1f}".rstrip("0").rstrip(".")
             displayed_value = f"{number} ({share_label}%)"
         else:
             displayed_value = number
-        record["_display_label"] = f"{category} {displayed_value}".strip()
 
-    theta = {"field": "value", "type": "quantitative", "stack": True}
-    order = {"field": "_order", "type": "quantitative", "sort": "ascending"}
-    pie_spec = {
-        "layer": [
+        status = record.get("feedback_status")
+        if status == "incorrect":
+            record["_display_label"] = f"{category} {displayed_value} !".strip()
+            record["_label_color"] = "white"
+        elif status == "missing":
+            record["_display_label"] = None
+            record["_label_color"] = PIE_ALERT_DARK
+        elif status == "unexpected":
+            record["_display_label"] = f"{category} {displayed_value} !".strip()
+            record["_label_color"] = "white"
+            record["_display_color"] = PIE_ALERT_COLOR
+        else:
+            record["_display_label"] = f"{category} {displayed_value}".strip()
+            record["_label_color"] = "white"
+
+        if isinstance(value, (int, float)) and value > 0:
+            drawable = float(value)
+            if drawable > 0:
+                record["_main_start"] = cumulative
+                record["_main_end"] = cumulative + drawable
+                record["_label_mid"] = (record["_main_start"] + record["_main_end"]) / 2
+                if status in {"incorrect", "unexpected"}:
+                    record["_error_start"] = record["_main_start"]
+                    record["_error_end"] = record["_main_end"]
+                cumulative += drawable
+
+    if values_are_percentages and student_total < 99.5:
+        gap = max(0.0, 100.0 - student_total)
+        gap_label = _number_label(gap)
+        labelled_records.append(
             {
-                "mark": {"type": "arc", "outerRadius": 175, "stroke": "white", "strokeWidth": 2},
-                "encoding": {
-                    "theta": theta,
-                    "color": {
-                        "field": label_field,
-                        "type": "nominal",
-                        "legend": {"title": label_field.replace("_", " ").title()},
-                    },
-                    "order": order,
+                "category": "Missing from essay",
+                "series": None,
+                "value": gap,
+                "missing": True,
+                "incorrect": False,
+                "feedback_status": "missing_total",
+                "_order": len(labelled_records),
+                "_legend_label": "Missing from essay",
+                "_display_color": PIE_ALERT_COLOR,
+                "_display_label": f"MISSING {gap_label}%",
+                "_label_color": "white",
+                "_main_start": max(0.0, student_total),
+                "_main_end": 100.0,
+                "_label_mid": (max(0.0, student_total) + 100.0) / 2,
+                "_error_start": None,
+                "_error_end": None,
+                "_excess_start": None,
+                "_excess_end": None,
+                "_excess_mid": None,
+                "_excess_label": None,
+            }
+        )
+    elif values_are_percentages and student_total > 100.5:
+        excess = student_total - 100.0
+        excess_label = _number_label(excess)
+        labelled_records.append(
+            {
+                "category": "Excess over 100%",
+                "series": None,
+                "value": None,
+                "missing": False,
+                "incorrect": True,
+                "feedback_status": "excess_total",
+                "_order": len(labelled_records),
+                "_legend_label": "Excess over 100%",
+                "_display_color": PIE_ALERT_DARK,
+                "_display_label": None,
+                "_label_color": PIE_ALERT_DARK,
+                "_main_start": None,
+                "_main_end": None,
+                "_label_mid": None,
+                "_error_start": None,
+                "_error_end": None,
+                "_excess_start": 0.0,
+                "_excess_end": min(excess, 100.0),
+                "_excess_mid": min(excess, 100.0) / 2,
+                "_excess_label": f"EXCESS {excess_label}%",
+            }
+        )
+    legend_domain = _unique_field_values(labelled_records, "_legend_label")
+    color_by_label = {
+        record["_legend_label"]: record["_display_color"]
+        for record in labelled_records
+        if record.get("_legend_label") and record.get("_display_color")
+    }
+    legend_range = [color_by_label[label] for label in legend_domain]
+    theta = {
+        "field": "_main_start",
+        "type": "quantitative",
+        "scale": {"domain": [0, angle_total]},
+    }
+    theta2 = {"field": "_main_end"}
+    layers: list[dict] = [
+        {
+            "mark": {"type": "arc", "outerRadius": 145, "stroke": "white", "strokeWidth": 2},
+            "encoding": {
+                "theta": theta,
+                "theta2": theta2,
+                "color": {
+                    "field": "_legend_label",
+                    "type": "nominal",
+                    "scale": {"domain": legend_domain, "range": legend_range},
+                    "legend": {"title": "Category and feedback"},
                 },
             },
+        }
+    ]
+    has_excess = any(record.get("_excess_start") is not None for record in labelled_records)
+    if not has_excess and any(record.get("_error_start") is not None for record in labelled_records):
+        layers.append(
             {
                 "mark": {
-                    "type": "text",
-                    "radius": 125,
-                    "fontSize": 12,
-                    "fontWeight": "bold",
-                    "fill": "white",
+                    "type": "arc",
+                    "innerRadius": 149,
+                    "outerRadius": 161,
+                    "color": PIE_ALERT_DARK,
                 },
                 "encoding": {
-                    "theta": theta,
-                    "order": order,
-                    "text": {"field": "_display_label", "type": "nominal"},
+                    "theta": {
+                        "field": "_error_start",
+                        "type": "quantitative",
+                        "scale": {"domain": [0, angle_total]},
+                    },
+                    "theta2": {"field": "_error_end"},
                 },
+            }
+        )
+    if any(record.get("_excess_start") is not None for record in labelled_records):
+        layers.append(
+            {
+                "mark": {
+                    "type": "arc",
+                    "innerRadius": 165,
+                    "outerRadius": 177,
+                    "color": PIE_ALERT_COLOR,
+                },
+                "encoding": {
+                    "theta": {
+                        "field": "_excess_start",
+                        "type": "quantitative",
+                        "scale": {"domain": [0, 100]},
+                    },
+                    "theta2": {"field": "_excess_end"},
+                },
+            }
+        )
+    layers.append(
+        {
+            "mark": {
+                "type": "text",
+                "radius": 102,
+                "fontSize": 11,
+                "fontWeight": "bold",
             },
-        ]
-    }
-    return pie_spec, labelled_records
+            "encoding": {
+                "theta": {
+                    "field": "_label_mid",
+                    "type": "quantitative",
+                    "scale": {"domain": [0, angle_total]},
+                },
+                "text": {"field": "_display_label", "type": "nominal"},
+                "color": {"field": "_label_color", "type": "nominal", "scale": None, "legend": None},
+            },
+        }
+    )
+    if any(record.get("_excess_label") for record in labelled_records):
+        layers.append(
+            {
+                "mark": {"type": "text", "radius": 171, "fontSize": 11, "fontWeight": "bold", "color": PIE_ALERT_DARK},
+                "encoding": {
+                    "theta": {
+                        "field": "_excess_mid",
+                        "type": "quantitative",
+                        "scale": {"domain": [0, 100]},
+                    },
+                    "text": {"field": "_excess_label", "type": "nominal"},
+                },
+            }
+        )
+    return {"layer": layers}, labelled_records
 
 
 def prepare_vega_lite_spec(
@@ -407,7 +590,7 @@ def prepare_vega_lite_spec(
     if not records:
         raise InvalidChartSpec("No chart records were produced from the student answer.")
     if chart_type == "pie":
-        prepared, render_records = _prepare_pie_chart(records, unit)
+        prepared, render_records = _prepare_pie_chart(records, unit, palette)
     else:
         if not isinstance(spec, dict):
             raise InvalidChartSpec("DeepSeek did not return a Vega-Lite object.")
@@ -421,7 +604,8 @@ def prepare_vega_lite_spec(
     _remove_text_outlines(prepared)
     if chart_type == "line":
         _normalise_line_marks(prepared)
-    _apply_encoding_order(prepared, render_records, palette)
+    if chart_type != "pie":
+        _apply_encoding_order(prepared, render_records, palette)
     prepared["$schema"] = "https://vega.github.io/schema/vega-lite/v6.json"
     prepared["data"] = {"values": render_records}
     prepared["title"] = title or "Student answer visualisation"

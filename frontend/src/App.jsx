@@ -7,6 +7,58 @@ import Flowchart from "./Flowchart";//对应修改1
 
 import { analysisRequirement, sampleEssayRequirement, SPATIAL_TASK_TYPES } from './utils/taskTypes';
 
+function formatFeedbackNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '';
+  return Number.isInteger(number) ? String(number) : number.toFixed(1).replace(/\.0$/, '');
+}
+
+function PieFeedbackDetails({ chartData }) {
+  if (chartData?.chart_type !== 'pie') return null;
+  const comparison = chartData.comparison || {};
+  const issues = Array.isArray(comparison.incorrect_official_items)
+    ? comparison.incorrect_official_items.filter(Boolean)
+    : [];
+  const total = Number(comparison.student_percentage_total);
+  const difference = Number(comparison.percentage_difference);
+  const balance = comparison.percentage_balance;
+  const hasTotal = Number.isFinite(total);
+  const hasBalanceIssue = balance === 'under' || balance === 'over';
+  if (!issues.length && !hasBalanceIssue) return null;
+
+  let totalMessage = hasTotal ? `Student total: ${formatFeedbackNumber(total)}%.` : '';
+  if (hasTotal && balance === 'under' && Number.isFinite(difference)) {
+    totalMessage += ` Missing ${formatFeedbackNumber(Math.abs(difference))}%.`;
+  } else if (hasTotal && balance === 'over' && Number.isFinite(difference)) {
+    totalMessage += ` Exceeds 100% by ${formatFeedbackNumber(Math.abs(difference))}%.`;
+  }
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        marginTop: '0.75rem',
+        paddingTop: '0.7rem',
+        borderTop: '1px solid #e5e7eb',
+        borderLeft: '4px solid #dc2626',
+        paddingLeft: '0.75rem',
+        color: '#7f1d1d',
+        fontSize: '0.78rem',
+        lineHeight: 1.45,
+      }}
+    >
+      <strong style={{ display: 'block', fontSize: '0.82rem' }}>Data issues</strong>
+      {totalMessage && <div>{totalMessage}</div>}
+      {issues.length > 0 && (
+        <ul style={{ margin: '0.35rem 0 0', paddingLeft: '1.1rem' }}>
+          {issues.map((issue, index) => <li key={`${issue}-${index}`}>{issue}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   // Dev debug flag (set VITE_SHOW_DEBUG=true in .env to enable)
   const SHOW_DEBUG = import.meta.env.VITE_SHOW_DEBUG === 'true';
@@ -35,8 +87,8 @@ export default function App() {
   //修改1
   const [rightContent, setRightContent] = useState("Flowchart");
   
-  // Removed chartData debug state per request
   const [chartUrl, setChartUrl] = useState(null);
+  const [chartData, setChartData] = useState(null);
   // New revision review data (vocabulary / grammar / coherence / overall) with mapped suggestions
   const [revisionReview, setRevisionReview] = useState(null); // {overall:{...}, suggestions:[...]}
   const [reviewSuggestions, setReviewSuggestions] = useState([]); // normalized list with id, category, message, severity, ranges
@@ -328,6 +380,8 @@ export default function App() {
     const file = e.target.files[0];
     if (file) {
       setUploadedImage(file);
+      setChartUrl(null);
+      setChartData(null);
       // 创建预览URL
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -347,6 +401,8 @@ export default function App() {
   const handleRemoveImage = () => {
     setUploadedImage(null);
     setImagePreview(null);
+    setChartUrl(null);
+    setChartData(null);
     // Invalidate any pending DePlot extraction and clear related state
     deplotTaskRef.current.seq += 1;
     deplotTaskRef.current.promise = null;
@@ -372,6 +428,8 @@ export default function App() {
 
     setIsAnalyzing(true);
     setAnalysisError("");
+    setChartUrl(null);
+    setChartData(null);
 
     // 若还没有 DePlot 文本，先尝试自动提取一次
     let deplotForAnalysis = isSpatialTask ? '(Not required for spatial tasks)' : deplotText;
@@ -425,6 +483,7 @@ export default function App() {
         }
         if (chartRes.status === 'fulfilled' && chartRes.value.success) {
           setChartUrl(resolveBackendUrl(chartRes.value.chart_url));
+          setChartData(chartRes.value.chart_data || null);
         } else if (chartRes.status === 'fulfilled') {
           setAnalysisError(prev => prev ? prev + '; ' + (chartRes.value.error || 'Chart analysis failed') : (chartRes.value.error || 'Chart analysis failed'));
         } else {
@@ -444,6 +503,7 @@ export default function App() {
         const result = await analyzeChartWithImage(formData);
         if (result.success) {
           setChartUrl(resolveBackendUrl(result.chart_url));
+          setChartData(result.chart_data || null);
         } else {
           setAnalysisError(result.error || "分析失败");
         }
@@ -1044,6 +1104,8 @@ export default function App() {
                       onChange={(e) => {
                         const nextType = e.target.value;
                         setChartType(nextType);
+                        setChartUrl(null);
+                        setChartData(null);
                         setDeplotError("");
                         deplotTaskRef.current.seq += 1;
                         deplotTaskRef.current.promise = null;
@@ -1487,6 +1549,7 @@ export default function App() {
                       <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'center' }}>
                         <img src={chartUrl} alt="Generated feedback chart" style={{ maxWidth: '100%', maxHeight: 300, objectFit: 'contain' }} />
                       </div>
+                      <PieFeedbackDetails chartData={chartData} />
                     </div>
                   )}
                   {/* Chart Data (debug) block removed */}

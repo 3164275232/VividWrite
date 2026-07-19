@@ -66,7 +66,14 @@ generative images can alter labels or geometry.
 
 The renderer also enforces presentation invariants after model output: nominal
 domains retain source order, colors stay bound to that order, and pie charts
-always receive a category-and-value text layer.
+always receive a category-and-value text layer. Pie values are compared locally
+with the validated DePlot percentages rather than trusting the language model's
+own accuracy judgement. Incorrect slices receive an error label and normally a
+red error ring; totals below 100% receive a red missing wedge. When the total is
+above 100%, one red excess ring replaces all per-slice error rings. Exact
+student-versus-official values and total-balance
+warnings are returned as structured comparison data and displayed below the PNG
+in the web interface, keeping the chart title uncluttered.
 
 ## Runtime data
 

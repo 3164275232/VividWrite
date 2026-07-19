@@ -164,5 +164,7 @@ Incomplete answer for visual-feedback testing:
 - The process report preserves all eight stages and the correct arrow order.
 - The page does not remain stuck on image analysis.
 - Statistical feedback preserves category, series and colour order.
+- Pie feedback marks incorrect values, shows a red missing wedge below 100%,
+  and shows a red excess ring above 100%.
 - Map/process visual feedback returns a Wan-generated image and displays its
   manual-review warning.

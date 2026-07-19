@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from difflib import get_close_matches
 from pathlib import Path
 from typing import Any
 
 from chart_detection import detect_chart_type
 from chart_renderer import InvalidChartSpec, extract_image_palette, render_vega_lite_png
-from chart_text import parse_series_framework
+from chart_text import InvalidExtractedChartData, parse_series_framework, parse_validated_pie_table
 from deepseek_config import get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
 
 
@@ -168,6 +169,119 @@ def _normalise_result(raw: dict, requested_type: str) -> dict:
 
 def _key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+
+
+def _pie_record_label(record: dict) -> str:
+    for field in ("category", "series", "region", "period"):
+        value = record.get(field)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def _annotate_pie_accuracy(result: dict, deplot_text: str, tolerance: float = 0.5) -> None:
+    """Compare student pie values with the validated official percentages."""
+    if result.get("chart_type") != "pie":
+        return
+    try:
+        official_values = parse_validated_pie_table(deplot_text)
+    except InvalidExtractedChartData:
+        return
+
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    indexed_records = [
+        (index, record, _key(_pie_record_label(record)))
+        for index, record in enumerate(records)
+        if isinstance(record, dict)
+    ]
+    used_indices: set[int] = set()
+    ordered_records: list[dict] = []
+    accuracy_issues: list[str] = []
+    omitted_items: list[str] = []
+
+    for official_label, official_value in official_values.items():
+        official_key = _key(official_label)
+        matched = next(
+            (
+                (index, record)
+                for index, record, record_key in indexed_records
+                if index not in used_indices and record_key == official_key
+            ),
+            None,
+        )
+        if matched is None:
+            available_keys = {
+                record_key: (index, record)
+                for index, record, record_key in indexed_records
+                if index not in used_indices and record_key
+            }
+            close = get_close_matches(official_key, list(available_keys), n=1, cutoff=0.78)
+            matched = available_keys[close[0]] if close else None
+
+        if matched is None:
+            record = _clean_record({"category": official_label, "value": None, "missing": True})
+        else:
+            index, record = matched
+            used_indices.add(index)
+
+        record["category"] = official_label
+        record["official_value"] = float(official_value)
+        student_value = record.get("value")
+        if isinstance(student_value, (int, float)):
+            record["missing"] = False
+            delta = float(student_value) - float(official_value)
+            record["error_delta"] = round(delta, 6)
+            record["incorrect"] = abs(delta) > tolerance
+            record["feedback_status"] = "incorrect" if record["incorrect"] else "correct"
+            if record["incorrect"]:
+                accuracy_issues.append(
+                    f"{official_label}: student {student_value:g}%, official {official_value:g}%"
+                )
+        else:
+            record["missing"] = True
+            record["incorrect"] = False
+            record["error_delta"] = None
+            record["feedback_status"] = "missing"
+            omitted_items.append(official_label)
+            accuracy_issues.append(f"{official_label}: missing, official {official_value:g}%")
+        ordered_records.append(record)
+
+    for index, record, _ in indexed_records:
+        if index in used_indices:
+            continue
+        label = _pie_record_label(record) or "Unrecognised category"
+        record["official_value"] = None
+        record["incorrect"] = True
+        record["feedback_status"] = "unexpected"
+        accuracy_issues.append(f"{label}: not present in the official pie chart")
+        ordered_records.append(record)
+
+    student_total = sum(
+        float(record["value"])
+        for record in ordered_records
+        if isinstance(record.get("value"), (int, float))
+    )
+    difference = student_total - 100.0
+    if difference < -tolerance:
+        balance = "under"
+    elif difference > tolerance:
+        balance = "over"
+    else:
+        balance = "complete"
+
+    comparison = result.get("comparison")
+    if not isinstance(comparison, dict):
+        comparison = {}
+        result["comparison"] = comparison
+    existing_omissions = comparison.get("omitted_official_items")
+    if not isinstance(existing_omissions, list):
+        existing_omissions = []
+    comparison["omitted_official_items"] = list(dict.fromkeys(existing_omissions + omitted_items))
+    comparison["incorrect_official_items"] = accuracy_issues
+    comparison["student_percentage_total"] = round(student_total, 6)
+    comparison["percentage_balance"] = balance
+    comparison["percentage_difference"] = round(difference, 6)
+    result["records"] = ordered_records
 
 
 def _series_aliases(value: str) -> set[str]:
@@ -417,6 +531,7 @@ class ChartFeedbackService:
                     raise UnifiedChartFeedbackError("DeepSeek returned no chart choices.")
                 raw = _extract_json_object(response.choices[0].message.content or "")
                 result = _normalise_result(raw, effective_type)
+                _annotate_pie_accuracy(result, deplot_text)
                 _validate_temporal_record_coverage(result, deplot_text, student_answer)
                 _interpolate_supported_temporal_gaps(result, deplot_text, student_answer)
                 result["style"] = {"color_palette": palette, "renderer": "vega-lite"}
