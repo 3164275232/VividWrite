@@ -77,6 +77,22 @@ export function generateSampleEssay(payload) {
   return postJson('/api/generate-sample-essay', payload, 'Sample essay generation failed');
 }
 
+export function generateSpatialSampleEssay(payload) {
+  const formData = new FormData();
+  formData.append('image', payload.image);
+  formData.append('chart_type', payload.chart_type);
+  formData.append('requirement', payload.requirement || '');
+  formData.append('flowchart', JSON.stringify(payload.flowchart || {}));
+  formData.append('min_words', String(payload.min_words || 150));
+  if (payload.use_standard_structure !== undefined && payload.use_standard_structure !== null) {
+    formData.append('use_standard_structure', String(payload.use_standard_structure));
+  }
+  return requestJson('/api/generate-spatial-sample-essay', {
+    method: 'POST',
+    body: formData,
+  }, 'Spatial sample essay generation failed');
+}
+
 export function reviewRevision(payload) {
   return postJson('/api/revision-review', payload, 'Revision review failed');
 }

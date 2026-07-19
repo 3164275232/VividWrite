@@ -10,6 +10,7 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn("/health", paths)
         self.assertIn("/api/deplot-extract", paths)
         self.assertIn("/api/analyze-chart-with-image", paths)
+        self.assertIn("/api/generate-spatial-sample-essay", paths)
         self.assertNotIn("/api/hello", paths)
         self.assertNotIn("/api/echo", paths)
         self.assertNotIn("/api/analyze-chart", paths)

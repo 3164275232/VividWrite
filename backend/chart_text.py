@@ -21,7 +21,6 @@ CHART_TYPE_LABELS = {
     "line": "Line graph",
     "area": "Area chart",
     "pie": "Pie chart",
-    "scatter": "Scatter plot",
 }
 
 

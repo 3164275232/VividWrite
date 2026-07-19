@@ -14,7 +14,7 @@ from chart_text import parse_series_framework
 from deepseek_config import get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
 
 
-SUPPORTED_CHART_TYPES = {"auto", "bar", "line", "area", "pie", "scatter"}
+SUPPORTED_CHART_TYPES = {"auto", "bar", "line", "area", "pie"}
 
 
 SYSTEM_PROMPT = """
@@ -41,7 +41,7 @@ Data ownership rules:
 Return exactly one JSON object with this shape:
 {
   "schema_version": "1.0",
-  "chart_type": "bar|line|area|pie|scatter",
+  "chart_type": "bar|line|area|pie",
   "title": "string",
   "axes": {"x_label": "string", "y_label": "string", "unit": "string"},
   "records": [

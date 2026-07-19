@@ -184,48 +184,9 @@ def generate_pie_chart() -> None:
     )
 
 
-def generate_scatter_chart() -> None:
-    values = [
-        {"country": "A", "study_hours": 4.0, "score": 58, "region": "Europe"},
-        {"country": "B", "study_hours": 5.5, "score": 64, "region": "Europe"},
-        {"country": "C", "study_hours": 7.0, "score": 71, "region": "Europe"},
-        {"country": "D", "study_hours": 8.5, "score": 77, "region": "Europe"},
-        {"country": "E", "study_hours": 10.0, "score": 83, "region": "Asia"},
-        {"country": "F", "study_hours": 11.5, "score": 88, "region": "Asia"},
-        {"country": "G", "study_hours": 6.0, "score": 67, "region": "Asia"},
-        {"country": "H", "study_hours": 9.0, "score": 80, "region": "Asia"},
-    ]
-    save_chart(
-        "05_scatter_study_and_scores.png",
-        "Weekly independent study and average examination scores",
-        values,
-        {
-            "layer": [
-                {
-                    "mark": {"type": "point", "filled": True, "size": 170, "opacity": 0.88},
-                    "encoding": {
-                        "x": {"field": "study_hours", "type": "quantitative", "title": "Independent study (hours per week)", "scale": {"domain": [3, 13]}},
-                        "y": {"field": "score", "type": "quantitative", "title": "Average examination score", "scale": {"domain": [50, 95]}},
-                        "color": {"field": "region", "type": "nominal", "title": "Region", "scale": {"range": ["#3a86ff", "#ff7f51"]}},
-                    },
-                },
-                {
-                    "mark": {"type": "text", "dx": 10, "dy": -10, "fontSize": 11},
-                    "encoding": {
-                        "x": {"field": "study_hours", "type": "quantitative"},
-                        "y": {"field": "score", "type": "quantitative"},
-                        "text": {"field": "country", "type": "nominal"},
-                    },
-                },
-            ]
-        },
-    )
-
-
 if __name__ == "__main__":
     generate_bar_chart()
     generate_line_chart()
     generate_area_chart()
     generate_pie_chart()
-    generate_scatter_chart()
-    print(f"Generated 5 charts in {OUTPUT_DIR}")
+    print(f"Generated 4 statistical charts in {OUTPUT_DIR}")

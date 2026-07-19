@@ -14,6 +14,7 @@ VividWrite/
 |   |-- hybrid_feedback.py   Statistical/spatial renderer routing
 |   |-- chart_*.py           DeepSeek and Vega-Lite statistical pipeline
 |   |-- wan_image_renderer.py  Wan map/process pipeline
+|   |-- spatial_sample_essay.py  Qwen vision map/process sample essays
 |   `-- tests/               Backend unit tests
 |-- frontend/                React and Vite application
 |   `-- src/

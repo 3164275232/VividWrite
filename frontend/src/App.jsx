@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import ErrorBoundary from './ErrorBoundary.jsx';
 import CmEditor from './CmEditor.jsx';
-import { analyzeChartWithImage, requestNextSentence, mapSentences, extractDeplot, saveFinalImage, saveRevisionText, generateSampleEssay, reviewRevision, resolveBackendUrl } from "./api";
+import { analyzeChartWithImage, requestNextSentence, mapSentences, extractDeplot, saveFinalImage, saveRevisionText, generateSampleEssay, generateSpatialSampleEssay, reviewRevision, resolveBackendUrl } from "./api";
 import Login from "./Login";
 import Flowchart from "./Flowchart";//对应修改1
 
@@ -578,33 +578,35 @@ export default function App() {
       setNextSentenceError("Please upload an image first.");
       return;
     }
-    if (isSpatialTask) {
-      setNextSentenceError('Sample Essay for map/process tasks needs a vision-language model and is not enabled yet.');
-      return;
-    }
-
     setNextSentenceError("");
     let dep = "";
-    try {
-      dep = await ensureDeplotText(uploadedImage, {
-        errorPrefix: 'Failed to extract DePlot data for sample essay'
-      });
-    } catch (e) {
-      setNextSentenceError(e.message || 'Failed to extract DePlot data for sample essay');
-      return;
+    if (!isSpatialTask) {
+      try {
+        dep = await ensureDeplotText(uploadedImage, {
+          errorPrefix: 'Failed to extract DePlot data for sample essay'
+        });
+      } catch (e) {
+        setNextSentenceError(e.message || 'Failed to extract DePlot data for sample essay');
+        return;
+      }
     }
 
     try {
       setIsSampleEssayLoading(true);
       const requirement = sampleEssayRequirement(chartType);
-      const requestData = { deplot_text: dep, flowchart: flowchartData, requirement, chart_type: chartType };
-      const res = await generateSampleEssay(requestData);
+      const requestData = isSpatialTask
+        ? { image: uploadedImage, flowchart: flowchartData, requirement, chart_type: chartType }
+        : { deplot_text: dep, flowchart: flowchartData, requirement, chart_type: chartType };
+      const requestKind = isSpatialTask ? 'spatial' : 'statistical';
+      const res = isSpatialTask
+        ? await generateSpatialSampleEssay(requestData)
+        : await generateSampleEssay(requestData);
       
       if (res.requires_choice) {
         // Show structure choice dialog
         setStructureChoiceInfo(res.choice_info);
         setShowStructureChoice(true);
-        setPendingSampleEssayRequest(requestData);
+        setPendingSampleEssayRequest({ kind: requestKind, data: requestData });
         return;
       }
       
@@ -629,11 +631,13 @@ export default function App() {
     try {
       setIsSampleEssayLoading(true);
       const updatedRequest = {
-        ...pendingSampleEssayRequest,
+        ...pendingSampleEssayRequest.data,
         use_standard_structure: useStandardStructure
       };
       
-      const res = await generateSampleEssay(updatedRequest);
+      const res = pendingSampleEssayRequest.kind === 'spatial'
+        ? await generateSpatialSampleEssay(updatedRequest)
+        : await generateSampleEssay(updatedRequest);
       
       if (res.success && res.essay) {
         setText(res.essay);
@@ -1067,7 +1071,6 @@ export default function App() {
                       <option value="line">Line Chart</option>
                       <option value="area">Area Chart</option>
                       <option value="pie">Pie Chart</option>
-                      <option value="scatter">Scatter Plot</option>
                       <option value="map">Map Task</option>
                       <option value="process">Process Diagram</option>
                     </select>
@@ -1285,17 +1288,17 @@ export default function App() {
                           </button>
                           <button
                             onClick={handleGenerateSampleEssay}
-                            disabled={isSampleEssayLoading || !uploadedImage || isSpatialTask}
+                            disabled={isSampleEssayLoading || !uploadedImage}
                             style={{
                               padding: '0.5rem 0.9rem',
-                              background: isSampleEssayLoading || !uploadedImage || isSpatialTask ? '#888' : '#20c997',
+                              background: isSampleEssayLoading || !uploadedImage ? '#888' : '#20c997',
                               color: '#fff',
                               border: 'none',
                               borderRadius: 4,
-                              cursor: isSampleEssayLoading || !uploadedImage || isSpatialTask ? 'not-allowed' : 'pointer',
+                              cursor: isSampleEssayLoading || !uploadedImage ? 'not-allowed' : 'pointer',
                               fontSize: '0.85rem'
                             }}
-                            title={isSpatialTask ? 'Requires a vision-language model for spatial tasks' : 'Generate a full sample essay (overwrites current text)'}
+                            title="Generate a full sample essay from the original image (overwrites current text)"
                           >
                             {isSampleEssayLoading ? 'Thinking...' : 'Sample Essay 📝'}
                           </button>

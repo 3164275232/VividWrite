@@ -1,34 +1,22 @@
 # Visual Feedback manual test pack
 
-This pack covers every statistical chart type currently enabled in the
-frontend. `Auto Detect` is a mode, not a separate chart type.
+This pack contains the IELTS Academic Task 1 visual types enabled in VividWrite.
+`Auto Detect` is a mode rather than a separate type.
 
-## Current support status
+## Support matrix
 
-There are two different meanings of "supported" in the current prototype:
-
-| Chart type | Unified DeepSeek/Vega-Lite pipeline | DePlot image extraction | End-to-end status |
+| Type | Original-image understanding | Sample Essay | Visual feedback |
 | --- | --- | --- | --- |
-| Bar | Supported | Near-exact in this test | Stable |
-| Line | Supported | Near-exact in this test | Stable |
-| Area | Supported | Series found, stacked values misread | Experimental |
-| Pie | Supported | Labels and percentages misaligned | Experimental |
-| Scatter | Supported | Axes and points misclassified | Experimental |
+| Bar | DePlot | DeepSeek | DeepSeek + Vega-Lite |
+| Line | DePlot | DeepSeek | DeepSeek + Vega-Lite |
+| Area | DePlot | DeepSeek | DeepSeek + Vega-Lite |
+| Pie | DePlot with isolated-pie validation | DeepSeek | DeepSeek + Vega-Lite |
+| Map | Qwen vision | Qwen vision | Wan reference-image editing |
+| Process | Qwen vision | Qwen vision | Wan reference-image editing |
 
-The distinction matters: Vega-Lite can render all five types, but the visual
-feedback cannot be reliable when DePlot has already supplied an incorrect
-official framework. The area, pie, and scatter fixtures are therefore included
-both as feature tests and as reproducible known-limit tests.
-
-Observed on the current backend:
-
-- Bar: all cities and both years were extracted, with only small decimal
-  approximations caused by reading bar heights.
-- Line: all years and all three series were extracted correctly.
-- Area: DePlot read stacked boundary heights instead of each source's value.
-- Pie: DePlot produced a malformed repeated percentage table.
-- Scatter: DePlot incorrectly invented a Year-based table and lost the x/y
-  point structure.
+Map and process tasks do not use DePlot because a table cannot represent spatial
+layout or arrow topology. Their Sample Essay button sends the uploaded image to
+Qwen visual understanding directly.
 
 ## 1. Bar chart
 
@@ -41,7 +29,7 @@ Task:
 > selecting and reporting the main features, and make comparisons where
 > relevant. Write at least 150 words.
 
-Deliberately incomplete test answer:
+Incomplete answer for visual-feedback testing:
 
 > The bar chart compares household recycling in five British cities in 2015
 > and 2020. Overall, recycling became more common in every city, and Bristol
@@ -51,10 +39,7 @@ Deliberately incomplete test answer:
 > finished at just over half of households. Liverpool remained the weakest
 > performer despite an improvement during the period.
 
-Expected feedback: Liverpool's exact values and Sheffield's exact 2020 value
-should be missing or uncertain; the other stated values should be retained.
-
-## 2. Line chart
+## 2. Line graph
 
 Image: `charts/02_line_daily_passengers.png`
 
@@ -65,7 +50,7 @@ Task:
 > by selecting and reporting the main features, and make comparisons where
 > relevant. Write at least 150 words.
 
-Deliberately incomplete test answer:
+Incomplete answer for visual-feedback testing:
 
 > The graph illustrates daily public transport use from 2010 to 2020. Bus
 > travel was initially the most popular mode at 1.8 million passengers, but it
@@ -74,9 +59,6 @@ Deliberately incomplete test answer:
 > also rose steadily, beginning at 0.8 million and reaching 1.9 million in
 > 2020. Rail overtook buses around the middle of the period, while the metro
 > finished between the other two services.
-
-Expected feedback: endpoints should be present; intermediate values may be
-estimated because the essay describes trends without listing every year.
 
 ## 3. Area chart
 
@@ -89,7 +71,7 @@ Task:
 > and reporting the main features, and make comparisons where relevant. Write
 > at least 150 words.
 
-Deliberately incomplete test answer:
+Incomplete answer for visual-feedback testing:
 
 > The chart compares electricity generation from three renewable sources over
 > a twenty-year period. Overall, output from all sources increased, although
@@ -98,9 +80,6 @@ Deliberately incomplete test answer:
 > power climbed dramatically from just 5 TWh to 65 TWh and became the largest
 > individual source at the end. Solar remained the smallest source, but its
 > production also expanded considerably and reached 38 TWh in 2020.
-
-Expected feedback: beginning and ending values should appear; most intermediate
-values should be estimated or missing.
 
 ## 4. Pie chart
 
@@ -113,7 +92,7 @@ Task:
 > selecting and reporting the main features, and make comparisons where
 > relevant. Write at least 150 words.
 
-Deliberately incomplete test answer:
+Incomplete answer for visual-feedback testing:
 
 > The chart presents average household spending in Canada in 2024. Housing was
 > by far the largest expense, accounting for 32% of the total. Food ranked
@@ -121,61 +100,69 @@ Deliberately incomplete test answer:
 > their spending to leisure and a further 10% to utilities. Overall, the three
 > largest categories made up well over two thirds of household expenditure.
 
-Expected feedback: the 8% Other slice should be missing, so the generated pie
-should visibly differ from the original.
+## 5. Map task
 
-## 5. Scatter plot
-
-Image: `charts/05_scatter_study_and_scores.png`
+Image: `charts/06_map_riverside_town.png`
 
 Task:
 
-> The scatter plot compares weekly independent study time with average
-> examination scores in eight countries from Europe and Asia. Summarise the
+> The map shows the layout of Riverside town before redevelopment. Summarise
+> the information by selecting and reporting the main features, and make
+> comparisons where relevant. Write at least 150 words.
+
+Use `Map Task`, upload the image and click `Sample Essay`. This checks that
+Qwen reads the river, bridge, roads, school, market, forest, housing and compass
+directions without requesting DePlot data.
+
+Incomplete answer for visual-feedback testing:
+
+> Riverside was divided by a river running from north to south, with an old
+> bridge carrying the main road across the centre. A school stood in the
+> north-west, while a market was located to the south-west. On the eastern side
+> of the river, woodland occupied the north and housing lay in the south.
+
+## 6. Process diagram
+
+Image: `charts/07_process_glass_recycling.png`
+
+Task:
+
+> The diagram shows how used glass bottles are recycled. Summarise the
 > information by selecting and reporting the main features, and make
 > comparisons where relevant. Write at least 150 words.
 
-Deliberately incomplete test answer:
+Use `Process Diagram`, upload the image and click `Sample Essay`. The report
+should identify a cyclical eight-stage process, beginning with disposal in
+recycling bins and ending with delivery of new bottles to shops before the
+cycle starts again.
 
-> The scatter plot indicates a clear positive relationship between independent
-> study and examination performance. Country A recorded the lowest figures,
-> with four hours of study and an average score of 58. At the opposite end,
-> country F studied for 11.5 hours and achieved 88. Countries spending roughly
-> seven to ten hours on independent study generally scored between 70 and 85.
-> The broad pattern was similar in Europe and Asia, although the two
-> highest-scoring observations belonged to Asian countries.
+Incomplete answer for visual-feedback testing:
 
-Expected feedback: A and F should be exact; the middle observations may be
-estimated or missing. The overall upward relationship should remain visible.
+> Used bottles are first deposited in recycling bins and collected by a truck.
+> They are then sorted by colour and washed before being crushed into small
+> pieces. The glass is subsequently melted in a furnace and moulded into new
+> bottles, which are delivered to shops. After use, the bottles can be returned
+> to the recycling system, making the process cyclical.
 
 ## Test procedure
 
 1. Start the FastAPI backend and Vite frontend.
 2. Open `http://localhost:5173` and sign in.
-3. In Planning, choose the matching chart type. Avoid Auto Detect for the first
-   pass so that data alignment and rendering are tested independently.
-4. Upload the corresponding PNG from this pack.
-5. Advance to Drafting and paste the supplied test answer.
-6. Advance to Revision, then click `Analyze Text`.
-7. Open `Visual Feedback` and compare the generated chart with the original.
-8. Confirm that stated facts are shown, omitted facts are absent, and inferred
-   facts are treated as estimates rather than copied from the original.
-9. Repeat steps 3-8 for all five images.
-10. Finally, repeat the pie test with `Auto Detect`. A clearly colored circular
-    chart should be detected locally as a pie before DeepSeek alignment. Then
-    repeat one bar or line test to confirm those images are not misclassified
-    as pies.
-
-For the first acceptance round, treat Bar and Line as pass/fail product tests.
-Treat Area, Pie, and Scatter as diagnostic tests: inspect the DePlot result and
-record the known extraction failure before judging the downstream chart.
+3. In Planning, choose the matching visual type and upload its PNG.
+4. Click `Sample Essay` and confirm that an English report appears. Map and
+   process requests may take longer because they call Qwen vision.
+5. For visual feedback, replace the sample with the incomplete answer above.
+6. Advance to Revision, click `Analyze Text`, then open `Visual Feedback`.
+7. Confirm that the generated image follows the student's description and that
+   missing or estimated information is not presented as an exact stated fact.
+8. Repeat the pie test with `Auto Detect` after the explicit-type test passes.
 
 ## Pass criteria
 
+- Sample Essay works for all six enabled types.
+- Map and process Sample Essay calls do not request DePlot data.
+- The process report preserves all eight stages and the correct arrow order.
 - The page does not remain stuck on image analysis.
-- The backend returns a `/charts/visual_feedback_*.png` URL.
-- The generated PNG loads in Visual Feedback.
-- Categories and series follow the original chart framework.
-- Values come from the essay, not silently from the original chart.
-- Missing and estimated information is visibly different from exact facts.
-- No old `bar.py` or `pie.py` path is required for generation.
+- Statistical feedback preserves category, series and colour order.
+- Map/process visual feedback returns a Wan-generated image and displays its
+  manual-review warning.

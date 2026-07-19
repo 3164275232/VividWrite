@@ -6,11 +6,14 @@
 flowchart LR
     UI[React UI] --> API[FastAPI]
     API --> ROUTER{Task family}
-    ROUTER -->|bar, line, area, pie, scatter| DEPLOT[DePlot extraction]
+    ROUTER -->|bar, line, area, pie| DEPLOT[DePlot extraction]
     DEPLOT --> DS[DeepSeek alignment]
     DS --> SPEC[Validated records and Vega-Lite spec]
     SPEC --> VL[Vega-Lite PNG renderer]
     ROUTER -->|map or process| WAN[Wan reference-image generation]
+    API --> SAMPLE{Sample Essay}
+    SAMPLE -->|statistical| DS
+    SAMPLE -->|map or process image| QWEN[Qwen visual understanding]
     VL --> FILES[generated_charts]
     WAN --> FILES
     FILES --> UI
@@ -29,6 +32,8 @@ flowchart LR
   Detect, avoiding another paid model request.
 - `chart_renderer.py` validates and renders Vega-Lite specifications.
 - `wan_image_renderer.py` handles reference-image generation for spatial tasks.
+- `spatial_sample_essay.py` uses Qwen visual understanding to write map and
+  process reports directly from the uploaded image, without DePlot.
 - `api.js` is the frontend's only direct HTTP boundary.
 
 ## Unified statistical representation

@@ -1,3 +1,4 @@
+import json
 import sys
 from typing import Optional
 
@@ -12,8 +13,9 @@ from hybrid_feedback import HybridFeedbackService
 from next_sentence import NextSentenceRequest, NextSentenceResponse, generate_next_sentence
 from paths import CHARTS_DIR, UPLOADS_DIR, ensure_runtime_directories
 from revision_review import router as revision_review_router
-from sample_essay import router as sample_essay_router
+from sample_essay import SampleEssayResponse, router as sample_essay_router
 from sentence_mapping import SentenceMappingRequest, SentenceMappingResponse, map_sentences
+from spatial_sample_essay import generate_spatial_sample_essay
 from storage import (
     relative_runtime_path,
     save_uploaded_file,
@@ -171,6 +173,35 @@ async def analyze_chart_with_image(
         )
     except Exception as exc:
         return ChartAnalysisResponse(success=False, error=str(exc))
+
+
+@app.post("/api/generate-spatial-sample-essay", response_model=SampleEssayResponse)
+async def spatial_sample_essay(
+    image: UploadFile = File(...),
+    chart_type: str = Form(...),
+    requirement: str = Form(""),
+    flowchart: str = Form("{}"),
+    use_standard_structure: Optional[bool] = Form(None),
+    min_words: int = Form(150),
+):
+    try:
+        flowchart_data = json.loads(flowchart)
+        if not isinstance(flowchart_data, dict):
+            raise ValueError("flowchart must be a JSON object")
+        image_path = await save_uploaded_file(image, UPLOADS_DIR)
+        return await run_in_threadpool(
+            generate_spatial_sample_essay,
+            image_path=image_path,
+            chart_type=chart_type,
+            requirement=requirement,
+            flowchart=flowchart_data,
+            use_standard_structure=use_standard_structure,
+            min_words=min_words,
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        return SampleEssayResponse(success=False, error=str(exc))
+    except Exception as exc:
+        return SampleEssayResponse(success=False, error=str(exc))
 
 
 @app.post("/api/save-final-image")
