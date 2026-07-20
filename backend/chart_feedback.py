@@ -179,6 +179,105 @@ def _pie_record_label(record: dict) -> str:
     return ""
 
 
+_PERCENTAGE_PATTERN = re.compile(
+    r"(?P<value>\d+(?:\.\d+)?)\s*(?:%|percent(?:age)?(?:\s+points?)?|per\s+cent)",
+    flags=re.IGNORECASE,
+)
+_PIE_CLAUSE_BOUNDARY = re.compile(
+    r"(?<=[.!?;])\s+|\b(?:while|whereas)\b",
+    flags=re.IGNORECASE,
+)
+_PIE_AGGREGATE_PATTERN = re.compile(
+    r"\b(?:combined|cumulative|collectively|together|altogether|jointly|"
+    r"aggregate(?:d)?|sum(?:med)?|addition\s+of|in\s+combination)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _label_pattern(label: str) -> re.Pattern[str] | None:
+    tokens = re.findall(r"[a-z0-9]+", label.casefold())
+    if not tokens:
+        return None
+    return re.compile(
+        r"(?<![a-z0-9])" + r"[\s/_-]+".join(re.escape(token) for token in tokens) + r"(?![a-z0-9])",
+        flags=re.IGNORECASE,
+    )
+
+
+def _extract_explicit_pie_percentages(
+    student_answer: str,
+    official_labels: list[str],
+) -> dict[str, float]:
+    """Read only unambiguous category-percentage claims from the essay text."""
+    patterns = {
+        label: pattern
+        for label in official_labels
+        if (pattern := _label_pattern(label)) is not None
+    }
+    candidates: dict[str, set[float]] = {label: set() for label in patterns}
+
+    for clause in _PIE_CLAUSE_BOUNDARY.split(student_answer):
+        if _PIE_AGGREGATE_PATTERN.search(clause):
+            continue
+        percentages = [float(match.group("value")) for match in _PERCENTAGE_PATTERN.finditer(clause)]
+        if len(percentages) != 1:
+            continue
+        mentioned_labels = [label for label, pattern in patterns.items() if pattern.search(clause)]
+        if len(mentioned_labels) != 1:
+            continue
+        candidates[mentioned_labels[0]].add(percentages[0])
+
+    return {
+        label: next(iter(values))
+        for label, values in candidates.items()
+        if len(values) == 1
+    }
+
+
+def _merge_explicit_pie_percentages(result: dict, deplot_text: str, student_answer: str) -> None:
+    """Restore explicit essay values that the language model omitted or misread."""
+    if result.get("chart_type") != "pie":
+        return
+    try:
+        official_values = parse_validated_pie_table(deplot_text)
+    except InvalidExtractedChartData:
+        return
+
+    explicit_values = _extract_explicit_pie_percentages(student_answer, list(official_values))
+    if not explicit_values:
+        return
+
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    records_by_key = {
+        _key(_pie_record_label(record)): record
+        for record in records
+        if isinstance(record, dict) and _key(_pie_record_label(record))
+    }
+    alignment_notes = result.setdefault("comparison", {}).setdefault("alignment_notes", [])
+
+    for label, value in explicit_values.items():
+        label_key = _key(label)
+        record = records_by_key.get(label_key)
+        if record is None:
+            close = get_close_matches(label_key, list(records_by_key), n=1, cutoff=0.78)
+            record = records_by_key.get(close[0]) if close else None
+        if record is None:
+            record = _clean_record({"category": label, "value": value, "confidence": 1.0})
+            records.append(record)
+            records_by_key[label_key] = record
+
+        previous_value = record.get("value")
+        record["category"] = label
+        record["value"] = float(value)
+        record["missing"] = False
+        record["estimated"] = False
+        record["confidence"] = 1.0
+        if previous_value != value:
+            alignment_notes.append(f"{label} {value:g}% was read directly from the student's essay.")
+
+    result["records"] = records
+
+
 def _annotate_pie_accuracy(result: dict, deplot_text: str, tolerance: float = 0.5) -> None:
     """Compare student pie values with the validated official percentages."""
     if result.get("chart_type") != "pie":
@@ -531,6 +630,7 @@ class ChartFeedbackService:
                     raise UnifiedChartFeedbackError("DeepSeek returned no chart choices.")
                 raw = _extract_json_object(response.choices[0].message.content or "")
                 result = _normalise_result(raw, effective_type)
+                _merge_explicit_pie_percentages(result, deplot_text, student_answer)
                 _annotate_pie_accuracy(result, deplot_text)
                 _validate_temporal_record_coverage(result, deplot_text, student_answer)
                 _interpolate_supported_temporal_gaps(result, deplot_text, student_answer)

@@ -397,13 +397,15 @@ def _prepare_pie_chart(
 
         status = record.get("feedback_status")
         if status == "incorrect":
-            record["_display_label"] = f"{category} {displayed_value} !".strip()
+            official_value = _number_label(record.get("official_value"))
+            correction = f"\nOfficial {official_value}%" if official_value else "\nIncorrect value"
+            record["_display_label"] = f"{category} {displayed_value}{correction}".strip()
             record["_label_color"] = "white"
         elif status == "missing":
             record["_display_label"] = None
             record["_label_color"] = PIE_ALERT_DARK
         elif status == "unexpected":
-            record["_display_label"] = f"{category} {displayed_value} !".strip()
+            record["_display_label"] = f"{category} {displayed_value}\nNot in source".strip()
             record["_label_color"] = "white"
             record["_display_color"] = PIE_ALERT_COLOR
         else:
@@ -460,7 +462,7 @@ def _prepare_pie_chart(
                 "incorrect": True,
                 "feedback_status": "excess_total",
                 "_order": len(labelled_records),
-                "_legend_label": "Excess over 100%",
+                "_legend_label": f"Excess over 100%: {excess_label}%",
                 "_display_color": PIE_ALERT_DARK,
                 "_display_label": None,
                 "_label_color": PIE_ALERT_DARK,
@@ -472,7 +474,7 @@ def _prepare_pie_chart(
                 "_excess_start": 0.0,
                 "_excess_end": min(excess, 100.0),
                 "_excess_mid": min(excess, 100.0) / 2,
-                "_excess_label": f"EXCESS {excess_label}%",
+                "_excess_label": None,
             }
         )
     legend_domain = _unique_field_values(labelled_records, "_legend_label")
@@ -503,15 +505,16 @@ def _prepare_pie_chart(
             },
         }
     ]
-    has_excess = any(record.get("_excess_start") is not None for record in labelled_records)
-    if not has_excess and any(record.get("_error_start") is not None for record in labelled_records):
+    if any(record.get("_error_start") is not None for record in labelled_records):
         layers.append(
             {
                 "mark": {
                     "type": "arc",
-                    "innerRadius": 149,
-                    "outerRadius": 161,
-                    "color": PIE_ALERT_DARK,
+                    "outerRadius": 145,
+                    "color": PIE_ALERT_COLOR,
+                    "opacity": 0.48,
+                    "stroke": PIE_ALERT_DARK,
+                    "strokeWidth": 5,
                 },
                 "encoding": {
                     "theta": {
@@ -549,6 +552,8 @@ def _prepare_pie_chart(
                 "radius": 102,
                 "fontSize": 11,
                 "fontWeight": "bold",
+                "lineBreak": "\n",
+                "lineHeight": 13,
             },
             "encoding": {
                 "theta": {
@@ -561,20 +566,6 @@ def _prepare_pie_chart(
             },
         }
     )
-    if any(record.get("_excess_label") for record in labelled_records):
-        layers.append(
-            {
-                "mark": {"type": "text", "radius": 171, "fontSize": 11, "fontWeight": "bold", "color": PIE_ALERT_DARK},
-                "encoding": {
-                    "theta": {
-                        "field": "_excess_mid",
-                        "type": "quantitative",
-                        "scale": {"domain": [0, 100]},
-                    },
-                    "text": {"field": "_excess_label", "type": "nominal"},
-                },
-            }
-        )
     return {"layer": layers}, labelled_records
 
 

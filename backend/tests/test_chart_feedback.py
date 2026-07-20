@@ -245,6 +245,94 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(result["comparison"]["student_percentage_total"], 53.0)
         self.assertEqual(result["comparison"]["percentage_balance"], "under")
 
+    def test_explicit_pie_percentage_restores_a_model_omission(self):
+        payload = _model_payload("pie")
+        payload["title"] = "Average household expenditure in Canada, 2024"
+        payload["axes"] = {"x_label": "", "y_label": "", "unit": "%"}
+        payload["records"] = [
+            {"category": "Housing", "value": 32, "confidence": 1},
+            {"category": "Food", "value": 21, "confidence": 1},
+            {"category": "Transport", "value": 17, "confidence": 1},
+            {"category": "Leisure", "value": 12, "confidence": 1},
+            {"category": "Other", "value": 8, "confidence": 1},
+        ]
+        payload["vega_lite_spec"] = {"mark": "arc", "encoding": {}}
+        client = FakeClient(payload)
+
+        with tempfile.TemporaryDirectory() as folder:
+            result, filename = ChartFeedbackService(folder, client=client).generate(
+                chart_type="pie",
+                requirement="Summarise the chart.",
+                student_answer=(
+                    "Housing was 32%. Food and transport represented 21% and 17% respectively. "
+                    "Leisure spending was recorded at 12%, while utilities claimed a 50% share. "
+                    "Other items constituted 8% of total spending."
+                ),
+                deplot_text=(
+                    "Category | Percentage<0x0A>Housing | 32%<0x0A>Food | 21%"
+                    "<0x0A>Transport | 17%<0x0A>Leisure | 12%<0x0A>Utilities | 10%"
+                    "<0x0A>Other | 8%"
+                ),
+            )
+            self.assertTrue((Path(folder) / filename).exists())
+
+        utilities = next(record for record in result["records"] if record["category"] == "Utilities")
+        self.assertEqual(utilities["value"], 50.0)
+        self.assertEqual(utilities["official_value"], 10.0)
+        self.assertFalse(utilities["missing"])
+        self.assertTrue(utilities["incorrect"])
+        self.assertEqual(result["comparison"]["student_percentage_total"], 140.0)
+        self.assertEqual(result["comparison"]["percentage_balance"], "over")
+        self.assertEqual(result["comparison"]["percentage_difference"], 40.0)
+
+    def test_pie_aggregate_percentages_do_not_override_individual_values(self):
+        payload = _model_payload("pie")
+        payload["title"] = "Average household expenditure in Canada, 2024"
+        payload["axes"] = {"x_label": "", "y_label": "", "unit": "%"}
+        payload["records"] = [
+            {"category": "Housing", "value": 32, "confidence": 1},
+            {"category": "Food", "value": 21, "confidence": 1},
+            {"category": "Transport", "value": 17, "confidence": 1},
+            {"category": "Leisure", "value": 12, "confidence": 1},
+            {"category": "Utilities", "value": 10, "confidence": 1},
+            {"category": "Other", "value": 8, "confidence": 1},
+        ]
+        payload["vega_lite_spec"] = {"mark": "arc", "encoding": {}}
+        client = FakeClient(payload)
+
+        with tempfile.TemporaryDirectory() as folder:
+            result, _ = ChartFeedbackService(folder, client=client).generate(
+                chart_type="pie",
+                requirement="Summarise the chart.",
+                student_answer=(
+                    "Housing was the most significant expenditure, at 32%. Food was the "
+                    "second-highest cost, representing 21% of the total, followed by transport at 17%. "
+                    "Leisure accounted for 12%, while utilities constituted 10%. Other made up 8%. "
+                    "The combined expenditure on housing and food alone amounted to 53%. "
+                    "The addition of transport costs brings this cumulative figure to 70%. "
+                    "Leisure, utilities, and other collectively accounted for 30%."
+                ),
+                deplot_text=(
+                    "Category | Percentage<0x0A>Housing | 32%<0x0A>Food | 21%"
+                    "<0x0A>Transport | 17%<0x0A>Leisure | 12%<0x0A>Utilities | 10%"
+                    "<0x0A>Other | 8%"
+                ),
+            )
+
+        values = {record["category"]: record["value"] for record in result["records"]}
+        self.assertEqual(values["Transport"], 17.0)
+        self.assertEqual(values, {
+            "Housing": 32.0,
+            "Food": 21.0,
+            "Transport": 17.0,
+            "Leisure": 12.0,
+            "Utilities": 10.0,
+            "Other": 8.0,
+        })
+        self.assertEqual(result["comparison"]["student_percentage_total"], 100.0)
+        self.assertEqual(result["comparison"]["percentage_balance"], "complete")
+        self.assertEqual(result["comparison"]["incorrect_official_items"], [])
+
     def test_incorrect_pie_slices_get_red_error_rings_and_labels(self):
         records = [
             {
@@ -280,8 +368,14 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         )
 
         self.assertEqual([layer["mark"]["type"] for layer in prepared["layer"]], ["arc", "arc", "text"])
-        self.assertEqual(prepared["layer"][1]["mark"]["color"], "#991b1b")
-        self.assertEqual(prepared["data"]["values"][0]["_display_label"], "Housing 30% !")
+        error_layer = prepared["layer"][1]
+        self.assertEqual(error_layer["mark"]["color"], "#dc2626")
+        self.assertEqual(error_layer["mark"]["stroke"], "#991b1b")
+        self.assertEqual(error_layer["mark"]["opacity"], 0.48)
+        self.assertEqual(
+            prepared["data"]["values"][0]["_display_label"],
+            "Housing 30%\nOfficial 32%",
+        )
         self.assertEqual(prepared["title"], "Spending")
 
     def test_pie_total_over_100_uses_a_separate_excess_ring(self):
@@ -311,17 +405,17 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         excess = prepared["data"]["values"][-1]
         self.assertEqual(excess["feedback_status"], "excess_total")
         self.assertEqual((excess["_excess_start"], excess["_excess_end"]), (0.0, 10.0))
+        self.assertEqual(excess["_legend_label"], "Excess over 100%: 10%")
         self.assertEqual(
             [layer["mark"]["type"] for layer in prepared["layer"]],
-            ["arc", "arc", "text", "text"],
+            ["arc", "arc", "arc", "text"],
         )
-        red_arcs = [
-            layer
-            for layer in prepared["layer"]
-            if layer["mark"]["type"] == "arc" and layer["mark"].get("color") in {"#dc2626", "#991b1b"}
-        ]
-        self.assertEqual(len(red_arcs), 1)
-        self.assertEqual(red_arcs[0]["mark"]["color"], "#dc2626")
+        error_layer = prepared["layer"][1]
+        excess_layer = prepared["layer"][2]
+        self.assertEqual(error_layer["mark"]["outerRadius"], 145)
+        self.assertEqual(error_layer["mark"]["stroke"], "#991b1b")
+        self.assertEqual((excess_layer["mark"]["innerRadius"], excess_layer["mark"]["outerRadius"]), (165, 177))
+        self.assertFalse(any(record.get("_excess_label") for record in prepared["data"]["values"]))
         self.assertEqual(prepared["title"], "Spending")
 
     def test_pie_labels_have_no_text_outline(self):
