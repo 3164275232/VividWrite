@@ -333,6 +333,55 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(result["comparison"]["percentage_balance"], "complete")
         self.assertEqual(result["comparison"]["incorrect_official_items"], [])
 
+    def test_pie_synonym_conflict_uses_latest_value_and_reports_both_claims(self):
+        payload = _model_payload("pie")
+        payload["title"] = "Average household expenditure in Canada, 2024"
+        payload["axes"] = {"x_label": "", "y_label": "", "unit": "%"}
+        payload["records"] = [
+            {"category": "Housing", "value": 32, "confidence": 1},
+            {"category": "Food", "value": 21, "confidence": 1},
+            {"category": "Transport", "value": 17, "confidence": 1},
+            {"category": "Leisure", "value": 12, "confidence": 1},
+            {"category": "Utilities", "value": 10, "confidence": 1},
+            {"category": "Other", "value": 8, "confidence": 1},
+        ]
+        payload["vega_lite_spec"] = {"mark": "arc", "encoding": {}}
+        client = FakeClient(payload)
+
+        with tempfile.TemporaryDirectory() as folder:
+            result, _ = ChartFeedbackService(folder, client=client).generate(
+                chart_type="pie",
+                requirement="Summarise the chart.",
+                student_answer=(
+                    "Housing was 32%, food was 21%, transport was 17%, leisure was 12%, "
+                    "and utilities were 10%. The smallest category was 'Other' miscellaneous "
+                    "expenses, which made up just 8% of the average household budget. "
+                    "The relatively small 24% assigned to miscellaneous items underscored "
+                    "the dominance of essential spending."
+                ),
+                deplot_text=(
+                    "Category | Percentage<0x0A>Housing | 32%<0x0A>Food | 21%"
+                    "<0x0A>Transport | 17%<0x0A>Leisure | 12%<0x0A>Utilities | 10%"
+                    "<0x0A>Other | 8%"
+                ),
+            )
+
+        other = next(record for record in result["records"] if record["category"] == "Other")
+        rendered_other = next(
+            record for record in result["vega_lite_spec"]["data"]["values"]
+            if record.get("category") == "Other"
+        )
+        self.assertEqual(other["value"], 24.0)
+        self.assertEqual(other["conflicting_values"], [8.0, 24.0])
+        self.assertEqual(other["feedback_status"], "conflicting")
+        self.assertTrue(other["incorrect"])
+        self.assertEqual(result["comparison"]["student_percentage_total"], 116.0)
+        self.assertEqual(result["comparison"]["percentage_balance"], "over")
+        self.assertEqual(
+            rendered_other["_display_label"],
+            "Other\nCONFLICT: 8% / 24%\nCORRECT: 8%",
+        )
+
     def test_incorrect_pie_slices_get_red_error_rings_and_labels(self):
         records = [
             {
@@ -374,7 +423,7 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(error_layer["mark"]["opacity"], 0.48)
         self.assertEqual(
             prepared["data"]["values"][0]["_display_label"],
-            "Housing 30%\nOfficial 32%",
+            "Housing\nYOU: 30%\nCORRECT: 32%",
         )
         self.assertEqual(prepared["title"], "Spending")
 

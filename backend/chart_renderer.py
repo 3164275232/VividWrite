@@ -396,10 +396,18 @@ def _prepare_pie_chart(
             displayed_value = number
 
         status = record.get("feedback_status")
-        if status == "incorrect":
+        if status == "conflicting":
+            conflicting_values = record.get("conflicting_values") or []
+            conflict_label = " / ".join(f"{_number_label(item)}%" for item in conflicting_values)
             official_value = _number_label(record.get("official_value"))
-            correction = f"\nOfficial {official_value}%" if official_value else "\nIncorrect value"
-            record["_display_label"] = f"{category} {displayed_value}{correction}".strip()
+            record["_display_label"] = (
+                f"{category}\nCONFLICT: {conflict_label}\nCORRECT: {official_value}%"
+            ).strip()
+            record["_label_color"] = "white"
+        elif status == "incorrect":
+            official_value = _number_label(record.get("official_value"))
+            correction = f"\nCORRECT: {official_value}%" if official_value else "\nINCORRECT VALUE"
+            record["_display_label"] = f"{category}\nYOU: {displayed_value}{correction}".strip()
             record["_label_color"] = "white"
         elif status == "missing":
             record["_display_label"] = None
@@ -418,7 +426,7 @@ def _prepare_pie_chart(
                 record["_main_start"] = cumulative
                 record["_main_end"] = cumulative + drawable
                 record["_label_mid"] = (record["_main_start"] + record["_main_end"]) / 2
-                if status in {"incorrect", "unexpected"}:
+                if status in {"incorrect", "conflicting", "unexpected"}:
                     record["_error_start"] = record["_main_start"]
                     record["_error_end"] = record["_main_end"]
                 cumulative += drawable

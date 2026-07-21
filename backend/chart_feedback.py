@@ -198,23 +198,26 @@ def _label_pattern(label: str) -> re.Pattern[str] | None:
     tokens = re.findall(r"[a-z0-9]+", label.casefold())
     if not tokens:
         return None
+    alternatives = [r"[\s/_-]+".join(re.escape(token) for token in tokens)]
+    if _key(label) == "other":
+        alternatives.append(r"miscellaneous(?:\s+(?:items?|expenses?|costs?|spending|outlays?))?")
     return re.compile(
-        r"(?<![a-z0-9])" + r"[\s/_-]+".join(re.escape(token) for token in tokens) + r"(?![a-z0-9])",
+        r"(?<![a-z0-9])(?:" + "|".join(alternatives) + r")(?![a-z0-9])",
         flags=re.IGNORECASE,
     )
 
 
-def _extract_explicit_pie_percentages(
+def _collect_explicit_pie_percentages(
     student_answer: str,
     official_labels: list[str],
-) -> dict[str, float]:
-    """Read only unambiguous category-percentage claims from the essay text."""
+) -> dict[str, list[float]]:
+    """Collect unambiguous category-percentage claims in essay order."""
     patterns = {
         label: pattern
         for label in official_labels
         if (pattern := _label_pattern(label)) is not None
     }
-    candidates: dict[str, set[float]] = {label: set() for label in patterns}
+    candidates: dict[str, list[float]] = {label: [] for label in patterns}
 
     for clause in _PIE_CLAUSE_BOUNDARY.split(student_answer):
         if _PIE_AGGREGATE_PATTERN.search(clause):
@@ -225,13 +228,9 @@ def _extract_explicit_pie_percentages(
         mentioned_labels = [label for label, pattern in patterns.items() if pattern.search(clause)]
         if len(mentioned_labels) != 1:
             continue
-        candidates[mentioned_labels[0]].add(percentages[0])
+        candidates[mentioned_labels[0]].append(percentages[0])
 
-    return {
-        label: next(iter(values))
-        for label, values in candidates.items()
-        if len(values) == 1
-    }
+    return {label: values for label, values in candidates.items() if values}
 
 
 def _merge_explicit_pie_percentages(result: dict, deplot_text: str, student_answer: str) -> None:
@@ -243,8 +242,8 @@ def _merge_explicit_pie_percentages(result: dict, deplot_text: str, student_answ
     except InvalidExtractedChartData:
         return
 
-    explicit_values = _extract_explicit_pie_percentages(student_answer, list(official_values))
-    if not explicit_values:
+    explicit_claims = _collect_explicit_pie_percentages(student_answer, list(official_values))
+    if not explicit_claims:
         return
 
     records = result.get("records") if isinstance(result.get("records"), list) else []
@@ -255,7 +254,9 @@ def _merge_explicit_pie_percentages(result: dict, deplot_text: str, student_answ
     }
     alignment_notes = result.setdefault("comparison", {}).setdefault("alignment_notes", [])
 
-    for label, value in explicit_values.items():
+    for label, values in explicit_claims.items():
+        unique_values = list(dict.fromkeys(values))
+        value = values[-1]
         label_key = _key(label)
         record = records_by_key.get(label_key)
         if record is None:
@@ -272,8 +273,15 @@ def _merge_explicit_pie_percentages(result: dict, deplot_text: str, student_answ
         record["missing"] = False
         record["estimated"] = False
         record["confidence"] = 1.0
+        record["conflicting_values"] = unique_values if len(unique_values) > 1 else []
         if previous_value != value:
             alignment_notes.append(f"{label} {value:g}% was read directly from the student's essay.")
+        if len(unique_values) > 1:
+            value_list = ", ".join(f"{item:g}%" for item in unique_values)
+            alignment_notes.append(
+                f"{label} has conflicting values in the student's essay: {value_list}. "
+                f"The latest value ({value:g}%) is used for the chart."
+            )
 
     result["records"] = records
 
@@ -330,12 +338,23 @@ def _annotate_pie_accuracy(result: dict, deplot_text: str, tolerance: float = 0.
             record["missing"] = False
             delta = float(student_value) - float(official_value)
             record["error_delta"] = round(delta, 6)
-            record["incorrect"] = abs(delta) > tolerance
-            record["feedback_status"] = "incorrect" if record["incorrect"] else "correct"
-            if record["incorrect"]:
+            conflicting_values = record.get("conflicting_values")
+            has_conflict = isinstance(conflicting_values, list) and len(conflicting_values) > 1
+            record["incorrect"] = has_conflict or abs(delta) > tolerance
+            if has_conflict:
+                record["feedback_status"] = "conflicting"
+                value_list = " and ".join(f"{float(value):g}%" for value in conflicting_values)
+                accuracy_issues.append(
+                    f"{official_label}: conflicting student values {value_list}; "
+                    f"official {official_value:g}%"
+                )
+            elif record["incorrect"]:
+                record["feedback_status"] = "incorrect"
                 accuracy_issues.append(
                     f"{official_label}: student {student_value:g}%, official {official_value:g}%"
                 )
+            else:
+                record["feedback_status"] = "correct"
         else:
             record["missing"] = True
             record["incorrect"] = False

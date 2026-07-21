@@ -19,18 +19,21 @@ function PieFeedbackDetails({ chartData }) {
   const issues = Array.isArray(comparison.incorrect_official_items)
     ? comparison.incorrect_official_items.filter(Boolean)
     : [];
+  const recordIssues = Array.isArray(chartData.records)
+    ? chartData.records.filter((record) => ['incorrect', 'conflicting', 'missing', 'unexpected'].includes(record?.feedback_status))
+    : [];
   const total = Number(comparison.student_percentage_total);
   const difference = Number(comparison.percentage_difference);
   const balance = comparison.percentage_balance;
   const hasTotal = Number.isFinite(total);
   const hasBalanceIssue = balance === 'under' || balance === 'over';
-  if (!issues.length && !hasBalanceIssue) return null;
+  if (!issues.length && !recordIssues.length && !hasBalanceIssue) return null;
 
-  let totalMessage = hasTotal ? `Student total: ${formatFeedbackNumber(total)}%.` : '';
+  let totalMessage = hasTotal ? `Your total: ${formatFeedbackNumber(total)}%. Expected total: 100%.` : '';
   if (hasTotal && balance === 'under' && Number.isFinite(difference)) {
     totalMessage += ` Missing ${formatFeedbackNumber(Math.abs(difference))}%.`;
   } else if (hasTotal && balance === 'over' && Number.isFinite(difference)) {
-    totalMessage += ` Exceeds 100% by ${formatFeedbackNumber(Math.abs(difference))}%.`;
+    totalMessage += ` Excess: ${formatFeedbackNumber(Math.abs(difference))}%.`;
   }
 
   return (
@@ -50,7 +53,73 @@ function PieFeedbackDetails({ chartData }) {
     >
       <strong style={{ display: 'block', fontSize: '0.82rem' }}>Data issues</strong>
       {totalMessage && <div>{totalMessage}</div>}
-      {issues.length > 0 && (
+      {recordIssues.length > 0 && (
+        <div style={{ marginTop: '0.45rem', display: 'grid', gap: '0.45rem' }}>
+          {recordIssues.map((record, index) => {
+            const category = record.category || record.series || record.region || record.period || 'Unknown item';
+            const studentValue = Number(record.value);
+            const officialValue = Number(record.official_value);
+            const hasStudentValue = record.value !== null && record.value !== '' && Number.isFinite(studentValue);
+            const hasOfficialValue = record.official_value !== null && record.official_value !== '' && Number.isFinite(officialValue);
+            const conflictingValues = Array.isArray(record.conflicting_values)
+              ? record.conflicting_values.map(Number).filter(Number.isFinite)
+              : [];
+            const hasConflict = record.feedback_status === 'conflicting' && conflictingValues.length > 1;
+            const delta = hasStudentValue && hasOfficialValue ? studentValue - officialValue : null;
+            const studentLabel = hasConflict
+              ? conflictingValues.map((value) => `${formatFeedbackNumber(value)}%`).join(' / ')
+              : hasStudentValue
+              ? `${formatFeedbackNumber(studentValue)}%`
+              : 'Not mentioned';
+            const officialLabel = hasOfficialValue
+              ? `${formatFeedbackNumber(officialValue)}%`
+              : 'Not in original chart';
+
+            return (
+              <div
+                key={`${category}-${index}`}
+                style={{ borderTop: '1px solid #fecaca', paddingTop: '0.4rem' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <strong style={{ color: '#450a0a' }}>{category}</strong>
+                  {hasConflict ? (
+                    <span style={{ color: '#b91c1c', fontWeight: 700 }}>Conflicting values</span>
+                  ) : Number.isFinite(delta) && Math.abs(delta) > 0.05 && (
+                    <span style={{ color: '#b91c1c', fontWeight: 700 }}>
+                      {delta > 0 ? '+' : ''}{formatFeedbackNumber(delta)} percentage points
+                    </span>
+                  )}
+                </div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                    gap: '0.5rem',
+                    marginTop: '0.3rem',
+                  }}
+                >
+                  <div style={{ borderLeft: '3px solid #dc2626', background: '#fef2f2', padding: '0.35rem 0.5rem' }}>
+                    <span style={{ display: 'block', color: '#7f1d1d' }}>
+                      {hasConflict ? 'Answers found' : 'Your answer'}
+                    </span>
+                    <strong style={{ display: 'block', color: '#991b1b', fontSize: '0.95rem' }}>{studentLabel}</strong>
+                  </div>
+                  <div style={{ borderLeft: '3px solid #16a34a', background: '#f0fdf4', padding: '0.35rem 0.5rem' }}>
+                    <span style={{ display: 'block', color: '#14532d' }}>Correct value</span>
+                    <strong style={{ display: 'block', color: '#166534', fontSize: '0.95rem' }}>{officialLabel}</strong>
+                  </div>
+                </div>
+                {hasConflict && hasStudentValue && (
+                  <div style={{ marginTop: '0.25rem', color: '#7f1d1d' }}>
+                    The chart uses the latest value: {formatFeedbackNumber(studentValue)}%.
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {recordIssues.length === 0 && issues.length > 0 && (
         <ul style={{ margin: '0.35rem 0 0', paddingLeft: '1.1rem' }}>
           {issues.map((issue, index) => <li key={`${issue}-${index}`}>{issue}</li>)}
         </ul>
