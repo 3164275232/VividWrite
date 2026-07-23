@@ -71,18 +71,44 @@ const baseExtensions = [
   persistentHighlightField,
   EditorView.lineWrapping,
   EditorView.theme({
+    '&': {
+      height: '100%',
+      color: '#1d1d1f',
+      backgroundColor: '#ffffff'
+    },
+    '&.cm-focused': {
+      outline: 'none'
+    },
     '.cm-content': {
-      fontFamily: 'system-ui, sans-serif',
-      fontSize: '14px'
+      minHeight: '100%',
+      padding: '16px 18px',
+      caretColor: '#0a66d8',
+      fontFamily: 'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif',
+      fontSize: '14px',
+      lineHeight: '1.72'
     },
     '.cm-editor': {
-      backgroundColor: '#f0f0f0'
+      height: '100%',
+      backgroundColor: '#ffffff'
     },
     '.cm-scroller': {
-      backgroundColor: '#f0f0f0'
+      height: '100%',
+      backgroundColor: '#ffffff',
+      fontFamily: 'inherit'
+    },
+    '.cm-placeholder': {
+      color: '#9b9ba1',
+      fontStyle: 'normal'
+    },
+    '.cm-cursor': {
+      borderLeftColor: '#0a66d8'
+    },
+    '.cm-selectionBackground, ::selection': {
+      backgroundColor: '#d8eaff !important'
     },
     '.cm-hl-yellow': {
-      backgroundColor: '#ffc107'
+      backgroundColor: '#fff0ad',
+      borderRadius: '2px'
     }
   })
 ];

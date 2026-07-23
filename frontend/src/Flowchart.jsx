@@ -1,46 +1,47 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { Plus, RotateCcw, Trash2 } from 'lucide-react';
 
 // Type style definitions for DATA COMMENTARY MOVE structure
 const TYPE_STYLES = {
   background: { 
-    color: '#fff3e0', 
-    border: '#ff9800', 
+    color: '#fff8e8',
+    border: '#b97912',
     title: 'Background', 
     defaultText: 'Disciplinary knowledge (IELTS: request; Academic: aim, etc.)',
     standard: true
   },
   presentation: { 
-    color: '#e8f5e8', 
-    border: '#4caf50', 
+    color: '#eef8f0',
+    border: '#368a4c',
     title: 'Presentation of Visual', 
     defaultText: 'Core step: Guide different ways of introducing visuals. Choose from multiple options:',
     core: true
   },
   comment: { 
-    color: '#e3f2fd', 
-    border: '#2196f3', 
+    color: '#edf5ff',
+    border: '#397bbf',
     title: 'Comment on Result', 
     defaultText: 'Final step: Students add interpretations or highlight key findings.',
     final: true
   },
   // Sub-options for Presentation of Visual
   summary: { 
-    color: '#f3e5f5', 
-    border: '#9c27b0', 
+    color: '#f6f2fa',
+    border: '#8063a6',
     title: 'a. Summary', 
     defaultText: 'Basic introduction of the visual：Figure 1 shows... ',
     subtype: 'presentation'
   },
   results: { 
-    color: '#e1f5fe', 
-    border: '#00bcd4', 
+    color: '#edf8f8',
+    border: '#438c91',
     title: 'b. Results', 
     defaultText: 'Specific data presentation：Figure 1 shows City A had 100,000 people in 1990',
     subtype: 'presentation'
   },
   reference_explanation: { 
-    color: '#fce4ec', 
-    border: '#e91e63', 
+    color: '#fff1f4',
+    border: '#b85d75',
     title: 'c. Reference & Explanation', 
     defaultText: 'Comparison, trend analysis, and detailed explanation',
     subtype: 'presentation'
@@ -303,7 +304,7 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
       const isSequence = edge.type === 'sequence';
       
       // Different styles for different edge types
-      const strokeColor = isSelected ? '#ff7043' : (isParentChild ? '#9c27b0' : '#666');
+      const strokeColor = isSelected ? '#0a66d8' : (isParentChild ? '#8063a6' : '#77777c');
       const strokeWidth = isSelected ? 3 : (isParentChild ? 2 : 2);
       const strokeDasharray = isParentChild ? '5,5' : 'none';
       const markerEnd = isSequence ? 'url(#arrow)' : 'url(#circle)';
@@ -331,7 +332,7 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
           {isSelected && (
             <path
               d={`M ${x1} ${y1} Q ${midX} ${midY} ${x2} ${y2}`}
-              stroke="#ff7043"
+              stroke="#0a66d8"
               strokeWidth={10}
               strokeOpacity={0.15}
               fill="none"
@@ -369,11 +370,11 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
   const editingDisabled = !imageReady || readOnly;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <div style={{ marginBottom: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-  <button onClick={resetChart} disabled={editingDisabled} style={{ padding: '0.4rem 0.8rem', cursor: editingDisabled ? 'not-allowed' : 'pointer', opacity: editingDisabled ? 0.5 : 1 }}>Reset</button>
-  <button onClick={unifiedDelete} disabled={editingDisabled || (!selectedNodeId && !selectedEdgeId)} style={{ padding: '0.4rem 0.8rem', cursor: (!editingDisabled && (selectedNodeId || selectedEdgeId)) ? 'pointer' : 'not-allowed', opacity: (!editingDisabled && (selectedNodeId || selectedEdgeId)) ? 1 : 0.5 }}>Delete</button>
-  <button onClick={addNode} disabled={editingDisabled} style={{ padding: '0.4rem 0.8rem', cursor: editingDisabled ? 'not-allowed' : 'pointer', opacity: editingDisabled ? 0.5 : 1 }}>Add Node</button>
+    <div className="flowchart-root" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      <div className="flowchart-toolbar" style={{ marginBottom: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+  <button title="Reset structure" onClick={resetChart} disabled={editingDisabled} style={{ padding: '0.4rem 0.8rem', cursor: editingDisabled ? 'not-allowed' : 'pointer', opacity: editingDisabled ? 0.5 : 1 }}><RotateCcw size={14} /> Reset</button>
+  <button title="Delete selected item" onClick={unifiedDelete} disabled={editingDisabled || (!selectedNodeId && !selectedEdgeId)} style={{ padding: '0.4rem 0.8rem', cursor: (!editingDisabled && (selectedNodeId || selectedEdgeId)) ? 'pointer' : 'not-allowed', opacity: (!editingDisabled && (selectedNodeId || selectedEdgeId)) ? 1 : 0.5 }}><Trash2 size={14} /> Delete</button>
+  <button title="Add a structure node" onClick={addNode} disabled={editingDisabled} style={{ padding: '0.4rem 0.8rem', cursor: editingDisabled ? 'not-allowed' : 'pointer', opacity: editingDisabled ? 0.5 : 1 }}><Plus size={14} /> Add node</button>
         <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4 }}>
           New node type:
           <select value={newNodeType} onChange={(e) => setNewNodeType(e.target.value)} style={{ fontSize: '0.75rem' }} disabled={editingDisabled}>
@@ -385,12 +386,13 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
             <option value="comment">Comment on Result</option>
           </select>
         </label>
-        <span style={{ fontSize: '0.7rem', color: '#555', lineHeight: 1.2 }}>
+        <span className="flowchart-status" style={{ fontSize: '0.7rem', color: '#555', lineHeight: 1.2 }}>
           {editingDisabled ? (readOnly ? 'Read-only view (revision stage): node editing disabled' : 'Please upload an image first (Flowchart disabled until image uploaded)') : 'DATA COMMENTARY MOVE: Background → Presentation (core) → Comment (final) | Drag nodes to move | Drag bottom-right dot to create links'}
         </span>
       </div>
 
       <div
+        className="flowchart-canvas"
         ref={canvasRef}
         onMouseMove={editingDisabled ? undefined : handleMouseMove}
         onMouseUp={editingDisabled ? undefined : (e) => { handleMouseUp(); handleMouseUpCanvas(e); }}
@@ -398,7 +400,7 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
         style={{
           position: 'relative',
           flex: 1,
-          background: 'repeating-linear-gradient(45deg,#fafafa,#fafafa 10px,#f5f5f5 10px,#f5f5f5 20px)',
+          background: '#f8f8fa',
           border: '1px solid #ddd',
           borderRadius: 8,
           overflow: 'auto',
@@ -435,6 +437,7 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
           const sentenceCount = Array.isArray(rawVal) ? rawVal.length : (typeof rawVal === 'number' ? rawVal : 0);
           return (
             <div
+              className={`flowchart-node ${isSelected ? 'is-selected' : ''} ${isMissing ? 'is-missing' : ''}`}
               key={node.id}
               onMouseDown={(e) => { if (editingDisabled) { e.stopPropagation(); return; } handleMouseDownNode(e, node); }}
               style={{
@@ -444,7 +447,7 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
                 width: node.width,
                 height: node.height,
                 background: isMissing ? '#f9f9f9' : node.color,
-                border: isMissing ? '2px dashed #555' : `2px solid ${isSelected ? '#ff7043' : node.border}`,
+                border: isMissing ? '2px dashed #77777c' : `2px solid ${isSelected ? '#0a66d8' : node.border}`,
                 borderRadius: 10,
                 padding: '8px 10px 10px 10px',
                 boxSizing: 'border-box',
@@ -452,7 +455,7 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
                 flexDirection: 'column',
                 fontSize: 12,
                 cursor: 'grab',
-                boxShadow: isSelected ? '0 0 0 3px rgba(255,112,67,0.3)' : '0 1px 4px rgba(0,0,0,0.18)',
+                boxShadow: isSelected ? '0 0 0 3px rgba(10,102,216,0.16)' : '0 2px 8px rgba(0,0,0,0.08)',
                 backdropFilter: 'blur(2px)',
                 filter: isMissing ? 'grayscale(1)' : 'none',
                 opacity: isMissing ? 0.9 : 1,
@@ -521,7 +524,7 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
                   right: -6,
                   width: 16,
                   height: 16,
-                  background: creatingEdge?.fromNodeId === node.id ? '#ff7043' : '#555',
+                  background: creatingEdge?.fromNodeId === node.id ? '#0a66d8' : '#77777c',
                   borderRadius: '50%',
                   border: '2px solid white',
                   cursor: 'crosshair',

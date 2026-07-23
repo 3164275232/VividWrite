@@ -3,6 +3,17 @@ import ErrorBoundary from './ErrorBoundary.jsx';
 import CmEditor from './CmEditor.jsx';
 import { analyzeChartWithImage, requestNextSentence, mapSentences, extractDeplot, saveFinalImage, saveRevisionText, generateSampleEssay, generateSpatialSampleEssay, reviewRevision, resolveBackendUrl } from "./api";
 import Login from "./Login";
+import {
+  ArrowRight,
+  BarChart3,
+  FileText,
+  GitBranch,
+  RotateCcw,
+  Sparkles,
+  Upload,
+  X,
+} from "lucide-react";
+import "./App.css";
 import Flowchart from "./Flowchart";//对应修改1
 
 import { analysisRequirement, sampleEssayRequirement, SPATIAL_TASK_TYPES } from './utils/taskTypes';
@@ -932,7 +943,7 @@ export default function App() {
 
   return (
     <>
-    <main style={{ margin: 0, padding: 0, fontFamily: "system-ui, sans-serif", height: "100vh", width: "100vw", display: "flex", flexDirection: "column" }}>
+    <main className="app-shell" style={{ margin: 0, padding: 0, fontFamily: "system-ui, sans-serif", height: "100vh", width: "100vw", display: "flex", flexDirection: "column" }}>
       {isLoggedIn ? (
         <ErrorBoundary>
         <>
@@ -954,7 +965,7 @@ export default function App() {
               </div>
             </div>
           )}
-          <nav style={{
+          <nav className="app-header" style={{
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
@@ -963,7 +974,10 @@ export default function App() {
             padding: "1rem",
             flexShrink: 0,
           }}>
-            <div style={{ fontWeight: 700, fontSize: '1.15rem', letterSpacing: '.5px' }}>Vividwrite2.0</div>
+            <div className="brand-lockup" style={{ fontWeight: 700, fontSize: '1.15rem', letterSpacing: '.5px' }}>
+              <span className="brand-mark">V</span>
+              <span><strong>VividWrite</strong><small>IELTS Writing Studio</small></span>
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <div style={{ fontSize: '0.9rem', background: '#555', padding: '0.4rem 0.75rem', borderRadius: '4px' }}>
@@ -993,6 +1007,7 @@ export default function App() {
               </div>
               {/* Removed inline status badges in favor of modal */}
               <button
+                className="next-stage-button"
                 onClick={() => {
                   console.log('Button clicked!', { stageIndex, stagesLength: stages.length, disabled: stageIndex === stages.length - 1 });
                   handleNextStage();
@@ -1010,7 +1025,7 @@ export default function App() {
                 }}
                 title="Go to next stage"
               >
-                Next Stage
+                Next Stage <ArrowRight size={15} />
               </button>
             </div>
           </nav>
@@ -1170,8 +1185,9 @@ export default function App() {
               </div>
             </div>
           )}
-          <div style={{ display: "flex", flexGrow: 1, width: "100%" }}>
+          <div className="workspace" style={{ display: "flex", flexGrow: 1, width: "100%" }}>
             <div
+              className="workspace-left"
               style={{
                 flexBasis: `${leftWidth}%`,
                 backgroundColor: "#f0f0f0",
@@ -1181,6 +1197,7 @@ export default function App() {
               }}
             >
               <div
+                className="workspace-panel source-panel"
                 style={{
                   // If in planning stage, occupy full height to hide writing area
                   flexBasis: currentStage === 'planning' ? '100%' : `${upperHeight}%`,
@@ -1194,14 +1211,20 @@ export default function App() {
                   minHeight: 0,
                 }}
               >
-                <h2>Original Image</h2>
+                <div className="panel-heading">
+                  <div>
+                    <span className="panel-eyebrow">Source material</span>
+                    <h2>Task image</h2>
+                  </div>
+                  {imagePreview && <span className="status-pill">Ready</span>}
+                </div>
                 {deplotError && currentStage === 'planning' && (
                   <div style={{ fontSize: '0.7rem', color: '#c00', marginBottom: '0.4rem' }}>{deplotError}</div>
                 )}
                 
                 {/* Chart type selector: only visible during planning stage */}
                 {currentStage === 'planning' && (
-                  <div style={{ marginBottom: "1rem" }}>
+                  <div className="chart-type-field" style={{ marginBottom: "1rem" }}>
                     <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold" }}>
                       Chart Type:
                     </label>
@@ -1246,7 +1269,7 @@ export default function App() {
                 )}
                 
                 {!imagePreview ? (
-                  <div style={{
+                  <div className="upload-dropzone" style={{
                     border: "2px dashed #ccc",
                     borderRadius: "8px",
                     padding: "2rem",
@@ -1258,7 +1281,8 @@ export default function App() {
                     justifyContent: "center",
                     alignItems: "center"
                   }}>
-                    <div style={{ fontSize: "3rem", color: "#ccc", marginBottom: "1rem" }}>
+                    <div className="upload-icon" style={{ fontSize: "3rem", color: "#ccc", marginBottom: "1rem" }}>
+                      <Upload size={24} />
                       📷
                     </div>
                     <p style={{ margin: "0 0 1rem 0", color: "#666" }}>
@@ -1272,6 +1296,7 @@ export default function App() {
                       id="image-upload"
                     />
                     <label
+                      className="upload-button"
                       htmlFor="image-upload"
                       style={{
                         padding: "0.5rem 1rem",
@@ -1289,8 +1314,8 @@ export default function App() {
                     </p>
                   </div>
                 ) : (
-                  <div style={{ flex: '1 1 auto', display: "flex", flexDirection: "column", minHeight: 0 }}>
-                    <div style={{
+                  <div className="image-preview-shell" style={{ flex: '1 1 auto', display: "flex", flexDirection: "column", minHeight: 0 }}>
+                    <div className="image-preview" style={{
                       position: "relative",
                       flex: '1 1 auto',
                       // Match outer pane background
@@ -1319,6 +1344,7 @@ export default function App() {
                       />
                       {stageIndex === 0 && (
                         <button
+                          className="icon-button image-remove-button"
                           onClick={handleRemoveImage}
                           style={{
                             position: "absolute",
@@ -1340,6 +1366,7 @@ export default function App() {
                           }}
                           title="Delete image (removable only in planning stage)"
                         >
+                          <X size={16} />
                           ×
                         </button>
                       )}
@@ -1350,6 +1377,7 @@ export default function App() {
               {currentStage !== 'planning' && (
                 <>
                   <div
+                    className="panel-resizer panel-resizer--horizontal"
                     style={{
                       height: "5px",
                       cursor: "row-resize",
@@ -1358,6 +1386,7 @@ export default function App() {
                     onMouseDown={handleMouseDownHorizontal}
                   ></div>
                   <div
+                    className="workspace-panel writing-panel"
                     style={{
                       flexBasis: `${100 - upperHeight}%`,
                       padding: "1rem",
@@ -1370,9 +1399,16 @@ export default function App() {
                       overflow: 'auto'
                     }}
                   >
-                    <h2>Writing Area</h2>
+                    <div className="panel-heading writing-heading">
+                      <div>
+                        <span className="panel-eyebrow">{currentStage} stage</span>
+                        <h2>Your report</h2>
+                      </div>
+                      <span className="word-count">{text.trim() ? `${text.trim().split(/\s+/).length} words` : '0 words'}</span>
+                    </div>
                     {/* 增加分析文本按钮 */}
                     <div
+                      className="editor-surface"
                       style={{
                         height: '300px',
                         overflow: 'auto',
@@ -1392,7 +1428,7 @@ export default function App() {
                         style={{ height: '100%' }}
                       />
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem', marginTop: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div className="writing-toolbar" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem', marginTop: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
                       {nextSentenceError && (
                         <span style={{ color: '#c00', fontSize: '0.75rem', marginRight: 'auto' }}>{nextSentenceError}</span>
                       )}
@@ -1412,7 +1448,7 @@ export default function App() {
                           }}
                           title="Undo last AI sentence"
                         >
-                          Undo
+                          <RotateCcw size={14} /> Undo
                         </button>
                       )}
                       {currentStage !== 'revision' && (
@@ -1452,7 +1488,8 @@ export default function App() {
                             }}
                             title={isSpatialTask ? 'Requires a vision-language model for spatial tasks' : 'AI suggest the next sentence'}
                           >
-                            {isNextSentenceLoading ? 'Thinking...' : 'Next Sentence ✨'}
+                            <Sparkles size={14} />
+                            {isNextSentenceLoading ? 'Thinking...' : 'Next Sentence'}
                           </button>
                           <button
                             onClick={handleGenerateSampleEssay}
@@ -1468,7 +1505,8 @@ export default function App() {
                             }}
                             title="Generate a full sample essay from the original image (overwrites current text)"
                           >
-                            {isSampleEssayLoading ? 'Thinking...' : 'Sample Essay 📝'}
+                            <FileText size={14} />
+                            {isSampleEssayLoading ? 'Thinking...' : 'Sample Essay'}
                           </button>
                         </>
                       )}
@@ -1486,6 +1524,7 @@ export default function App() {
                         }}
                         title="Analyze structure & map sentences"
                       >
+                        <GitBranch size={14} />
                         {mappingStatus === 'loading' ? 'Analyzing structure...' : 'Structure Analyze'}
                       </button>
                       {currentStage === 'revision' && (
@@ -1502,6 +1541,7 @@ export default function App() {
                             fontSize: '0.85rem'
                           }}
                         >
+                          <BarChart3 size={14} />
                           {isAnalyzing ? 'Analyzing...' : 'Analyze Text'}
                         </button>
                       )}
@@ -1522,6 +1562,7 @@ export default function App() {
               )}
             </div>
             <div
+              className="panel-resizer panel-resizer--vertical"
               style={{
                 width: "5px",
                 cursor: "col-resize",
@@ -1530,6 +1571,7 @@ export default function App() {
               onMouseDown={handleMouseDownVertical}
             ></div>
             <div
+              className={`workspace-right ${rightContent === 'Flowchart' ? 'is-flowchart' : ''}`}
               style={{
                 flexBasis: `${100 - leftWidth}%`,
                 backgroundColor: "#e0e0e0",
@@ -1541,10 +1583,16 @@ export default function App() {
                 flexDirection: 'column',
               }}
             >
-              {/* Removed right pane title per request */}
-              <div style={{ display: "flex", gap: "1rem", marginBottom: "1rem", flexShrink: 0 }}>
+              <div className="right-pane-heading">
+                <div>
+                  <span className="panel-eyebrow">Learning workspace</span>
+                  <h2>Feedback</h2>
+                </div>
+              </div>
+              <div className="view-tabs" style={{ display: "flex", gap: "1rem", marginBottom: "1rem", flexShrink: 0 }}>
                 {(currentStage === 'planning' || currentStage === 'drafting') && (
                   <button
+                    className={rightContent === 'Flowchart' ? 'is-active' : ''}
                     onClick={() => setRightContent('Flowchart')}
                     style={{
                       padding: '0.5rem 1rem',
@@ -1555,12 +1603,13 @@ export default function App() {
                       borderRadius: '4px'
                     }}
                   >
-                    Flowchart
+                    <GitBranch size={14} /> Structure
                   </button>
                 )}
                 {currentStage === 'revision' && (
                   <>
                     <button
+                      className={rightContent === 'Flowchart' ? 'is-active' : ''}
                       onClick={() => setRightContent('Flowchart')}
                       style={{
                         padding: '0.5rem 1rem',
@@ -1571,9 +1620,10 @@ export default function App() {
                         borderRadius: '4px'
                       }}
                     >
-                      Flowchart
+                      <GitBranch size={14} /> Structure
                     </button>
                     <button
+                      className={rightContent === 'Visual Feedback' ? 'is-active' : ''}
                       onClick={() => setRightContent('Visual Feedback')}
                       style={{
                         padding: '0.5rem 1rem',
@@ -1584,9 +1634,10 @@ export default function App() {
                         borderRadius: '4px'
                       }}
                     >
-                      Visual Feedback
+                      <BarChart3 size={14} /> Visual feedback
                     </button>
                     <button
+                      className={rightContent === 'Revision Suggestions' ? 'is-active' : ''}
                       onClick={() => setRightContent('Revision Suggestions')}
                       style={{
                         padding: '0.5rem 1rem',
@@ -1597,7 +1648,7 @@ export default function App() {
                         borderRadius: '4px'
                       }}
                     >
-                      Revision Suggestions
+                      <FileText size={14} /> Revision
                     </button>
                   </>
                 )}
@@ -1791,12 +1842,12 @@ export default function App() {
       )}
     </main>
     {currentStage !== 'revision' && showCandidatePanel && aiCandidates.length > 0 && (
-      <div style={{ position: 'fixed', bottom: 16, right: 16, width: 380, maxWidth: '90vw', background: '#fff', border: '1px solid #ddd', boxShadow: '0 4px 18px rgba(0,0,0,0.15)', borderRadius: 8, zIndex: 4000, display: 'flex', flexDirection: 'column', maxHeight: '60vh' }}>
-        <div style={{ padding: '0.65rem 0.85rem', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+      <div className="candidate-panel" style={{ position: 'fixed', bottom: 16, right: 16, width: 380, maxWidth: '90vw', background: '#fff', border: '1px solid #ddd', boxShadow: '0 4px 18px rgba(0,0,0,0.15)', borderRadius: 8, zIndex: 4000, display: 'flex', flexDirection: 'column', maxHeight: '60vh' }}>
+        <div className="candidate-panel-header" style={{ padding: '0.65rem 0.85rem', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <strong style={{ fontSize: 14 }}>Candidate Next Sentences ({aiCandidates.length})</strong>
-          <button onClick={() => setShowCandidatePanel(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}>×</button>
+          <button className="icon-button" aria-label="Close suggestions" onClick={() => setShowCandidatePanel(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}><X size={16} /></button>
         </div>
-        <div style={{ overflowY: 'auto', padding: '0.5rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+        <div className="candidate-list" style={{ overflowY: 'auto', padding: '0.5rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
           {aiCandidates.map((c, idx) => (
             <button key={idx} onClick={() => insertCandidate(c)} style={{
               textAlign: 'left',
@@ -1817,7 +1868,7 @@ export default function App() {
             </button>
           ))}
         </div>
-        <div style={{ borderTop: '1px solid #eee', padding: '0.45rem 0.7rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="candidate-panel-footer" style={{ borderTop: '1px solid #eee', padding: '0.45rem 0.7rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: 11, color: '#666' }}>Shift+click "Next Sentence" to immediately use the first candidate</span>
           <button onClick={() => { if (aiCandidates[0]) insertCandidate(aiCandidates[0]); }} style={{ background: '#6f42c1', color: '#fff', border: 'none', borderRadius: 4, padding: '0.45rem 0.8rem', fontSize: 12, cursor: 'pointer' }}>Use First</button>
         </div>
