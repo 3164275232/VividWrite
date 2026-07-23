@@ -11,7 +11,16 @@ from typing import Any
 
 from chart_detection import detect_chart_type
 from chart_renderer import InvalidChartSpec, extract_image_palette, render_vega_lite_png
-from chart_text import InvalidExtractedChartData, parse_series_framework, parse_validated_pie_table
+from chart_text import (
+    InvalidExtractedChartData,
+    infer_deplot_value_precision,
+    parse_numeric_chart_table,
+    parse_series_framework,
+    parse_validated_pie_table,
+    quantize_chart_value,
+    round_chart_value,
+    round_deplot_table_values,
+)
 from deepseek_config import get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
 
 
@@ -220,15 +229,28 @@ def _collect_explicit_pie_percentages(
     candidates: dict[str, list[float]] = {label: [] for label in patterns}
 
     for clause in _PIE_CLAUSE_BOUNDARY.split(student_answer):
-        if _PIE_AGGREGATE_PATTERN.search(clause):
+        percentage_matches = list(_PERCENTAGE_PATTERN.finditer(clause))
+        if not percentage_matches:
             continue
-        percentages = [float(match.group("value")) for match in _PERCENTAGE_PATTERN.finditer(clause)]
-        if len(percentages) != 1:
-            continue
+
         mentioned_labels = [label for label, pattern in patterns.items() if pattern.search(clause)]
-        if len(mentioned_labels) != 1:
+        if len(percentage_matches) == 1:
+            if _PIE_AGGREGATE_PATTERN.search(clause) or len(mentioned_labels) != 1:
+                continue
+            candidates[mentioned_labels[0]].append(float(percentage_matches[0].group("value")))
             continue
-        candidates[mentioned_labels[0]].append(percentages[0])
+
+        segment_start = 0
+        for match in percentage_matches:
+            local_context = clause[segment_start : match.end()]
+            segment_start = match.end()
+            if _PIE_AGGREGATE_PATTERN.search(local_context):
+                continue
+            local_labels = [
+                label for label, pattern in patterns.items() if pattern.search(local_context)
+            ]
+            if len(local_labels) == 1:
+                candidates[local_labels[0]].append(float(match.group("value")))
 
     return {label: values for label, values in candidates.items() if values}
 
@@ -286,12 +308,15 @@ def _merge_explicit_pie_percentages(result: dict, deplot_text: str, student_answ
     result["records"] = records
 
 
-def _annotate_pie_accuracy(result: dict, deplot_text: str, tolerance: float = 0.5) -> None:
+def _annotate_pie_accuracy(result: dict, deplot_text: str, tolerance: float = 0.0) -> None:
     """Compare student pie values with the validated official percentages."""
     if result.get("chart_type") != "pie":
         return
     try:
-        official_values = parse_validated_pie_table(deplot_text)
+        official_values = {
+            label: round_chart_value(value)
+            for label, value in parse_validated_pie_table(deplot_text).items()
+        }
     except InvalidExtractedChartData:
         return
 
@@ -379,7 +404,8 @@ def _annotate_pie_accuracy(result: dict, deplot_text: str, tolerance: float = 0.
         for record in ordered_records
         if isinstance(record.get("value"), (int, float))
     )
-    difference = student_total - 100.0
+    expected_total = sum(float(value) for value in official_values.values())
+    difference = student_total - expected_total
     if difference < -tolerance:
         balance = "under"
     elif difference > tolerance:
@@ -397,9 +423,207 @@ def _annotate_pie_accuracy(result: dict, deplot_text: str, tolerance: float = 0.
     comparison["omitted_official_items"] = list(dict.fromkeys(existing_omissions + omitted_items))
     comparison["incorrect_official_items"] = accuracy_issues
     comparison["student_percentage_total"] = round(student_total, 6)
+    comparison["expected_percentage_total"] = round(expected_total, 6)
     comparison["percentage_balance"] = balance
     comparison["percentage_difference"] = round(difference, 6)
+    comparison["accepted_value_tolerance"] = tolerance
+    comparison["accepted_value_tolerance_unit"] = "percentage points"
     result["records"] = ordered_records
+
+
+def _bar_record_axis(record: dict) -> str:
+    for field in ("period", "category", "region"):
+        if record.get(field) not in (None, ""):
+            return str(record[field])
+    return ""
+
+
+def _bar_item_label(category: str, series: str, series_count: int) -> str:
+    return f"{category} - {series}" if series_count > 1 else category
+
+
+def _find_bar_record(
+    indexed_records: list[tuple[int, dict]],
+    used_indices: set[int],
+    category: str,
+    series: str,
+    *,
+    series_count: int,
+) -> tuple[int, dict] | None:
+    category_key = _key(category)
+    series_aliases = _series_aliases(series)
+    for index, record in indexed_records:
+        if index in used_indices:
+            continue
+        record_keys = {
+            _key(record.get(field))
+            for field in ("category", "series", "period", "region")
+            if record.get(field) not in (None, "")
+        }
+        category_matches = category_key in record_keys
+        series_matches = bool(record_keys & series_aliases)
+        if category_matches and (series_count == 1 or series_matches):
+            return index, record
+
+    available: list[tuple[int, dict, set[str]]] = []
+    for index, record in indexed_records:
+        if index in used_indices:
+            continue
+        record_keys = {
+            _key(record.get(field))
+            for field in ("category", "series", "period", "region")
+            if record.get(field) not in (None, "")
+        }
+        if series_count > 1 and not record_keys.intersection(series_aliases):
+            continue
+        available.append((index, record, record_keys))
+    close = get_close_matches(
+        category_key,
+        list(dict.fromkeys(key for _, _, keys in available for key in keys)),
+        n=1,
+        cutoff=0.82,
+    )
+    if not close:
+        return None
+    return next(
+        ((index, record) for index, record, keys in available if close[0] in keys),
+        None,
+    )
+
+
+def _bar_accuracy_tolerance(result: dict, value_precision: int) -> tuple[float, str]:
+    axes = result.get("axes") if isinstance(result.get("axes"), dict) else {}
+    unit_context = f'{axes.get("unit") or ""} {axes.get("y_label") or ""}'.casefold()
+    tolerance = 2.0 if value_precision == 0 else 10 ** (-value_precision)
+    if "%" in unit_context or "percent" in unit_context:
+        return tolerance, "percentage points"
+    unit = str(axes.get("unit") or "unit").strip()
+    return tolerance, unit
+
+
+def _annotate_cartesian_accuracy(
+    result: dict,
+    deplot_text: str,
+    tolerance: float | None = None,
+) -> None:
+    """Compare explicit bar/line values with the official DePlot table locally."""
+    chart_type = result.get("chart_type")
+    if chart_type not in {"bar", "line"}:
+        return
+    official_records = parse_numeric_chart_table(deplot_text)
+    if not official_records:
+        return
+    value_precision = infer_deplot_value_precision(deplot_text, chart_type)
+    default_tolerance, tolerance_unit = _bar_accuracy_tolerance(result, value_precision)
+    accepted_tolerance = default_tolerance if tolerance is None else max(0.0, tolerance)
+
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    indexed_records = [
+        (index, record)
+        for index, record in enumerate(records)
+        if isinstance(record, dict)
+    ]
+    series_names = list(dict.fromkeys(str(item["series"]) for item in official_records))
+    series_count = len(series_names)
+    used_indices: set[int] = set()
+    ordered_records: list[dict] = []
+    accuracy_issues: list[str] = []
+    omitted_items: list[str] = []
+
+    for official in official_records:
+        category = str(official["category"])
+        series = str(official["series"])
+        official_value = quantize_chart_value(official["value"], value_precision)
+        item_label = _bar_item_label(category, series, series_count)
+        matched = _find_bar_record(
+            indexed_records,
+            used_indices,
+            category,
+            series,
+            series_count=series_count,
+        )
+        if matched is None:
+            record = _clean_record(
+                {
+                    "category": category,
+                    "series": series,
+                    "period": category if _key(official.get("axis_label")) in {"year", "date"} else None,
+                    "value": None,
+                    "missing": True,
+                }
+            )
+        else:
+            index, record = matched
+            used_indices.add(index)
+
+        record["official_value"] = official_value
+        record["feedback_label"] = item_label
+        student_value = record.get("value")
+        if isinstance(student_value, (int, float)):
+            delta = float(student_value) - official_value
+            record["missing"] = False
+            record["error_delta"] = round(delta, 6)
+            is_estimated_line_point = chart_type == "line" and bool(record.get("estimated"))
+            exceeds_tolerance = abs(delta) > accepted_tolerance + 1e-9
+            record["incorrect"] = not is_estimated_line_point and exceeds_tolerance
+            if is_estimated_line_point:
+                record["feedback_status"] = "estimated"
+            else:
+                record["feedback_status"] = "incorrect" if record["incorrect"] else "correct"
+            if record["incorrect"]:
+                accuracy_issues.append(
+                    f"{item_label}: student {student_value:g}, official {official_value:g}"
+                )
+        else:
+            record["missing"] = True
+            record["incorrect"] = False
+            record["error_delta"] = None
+            record["feedback_status"] = "unmentioned"
+            omitted_items.append(item_label)
+        ordered_records.append(record)
+
+    for index, record in indexed_records:
+        if index in used_indices:
+            continue
+        label = record.get("feedback_label") or _bar_record_axis(record) or "Unrecognised item"
+        record["official_value"] = None
+        record["incorrect"] = True
+        record["feedback_status"] = "unexpected"
+        record["feedback_label"] = str(label)
+        accuracy_issues.append(f"{label}: not present in the official bar chart")
+        ordered_records.append(record)
+
+    comparison = result.get("comparison")
+    if not isinstance(comparison, dict):
+        comparison = {}
+        result["comparison"] = comparison
+    existing_omissions = comparison.get("omitted_official_items")
+    if not isinstance(existing_omissions, list):
+        existing_omissions = []
+    comparison["omitted_official_items"] = list(dict.fromkeys(existing_omissions + omitted_items))
+    comparison["incorrect_official_items"] = accuracy_issues
+    comparison["accepted_value_tolerance"] = accepted_tolerance
+    comparison["accepted_value_tolerance_unit"] = tolerance_unit
+    comparison["official_value_precision"] = value_precision
+    result["records"] = ordered_records
+
+
+def _annotate_bar_accuracy(
+    result: dict,
+    deplot_text: str,
+    tolerance: float | None = None,
+) -> None:
+    if result.get("chart_type") == "bar":
+        _annotate_cartesian_accuracy(result, deplot_text, tolerance)
+
+
+def _annotate_line_accuracy(
+    result: dict,
+    deplot_text: str,
+    tolerance: float | None = None,
+) -> None:
+    if result.get("chart_type") == "line":
+        _annotate_cartesian_accuracy(result, deplot_text, tolerance)
 
 
 def _series_aliases(value: str) -> set[str]:
@@ -606,11 +830,21 @@ class ChartFeedbackService:
 
         detected_type = detect_chart_type(image_path) if requested_type == "auto" else None
         effective_type = detected_type or requested_type
+        value_precision = infer_deplot_value_precision(deplot_text, effective_type)
+        model_deplot_text = (
+            round_deplot_table_values(
+                deplot_text,
+                precision=value_precision,
+                chart_type=effective_type,
+            )
+            if effective_type in {"bar", "line", "pie"}
+            else deplot_text
+        )
         user_payload = {
             "requested_chart_type": effective_type,
             "auto_detected_from_image": detected_type,
             "task_requirement": requirement,
-            "official_deplot_text": deplot_text,
+            "official_deplot_text": model_deplot_text,
             "student_answer": student_answer,
         }
         filename = f"visual_feedback_{uuid.uuid4().hex}.png"
@@ -651,8 +885,10 @@ class ChartFeedbackService:
                 result = _normalise_result(raw, effective_type)
                 _merge_explicit_pie_percentages(result, deplot_text, student_answer)
                 _annotate_pie_accuracy(result, deplot_text)
+                _annotate_bar_accuracy(result, deplot_text)
                 _validate_temporal_record_coverage(result, deplot_text, student_answer)
                 _interpolate_supported_temporal_gaps(result, deplot_text, student_answer)
+                _annotate_line_accuracy(result, deplot_text)
                 result["style"] = {"color_palette": palette, "renderer": "vega-lite"}
                 result["vega_lite_spec"] = render_vega_lite_png(
                     result["vega_lite_spec"],

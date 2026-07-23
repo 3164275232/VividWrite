@@ -13,8 +13,9 @@ function formatFeedbackNumber(value) {
   return Number.isInteger(number) ? String(number) : number.toFixed(1).replace(/\.0$/, '');
 }
 
-function PieFeedbackDetails({ chartData }) {
-  if (chartData?.chart_type !== 'pie') return null;
+function ChartFeedbackDetails({ chartData }) {
+  if (!['pie', 'bar', 'line'].includes(chartData?.chart_type)) return null;
+  const isPie = chartData.chart_type === 'pie';
   const comparison = chartData.comparison || {};
   const issues = Array.isArray(comparison.incorrect_official_items)
     ? comparison.incorrect_official_items.filter(Boolean)
@@ -23,13 +24,49 @@ function PieFeedbackDetails({ chartData }) {
     ? chartData.records.filter((record) => ['incorrect', 'conflicting', 'missing', 'unexpected'].includes(record?.feedback_status))
     : [];
   const total = Number(comparison.student_percentage_total);
+  const expectedTotal = Number(comparison.expected_percentage_total);
   const difference = Number(comparison.percentage_difference);
   const balance = comparison.percentage_balance;
-  const hasTotal = Number.isFinite(total);
-  const hasBalanceIssue = balance === 'under' || balance === 'over';
-  if (!issues.length && !recordIssues.length && !hasBalanceIssue) return null;
+  const hasTotal = isPie && Number.isFinite(total);
+  const hasBalanceIssue = isPie && (balance === 'under' || balance === 'over');
+  const unitText = String(chartData?.axes?.unit || '').trim();
+  const isPercentage = isPie || /%|percent/i.test(`${unitText} ${chartData?.axes?.y_label || ''}`);
+  const valueSuffix = isPercentage ? '%' : unitText ? ` ${unitText}` : '';
+  const deltaSuffix = isPercentage ? ' percentage points' : valueSuffix;
+  const formatValue = (value) => `${formatFeedbackNumber(value)}${valueSuffix}`;
+  const hasProblems = issues.length > 0 || recordIssues.length > 0 || hasBalanceIssue;
+  if (!hasProblems) {
+    const tolerance = Number(comparison.accepted_value_tolerance);
+    const toleranceUnit = String(comparison.accepted_value_tolerance_unit || '').trim();
+    const toleranceMessage = Number.isFinite(tolerance) && tolerance === 0
+      ? ' Exact agreement with the rounded official values is required.'
+      : Number.isFinite(tolerance)
+      ? ` Values mentioned in the essay are within the accepted tolerance (±${formatFeedbackNumber(tolerance)} ${toleranceUnit}).`
+      : ' The values mentioned in the essay are consistent with the original chart.';
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        style={{
+          marginTop: '0.75rem',
+          padding: '0.7rem 0 0.1rem 0.75rem',
+          borderTop: '1px solid #bbf7d0',
+          borderLeft: '4px solid #16a34a',
+          color: '#166534',
+          fontSize: '0.78rem',
+          lineHeight: 1.45,
+        }}
+      >
+        <strong style={{ display: 'block', fontSize: '0.82rem' }}>No data problems detected</strong>
+        <div>{toleranceMessage}</div>
+      </div>
+    );
+  }
 
-  let totalMessage = hasTotal ? `Your total: ${formatFeedbackNumber(total)}%. Expected total: 100%.` : '';
+  const displayedExpectedTotal = Number.isFinite(expectedTotal) ? expectedTotal : 100;
+  let totalMessage = hasTotal
+    ? `Your total: ${formatFeedbackNumber(total)}%. Expected rounded total: ${formatFeedbackNumber(displayedExpectedTotal)}%.`
+    : '';
   if (hasTotal && balance === 'under' && Number.isFinite(difference)) {
     totalMessage += ` Missing ${formatFeedbackNumber(Math.abs(difference))}%.`;
   } else if (hasTotal && balance === 'over' && Number.isFinite(difference)) {
@@ -56,7 +93,7 @@ function PieFeedbackDetails({ chartData }) {
       {recordIssues.length > 0 && (
         <div style={{ marginTop: '0.45rem', display: 'grid', gap: '0.45rem' }}>
           {recordIssues.map((record, index) => {
-            const category = record.category || record.series || record.region || record.period || 'Unknown item';
+            const category = record.feedback_label || record.category || record.series || record.region || record.period || 'Unknown item';
             const studentValue = Number(record.value);
             const officialValue = Number(record.official_value);
             const hasStudentValue = record.value !== null && record.value !== '' && Number.isFinite(studentValue);
@@ -67,12 +104,12 @@ function PieFeedbackDetails({ chartData }) {
             const hasConflict = record.feedback_status === 'conflicting' && conflictingValues.length > 1;
             const delta = hasStudentValue && hasOfficialValue ? studentValue - officialValue : null;
             const studentLabel = hasConflict
-              ? conflictingValues.map((value) => `${formatFeedbackNumber(value)}%`).join(' / ')
+              ? conflictingValues.map(formatValue).join(' / ')
               : hasStudentValue
-              ? `${formatFeedbackNumber(studentValue)}%`
+              ? formatValue(studentValue)
               : 'Not mentioned';
             const officialLabel = hasOfficialValue
-              ? `${formatFeedbackNumber(officialValue)}%`
+              ? formatValue(officialValue)
               : 'Not in original chart';
 
             return (
@@ -86,7 +123,7 @@ function PieFeedbackDetails({ chartData }) {
                     <span style={{ color: '#b91c1c', fontWeight: 700 }}>Conflicting values</span>
                   ) : Number.isFinite(delta) && Math.abs(delta) > 0.05 && (
                     <span style={{ color: '#b91c1c', fontWeight: 700 }}>
-                      {delta > 0 ? '+' : ''}{formatFeedbackNumber(delta)} percentage points
+                      {delta > 0 ? '+' : ''}{formatFeedbackNumber(delta)}{deltaSuffix}
                     </span>
                   )}
                 </div>
@@ -111,7 +148,7 @@ function PieFeedbackDetails({ chartData }) {
                 </div>
                 {hasConflict && hasStudentValue && (
                   <div style={{ marginTop: '0.25rem', color: '#7f1d1d' }}>
-                    The chart uses the latest value: {formatFeedbackNumber(studentValue)}%.
+                    The chart uses the latest value: {formatValue(studentValue)}.
                   </div>
                 )}
               </div>
@@ -1618,7 +1655,7 @@ export default function App() {
                       <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'center' }}>
                         <img src={chartUrl} alt="Generated feedback chart" style={{ maxWidth: '100%', maxHeight: 300, objectFit: 'contain' }} />
                       </div>
-                      <PieFeedbackDetails chartData={chartData} />
+                      <ChartFeedbackDetails chartData={chartData} />
                     </div>
                   )}
                   {/* Chart Data (debug) block removed */}

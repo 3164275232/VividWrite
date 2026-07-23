@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,14 @@ TEXT_OUTLINE_KEYS = {
 }
 PIE_ALERT_COLOR = "#dc2626"
 PIE_ALERT_DARK = "#991b1b"
+PIE_ERROR_FILL = "#f9a8d4"
+PIE_ERROR_STROKE = "#be185d"
+PIE_ERROR_TEXT = "#701a3d"
+BAR_ERROR_FILL = "#f9a8d4"
+BAR_ERROR_STROKE = "#be185d"
+BAR_ERROR_TEXT = "#701a3d"
+PIE_PLOT_WIDTH = 600
+PIE_PLOT_HEIGHT = 420
 PIE_FALLBACK_PALETTE = [
     "#355c7d",
     "#6c5b7b",
@@ -349,19 +358,95 @@ def _number_label(value: Any) -> str:
     return f"{value:g}" if isinstance(value, (int, float)) else ""
 
 
+def _pie_hatch_segments(
+    records: list[dict],
+    angle_total: float,
+    *,
+    width: int = PIE_PLOT_WIDTH,
+    height: int = PIE_PLOT_HEIGHT,
+    radius: int = 145,
+    spacing: int = 14,
+) -> list[dict]:
+    """Generate diagonal line segments clipped to the erroneous pie sectors."""
+    sectors = [
+        (float(record["_error_start"]), float(record["_error_end"]))
+        for record in records
+        if isinstance(record.get("_error_start"), (int, float))
+        and isinstance(record.get("_error_end"), (int, float))
+    ]
+    if not sectors or angle_total <= 0:
+        return []
+
+    center_x = width / 2
+    center_y = height / 2
+
+    def is_inside_error(local_x: float, local_y: float) -> bool:
+        if local_x * local_x + local_y * local_y > radius * radius:
+            return False
+        angle = math.atan2(local_x, -local_y)
+        if angle < 0:
+            angle += 2 * math.pi
+        value_angle = angle / (2 * math.pi) * angle_total
+        return any(start <= value_angle <= end for start, end in sectors)
+
+    segments: list[dict] = []
+    for offset in range(-2 * radius, 2 * radius + 1, spacing):
+        run_start: tuple[int, int] | None = None
+        previous: tuple[int, int] | None = None
+        for local_x in range(-radius, radius + 1):
+            local_y = local_x + offset
+            point = (local_x, local_y)
+            if is_inside_error(local_x, local_y):
+                if run_start is None:
+                    run_start = point
+                previous = point
+                continue
+            if run_start is not None and previous is not None:
+                segments.append(
+                    {
+                        "_hatch_x": center_x + run_start[0],
+                        "_hatch_y": center_y + run_start[1],
+                        "_hatch_x2": center_x + previous[0],
+                        "_hatch_y2": center_y + previous[1],
+                    }
+                )
+            run_start = None
+            previous = None
+        if run_start is not None and previous is not None:
+            segments.append(
+                {
+                    "_hatch_x": center_x + run_start[0],
+                    "_hatch_y": center_y + run_start[1],
+                    "_hatch_x2": center_x + previous[0],
+                    "_hatch_y2": center_y + previous[1],
+                }
+            )
+    return segments
+
+
 def _prepare_pie_chart(
     records: list[dict], unit: str, palette: list[str] | None
 ) -> tuple[dict, list[dict]]:
     label_field = _pie_label_field(records)
     values = [record.get("value") for record in records]
     student_total = sum(float(value) for value in values if isinstance(value, (int, float)))
+    official_values = [
+        float(record["official_value"])
+        for record in records
+        if isinstance(record.get("official_value"), (int, float))
+    ]
     values_are_percentages = (
         "%" in unit
         or "percent" in unit.lower()
         or any(isinstance(record.get("official_value"), (int, float)) for record in records)
     )
+    expected_total = sum(official_values) if official_values else 100.0
+    total_tolerance = 0.0
+    total_within_tolerance = abs(student_total - expected_total) <= total_tolerance
     angle_total = (
-        max(100.0, student_total)
+        max(student_total, 1.0)
+        if values_are_percentages and total_within_tolerance
+        else max(expected_total, student_total, 1.0)
         if values_are_percentages
         else max(student_total, 1.0)
     )
@@ -403,18 +488,18 @@ def _prepare_pie_chart(
             record["_display_label"] = (
                 f"{category}\nCONFLICT: {conflict_label}\nCORRECT: {official_value}%"
             ).strip()
-            record["_label_color"] = "white"
+            record["_label_color"] = PIE_ERROR_TEXT
         elif status == "incorrect":
             official_value = _number_label(record.get("official_value"))
             correction = f"\nCORRECT: {official_value}%" if official_value else "\nINCORRECT VALUE"
             record["_display_label"] = f"{category}\nYOU: {displayed_value}{correction}".strip()
-            record["_label_color"] = "white"
+            record["_label_color"] = PIE_ERROR_TEXT
         elif status == "missing":
             record["_display_label"] = None
             record["_label_color"] = PIE_ALERT_DARK
         elif status == "unexpected":
             record["_display_label"] = f"{category} {displayed_value}\nNot in source".strip()
-            record["_label_color"] = "white"
+            record["_label_color"] = PIE_ERROR_TEXT
             record["_display_color"] = PIE_ALERT_COLOR
         else:
             record["_display_label"] = f"{category} {displayed_value}".strip()
@@ -431,8 +516,8 @@ def _prepare_pie_chart(
                     record["_error_end"] = record["_main_end"]
                 cumulative += drawable
 
-    if values_are_percentages and student_total < 99.5:
-        gap = max(0.0, 100.0 - student_total)
+    if values_are_percentages and student_total < expected_total - total_tolerance:
+        gap = max(0.0, expected_total - student_total)
         gap_label = _number_label(gap)
         labelled_records.append(
             {
@@ -448,8 +533,8 @@ def _prepare_pie_chart(
                 "_display_label": f"MISSING {gap_label}%",
                 "_label_color": "white",
                 "_main_start": max(0.0, student_total),
-                "_main_end": 100.0,
-                "_label_mid": (max(0.0, student_total) + 100.0) / 2,
+                "_main_end": expected_total,
+                "_label_mid": (max(0.0, student_total) + expected_total) / 2,
                 "_error_start": None,
                 "_error_end": None,
                 "_excess_start": None,
@@ -458,19 +543,24 @@ def _prepare_pie_chart(
                 "_excess_label": None,
             }
         )
-    elif values_are_percentages and student_total > 100.5:
-        excess = student_total - 100.0
+    elif values_are_percentages and student_total > expected_total + total_tolerance:
+        excess = student_total - expected_total
         excess_label = _number_label(excess)
+        excess_category = (
+            "Excess over 100%"
+            if abs(expected_total - 100.0) < 0.001
+            else "Excess over expected rounded total"
+        )
         labelled_records.append(
             {
-                "category": "Excess over 100%",
+                "category": excess_category,
                 "series": None,
                 "value": None,
                 "missing": False,
                 "incorrect": True,
                 "feedback_status": "excess_total",
                 "_order": len(labelled_records),
-                "_legend_label": f"Excess over 100%: {excess_label}%",
+                "_legend_label": f"{excess_category}: {excess_label}%",
                 "_display_color": PIE_ALERT_DARK,
                 "_display_label": None,
                 "_label_color": PIE_ALERT_DARK,
@@ -519,10 +609,10 @@ def _prepare_pie_chart(
                 "mark": {
                     "type": "arc",
                     "outerRadius": 145,
-                    "color": PIE_ALERT_COLOR,
-                    "opacity": 0.48,
-                    "stroke": PIE_ALERT_DARK,
-                    "strokeWidth": 5,
+                    "color": PIE_ERROR_FILL,
+                    "opacity": 1,
+                    "stroke": PIE_ERROR_STROKE,
+                    "strokeWidth": 4,
                 },
                 "encoding": {
                     "theta": {
@@ -531,6 +621,35 @@ def _prepare_pie_chart(
                         "scale": {"domain": [0, angle_total]},
                     },
                     "theta2": {"field": "_error_end"},
+                },
+            }
+        )
+        hatch_records = _pie_hatch_segments(labelled_records, angle_total)
+        labelled_records.extend(hatch_records)
+        layers.append(
+            {
+                "mark": {
+                    "type": "rule",
+                    "stroke": PIE_ERROR_STROKE,
+                    "strokeWidth": 1.5,
+                    "opacity": 0.52,
+                    "clip": True,
+                },
+                "encoding": {
+                    "x": {
+                        "field": "_hatch_x",
+                        "type": "quantitative",
+                        "scale": {"domain": [0, PIE_PLOT_WIDTH]},
+                        "axis": None,
+                    },
+                    "y": {
+                        "field": "_hatch_y",
+                        "type": "quantitative",
+                        "scale": {"domain": [PIE_PLOT_HEIGHT, 0]},
+                        "axis": None,
+                    },
+                    "x2": {"field": "_hatch_x2"},
+                    "y2": {"field": "_hatch_y2"},
                 },
             }
         )
@@ -577,6 +696,114 @@ def _prepare_pie_chart(
     return {"layer": layers}, labelled_records
 
 
+def _find_bar_encoding(spec: dict) -> dict | None:
+    shared_encoding = spec.get("encoding") if isinstance(spec.get("encoding"), dict) else {}
+    if _mark_type(spec.get("mark")) == "bar":
+        return copy.deepcopy(shared_encoding)
+    layers = spec.get("layer")
+    if not isinstance(layers, list):
+        return None
+    for layer in layers:
+        if not isinstance(layer, dict):
+            continue
+        if _mark_type(layer.get("mark")) == "bar":
+            encoding = copy.deepcopy(shared_encoding)
+            if isinstance(layer.get("encoding"), dict):
+                encoding.update(copy.deepcopy(layer["encoding"]))
+            return encoding
+    return None
+
+
+def _bar_value_channel(encoding: dict) -> str | None:
+    for channel in ("y", "x"):
+        definition = encoding.get(channel)
+        if (
+            isinstance(definition, dict)
+            and definition.get("type") == "quantitative"
+            and definition.get("field") in {"value", "x", "y"}
+        ):
+            return channel
+    return None
+
+
+def _prepare_bar_feedback(spec: dict, records: list[dict]) -> tuple[dict, list[dict]]:
+    """Overlay clearly differentiated marks only on incorrect student bars."""
+    issue_statuses = {"incorrect", "conflicting"}
+    if not any(record.get("feedback_status") in issue_statuses for record in records):
+        return spec, records
+
+    encoding = _find_bar_encoding(spec)
+    if encoding is None:
+        return spec, records
+    value_channel = _bar_value_channel(encoding)
+    if value_channel is None:
+        return spec, records
+
+    render_records = copy.deepcopy(records)
+    for record in render_records:
+        is_error = record.get("feedback_status") in issue_statuses
+        record["_bar_error_value"] = record.get("value") if is_error else None
+        if is_error:
+            student = _number_label(record.get("value"))
+            official = _number_label(record.get("official_value"))
+            record["_bar_feedback_label"] = f"YOU: {student}\nCORRECT: {official}"
+        else:
+            record["_bar_feedback_label"] = None
+
+    overlay_encoding = copy.deepcopy(encoding)
+    value_definition = copy.deepcopy(overlay_encoding[value_channel])
+    original_value_field = str(value_definition.get("field") or "value")
+    value_definition["field"] = "_bar_error_value"
+    value_definition["title"] = value_definition.get("title") or original_value_field
+    overlay_encoding[value_channel] = value_definition
+    for channel in ("color", "fill", "stroke", "opacity"):
+        overlay_encoding.pop(channel, None)
+
+    text_encoding = {
+        channel: copy.deepcopy(definition)
+        for channel, definition in overlay_encoding.items()
+        if channel in {"x", "y", "xOffset", "yOffset", "column", "row"}
+    }
+    text_encoding["text"] = {"field": "_bar_feedback_label", "type": "nominal"}
+
+    overlay_layer = {
+        "mark": {
+            "type": "bar",
+            "color": BAR_ERROR_FILL,
+            "stroke": BAR_ERROR_STROKE,
+            "strokeWidth": 2.5,
+            "strokeDash": [6, 3],
+            "opacity": 1,
+        },
+        "encoding": overlay_encoding,
+    }
+    text_mark: dict[str, Any] = {
+        "type": "text",
+        "color": BAR_ERROR_TEXT,
+        "fontSize": 11,
+        "fontWeight": "bold",
+        "lineBreak": "\n",
+        "lineHeight": 13,
+    }
+    if value_channel == "y":
+        text_mark.update({"dy": -10, "baseline": "bottom"})
+    else:
+        text_mark.update({"dx": 7, "align": "left"})
+    label_layer = {"mark": text_mark, "encoding": text_encoding}
+
+    prepared = copy.deepcopy(spec)
+    if isinstance(prepared.get("layer"), list):
+        prepared["layer"].extend([overlay_layer, label_layer])
+    else:
+        base_layer = {
+            key: value
+            for key, value in prepared.items()
+            if key not in {"data", "title", "width", "height", "autosize", "config", "$schema"}
+        }
+        prepared = {"layer": [base_layer, overlay_layer, label_layer]}
+    return prepared, render_records
+
+
 def prepare_vega_lite_spec(
     spec: dict,
     records: list[dict],
@@ -599,6 +826,8 @@ def prepare_vega_lite_spec(
         _validate_tree(prepared)
         _remove_nested_data(prepared)
         render_records = records
+        if chart_type == "bar":
+            prepared, render_records = _prepare_bar_feedback(prepared, records)
     _validate_tree(prepared)
     _remove_text_outlines(prepared)
     if chart_type == "line":
@@ -608,9 +837,14 @@ def prepare_vega_lite_spec(
     prepared["$schema"] = "https://vega.github.io/schema/vega-lite/v6.json"
     prepared["data"] = {"values": render_records}
     prepared["title"] = title or "Student answer visualisation"
-    prepared["width"] = 760
-    prepared["height"] = 420
-    prepared["autosize"] = {"type": "fit", "contains": "padding"}
+    if chart_type == "pie":
+        prepared["width"] = PIE_PLOT_WIDTH
+        prepared["height"] = PIE_PLOT_HEIGHT
+        prepared["autosize"] = {"type": "pad", "contains": "padding"}
+    else:
+        prepared["width"] = 760
+        prepared["height"] = 420
+        prepared["autosize"] = {"type": "fit", "contains": "padding"}
     if not isinstance(prepared.get("config"), dict):
         prepared["config"] = {}
     prepared["config"].update(

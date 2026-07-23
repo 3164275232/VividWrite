@@ -7,7 +7,13 @@ from types import SimpleNamespace
 from PIL import Image, ImageDraw
 
 from chart_detection import detect_chart_type
-from chart_feedback import ChartFeedbackService, _annotate_pie_accuracy, _normalise_result
+from chart_feedback import (
+    ChartFeedbackService,
+    _annotate_bar_accuracy,
+    _annotate_line_accuracy,
+    _annotate_pie_accuracy,
+    _normalise_result,
+)
 from chart_renderer import InvalidChartSpec, extract_image_palette, prepare_vega_lite_spec
 
 
@@ -142,6 +148,205 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(color["scale"]["range"], ["#1f77b4", "#ff7f0e", "#2ca02c"])
         self.assertEqual(prepared["encoding"]["x"]["axis"]["labelAngle"], 0)
 
+    def test_bar_accuracy_is_compared_with_official_cells_locally(self):
+        result = {
+            "chart_type": "bar",
+            "records": [
+                {"category": "Bristol", "series": "2015", "value": 47.0},
+                {"category": "Bristol", "series": "2020", "value": 55.0},
+                {"category": "Leeds", "series": "2015", "value": 35.0},
+                {"category": "Leeds", "series": "2020", "value": None},
+            ],
+            "comparison": {"omitted_official_items": []},
+        }
+
+        _annotate_bar_accuracy(
+            result,
+            "City | 2015 | 2020<0x0A>Bristol | 42 | 55<0x0A>Leeds | 35 | 48",
+        )
+
+        bristol_2015 = result["records"][0]
+        leeds_2020 = result["records"][3]
+        self.assertEqual(bristol_2015["feedback_status"], "incorrect")
+        self.assertEqual(bristol_2015["official_value"], 42.0)
+        self.assertEqual(bristol_2015["feedback_label"], "Bristol - 2015")
+        self.assertEqual(result["records"][1]["feedback_status"], "correct")
+        self.assertEqual(leeds_2020["feedback_status"], "unmentioned")
+        self.assertIn("Leeds - 2020", result["comparison"]["omitted_official_items"])
+        self.assertNotIn("Leeds - 2020", " ".join(result["comparison"]["incorrect_official_items"]))
+
+    def test_bar_accuracy_matches_transposed_model_fields_without_false_issues(self):
+        result = {
+            "chart_type": "bar",
+            "records": [
+                {"category": "2015", "period": "2015", "series": "Bristol", "value": 41.7},
+                {"category": "2020", "period": "2020", "series": "Bristol", "value": 55.2},
+                {"category": "2015", "period": "2015", "series": "Leeds", "value": 35.3},
+                {"category": "2020", "period": "2020", "series": "Leeds", "value": 48.2},
+            ],
+            "comparison": {"omitted_official_items": []},
+        }
+
+        _annotate_bar_accuracy(
+            result,
+            "City | 2015 | 2020<0x0A>Bristol | 41.7 | 55.2<0x0A>Leeds | 35.3 | 48.2",
+        )
+
+        self.assertEqual(len(result["records"]), 4)
+        self.assertTrue(all(record["feedback_status"] == "correct" for record in result["records"]))
+        self.assertEqual(result["comparison"]["incorrect_official_items"], [])
+
+    def test_unmentioned_bar_cells_are_not_reported_as_errors(self):
+        result = {
+            "chart_type": "bar",
+            "records": [
+                {"category": "Bristol", "series": "2015", "value": 42.0},
+            ],
+            "comparison": {"omitted_official_items": []},
+        }
+
+        _annotate_bar_accuracy(
+            result,
+            "City | 2015 | 2020<0x0A>Bristol | 42 | 55",
+        )
+
+        self.assertEqual(result["records"][1]["feedback_status"], "unmentioned")
+        self.assertFalse(result["records"][1]["incorrect"])
+        self.assertEqual(result["comparison"]["incorrect_official_items"], [])
+
+    def test_percentage_bar_values_within_one_point_are_accepted(self):
+        result = {
+            "chart_type": "bar",
+            "axes": {"unit": "%", "y_label": "Recycling rate (%)"},
+            "records": [
+                {"category": "Leeds", "series": "2020", "value": 49.0},
+            ],
+            "comparison": {"omitted_official_items": []},
+        }
+
+        _annotate_bar_accuracy(
+            result,
+            "City | 2020<0x0A>Leeds | 48.16",
+        )
+
+        self.assertEqual(result["records"][0]["feedback_status"], "correct")
+        self.assertEqual(result["records"][0]["official_value"], 48.0)
+        self.assertFalse(result["records"][0]["incorrect"])
+        self.assertEqual(result["comparison"]["incorrect_official_items"], [])
+        self.assertEqual(result["comparison"]["accepted_value_tolerance"], 2.0)
+        self.assertEqual(
+            result["comparison"]["accepted_value_tolerance_unit"],
+            "percentage points",
+        )
+
+    def test_percentage_bar_values_outside_two_points_are_incorrect(self):
+        result = {
+            "chart_type": "bar",
+            "axes": {"unit": "%", "y_label": "Recycling rate (%)"},
+            "records": [
+                {"category": "Leeds", "series": "2020", "value": 51.0},
+            ],
+            "comparison": {"omitted_official_items": []},
+        }
+
+        _annotate_bar_accuracy(
+            result,
+            "City | 2020<0x0A>Leeds | 48.16",
+        )
+
+        self.assertEqual(result["records"][0]["feedback_status"], "incorrect")
+        self.assertTrue(result["records"][0]["incorrect"])
+
+    def test_small_scale_line_values_keep_decimals_and_use_tighter_tolerance(self):
+        result = {
+            "chart_type": "line",
+            "axes": {"unit": "millions", "y_label": "Passengers"},
+            "records": [
+                {"period": "2010", "series": "Bus", "value": 1.9, "estimated": False},
+                {"period": "2015", "series": "Bus", "value": 1.7, "estimated": False},
+                {"period": "2020", "series": "Bus", "value": 1.5, "estimated": False},
+            ],
+            "comparison": {"omitted_official_items": []},
+        }
+
+        _annotate_line_accuracy(
+            result,
+            "Year | Bus<0x0A>2010 | 1.8<0x0A>2015 | 1.8<0x0A>2020 | 1.3",
+        )
+
+        self.assertEqual(result["records"][0]["feedback_status"], "correct")
+        self.assertEqual(result["records"][1]["feedback_status"], "correct")
+        self.assertEqual(result["records"][2]["feedback_status"], "incorrect")
+        self.assertEqual(result["records"][0]["official_value"], 1.8)
+        self.assertEqual(result["records"][2]["official_value"], 1.3)
+        self.assertEqual(result["comparison"]["accepted_value_tolerance"], 0.1)
+        self.assertEqual(result["comparison"]["official_value_precision"], 1)
+
+    def test_estimated_line_points_are_not_treated_as_explicit_errors(self):
+        result = {
+            "chart_type": "line",
+            "axes": {"unit": "millions", "y_label": "Passengers"},
+            "records": [
+                {"period": "2010", "series": "Bus", "value": 10.0, "estimated": True},
+            ],
+            "comparison": {"omitted_official_items": []},
+        }
+
+        _annotate_line_accuracy(
+            result,
+            "Year | Bus<0x0A>2010 | 1.8",
+        )
+
+        self.assertEqual(result["records"][0]["feedback_status"], "estimated")
+        self.assertFalse(result["records"][0]["incorrect"])
+        self.assertEqual(result["comparison"]["incorrect_official_items"], [])
+
+    def test_incorrect_bar_gets_a_pink_dashed_overlay_and_direct_comparison_label(self):
+        prepared = prepare_vega_lite_spec(
+            {
+                "mark": "bar",
+                "encoding": {
+                    "x": {"field": "category", "type": "ordinal"},
+                    "xOffset": {"field": "series", "type": "nominal"},
+                    "y": {"field": "value", "type": "quantitative"},
+                    "color": {"field": "series", "type": "nominal"},
+                },
+            },
+            [
+                {
+                    "category": "Bristol",
+                    "series": "2015",
+                    "value": 47.0,
+                    "official_value": 42.0,
+                    "feedback_status": "incorrect",
+                },
+                {
+                    "category": "Bristol",
+                    "series": "2020",
+                    "value": 55.0,
+                    "official_value": 55.0,
+                    "feedback_status": "correct",
+                },
+            ],
+            "Recycling",
+            chart_type="bar",
+            unit="%",
+        )
+
+        self.assertEqual(len(prepared["layer"]), 3)
+        overlay = prepared["layer"][1]
+        label = prepared["layer"][2]
+        self.assertEqual(overlay["mark"]["color"], "#f9a8d4")
+        self.assertEqual(overlay["mark"]["strokeDash"], [6, 3])
+        self.assertNotIn("color", overlay["encoding"])
+        self.assertEqual(overlay["encoding"]["y"]["field"], "_bar_error_value")
+        self.assertEqual(label["mark"]["color"], "#701a3d")
+        self.assertEqual(
+            prepared["data"]["values"][0]["_bar_feedback_label"],
+            "YOU: 47\nCORRECT: 42",
+        )
+        self.assertIsNone(prepared["data"]["values"][1]["_bar_error_value"])
+
     def test_palette_follows_source_legend_instead_of_bar_area(self):
         source = Path(__file__).parents[2] / "test_samples" / "charts" / "01_bar_recycling_rates.png"
         palette = extract_image_palette(source)
@@ -227,8 +432,8 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         result = {
             "chart_type": "pie",
             "records": [
-                {"category": "Housing", "value": 30.0, "missing": False},
-                {"category": "Food", "value": 23.0, "missing": False},
+                {"category": "Housing", "value": 29.0, "missing": False},
+                {"category": "Food", "value": 24.0, "missing": False},
             ],
             "comparison": {"omitted_official_items": []},
         }
@@ -244,6 +449,46 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertTrue(result["records"][2]["missing"])
         self.assertEqual(result["comparison"]["student_percentage_total"], 53.0)
         self.assertEqual(result["comparison"]["percentage_balance"], "under")
+
+    def test_pie_uses_rounded_official_values_without_tolerance(self):
+        result = {
+            "chart_type": "pie",
+            "records": [
+                {"category": "Housing", "value": 48.0, "missing": False},
+                {"category": "Other", "value": 52.0, "missing": False},
+            ],
+            "comparison": {"omitted_official_items": []},
+        }
+
+        _annotate_pie_accuracy(
+            result,
+            "Category | Percentage<0x0A>Housing | 48.12%<0x0A>Other | 51.88%",
+        )
+
+        self.assertEqual(result["records"][0]["official_value"], 48.0)
+        self.assertEqual(result["records"][1]["official_value"], 52.0)
+        self.assertTrue(all(record["feedback_status"] == "correct" for record in result["records"]))
+        self.assertEqual(result["comparison"]["expected_percentage_total"], 100.0)
+        self.assertEqual(result["comparison"]["accepted_value_tolerance"], 0.0)
+
+    def test_pie_rejects_even_a_one_point_difference(self):
+        result = {
+            "chart_type": "pie",
+            "records": [
+                {"category": "Housing", "value": 49.0, "missing": False},
+                {"category": "Other", "value": 51.0, "missing": False},
+            ],
+            "comparison": {"omitted_official_items": []},
+        }
+
+        _annotate_pie_accuracy(
+            result,
+            "Category | Percentage<0x0A>Housing | 48.12%<0x0A>Other | 51.88%",
+        )
+
+        self.assertEqual(result["records"][0]["official_value"], 48.0)
+        self.assertTrue(result["records"][0]["incorrect"])
+        self.assertEqual(result["records"][0]["feedback_status"], "incorrect")
 
     def test_explicit_pie_percentage_restores_a_model_omission(self):
         payload = _model_payload("pie")
@@ -333,6 +578,56 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(result["comparison"]["percentage_balance"], "complete")
         self.assertEqual(result["comparison"]["incorrect_official_items"], [])
 
+    def test_direct_value_is_kept_when_the_same_sentence_has_an_aggregate_percentage(self):
+        payload = _model_payload("pie")
+        payload["title"] = "Average household expenditure in Canada, 2024"
+        payload["axes"] = {"x_label": "", "y_label": "", "unit": "%"}
+        payload["records"] = [
+            {"category": "Housing", "value": 32, "confidence": 1},
+            {"category": "Food", "value": 21, "confidence": 1},
+            {"category": "Transport", "value": 17, "confidence": 1},
+            {"category": "Leisure", "value": 12, "confidence": 1},
+            {"category": "Utilities", "value": 10, "confidence": 1},
+            {"category": "Other", "value": 8, "confidence": 1},
+        ]
+        payload["vega_lite_spec"] = {"mark": "arc", "encoding": {}}
+        client = FakeClient(payload)
+
+        with tempfile.TemporaryDirectory() as folder:
+            result, _ = ChartFeedbackService(folder, client=client).generate(
+                chart_type="pie",
+                requirement="Summarise the chart.",
+                student_answer=(
+                    "Housing dominated the breakdown at 32%. Food was the second most substantial "
+                    "cost, claiming 21% of the average household budget. Transport followed at 47%, "
+                    "meaning that these top three categories together absorbed exactly 70% of total "
+                    "spending. The remaining 30% was distributed among leisure, which accounted for "
+                    "12%, utilities at 10%, and a miscellaneous other segment representing 8%. "
+                    "Furthermore, the combined spending on food and transport, at 38%, exceeded the "
+                    "housing share."
+                ),
+                deplot_text=(
+                    "Category | Percentage<0x0A>Housing | 32%<0x0A>Food | 21%"
+                    "<0x0A>Transport | 17%<0x0A>Leisure | 12%<0x0A>Utilities | 10%"
+                    "<0x0A>Other | 8%"
+                ),
+            )
+
+        transport = next(record for record in result["records"] if record["category"] == "Transport")
+        rendered_transport = next(
+            record for record in result["vega_lite_spec"]["data"]["values"]
+            if record.get("category") == "Transport"
+        )
+        self.assertEqual(transport["value"], 47.0)
+        self.assertEqual(transport["official_value"], 17.0)
+        self.assertEqual(transport["feedback_status"], "incorrect")
+        self.assertEqual(result["comparison"]["student_percentage_total"], 130.0)
+        self.assertEqual(result["comparison"]["percentage_balance"], "over")
+        self.assertEqual(
+            rendered_transport["_display_label"],
+            "Transport\nYOU: 47%\nCORRECT: 17%",
+        )
+
     def test_pie_synonym_conflict_uses_latest_value_and_reports_both_claims(self):
         payload = _model_payload("pie")
         payload["title"] = "Average household expenditure in Canada, 2024"
@@ -416,15 +711,30 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
             unit="%",
         )
 
-        self.assertEqual([layer["mark"]["type"] for layer in prepared["layer"]], ["arc", "arc", "text"])
+        self.assertEqual(
+            [layer["mark"]["type"] for layer in prepared["layer"]],
+            ["arc", "arc", "rule", "text"],
+        )
         error_layer = prepared["layer"][1]
-        self.assertEqual(error_layer["mark"]["color"], "#dc2626")
-        self.assertEqual(error_layer["mark"]["stroke"], "#991b1b")
-        self.assertEqual(error_layer["mark"]["opacity"], 0.48)
+        hatch_layer = prepared["layer"][2]
+        self.assertEqual(error_layer["mark"]["color"], "#f9a8d4")
+        self.assertEqual(error_layer["mark"]["stroke"], "#be185d")
+        self.assertEqual(error_layer["mark"]["opacity"], 1)
+        self.assertEqual(hatch_layer["mark"]["type"], "rule")
+        self.assertEqual(hatch_layer["mark"]["stroke"], "#be185d")
+        self.assertEqual(hatch_layer["encoding"]["x"]["scale"]["domain"], [0, 600])
+        self.assertEqual(hatch_layer["encoding"]["y"]["scale"]["domain"], [420, 0])
+        self.assertGreater(
+            len([record for record in prepared["data"]["values"] if record.get("_hatch_x") is not None]),
+            0,
+        )
         self.assertEqual(
             prepared["data"]["values"][0]["_display_label"],
             "Housing\nYOU: 30%\nCORRECT: 32%",
         )
+        self.assertEqual(prepared["data"]["values"][0]["_label_color"], "#701a3d")
+        self.assertEqual((prepared["width"], prepared["height"]), (600, 420))
+        self.assertEqual(prepared["autosize"], {"type": "pad", "contains": "padding"})
         self.assertEqual(prepared["title"], "Spending")
 
     def test_pie_total_over_100_uses_a_separate_excess_ring(self):
@@ -451,21 +761,49 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
             unit="%",
         )
 
-        excess = prepared["data"]["values"][-1]
+        excess = next(
+            record for record in prepared["data"]["values"]
+            if record.get("feedback_status") == "excess_total"
+        )
         self.assertEqual(excess["feedback_status"], "excess_total")
         self.assertEqual((excess["_excess_start"], excess["_excess_end"]), (0.0, 10.0))
         self.assertEqual(excess["_legend_label"], "Excess over 100%: 10%")
         self.assertEqual(
             [layer["mark"]["type"] for layer in prepared["layer"]],
-            ["arc", "arc", "arc", "text"],
+            ["arc", "arc", "rule", "arc", "text"],
         )
         error_layer = prepared["layer"][1]
-        excess_layer = prepared["layer"][2]
+        excess_layer = prepared["layer"][3]
         self.assertEqual(error_layer["mark"]["outerRadius"], 145)
-        self.assertEqual(error_layer["mark"]["stroke"], "#991b1b")
+        self.assertEqual(error_layer["mark"]["stroke"], "#be185d")
         self.assertEqual((excess_layer["mark"]["innerRadius"], excess_layer["mark"]["outerRadius"]), (165, 177))
         self.assertFalse(any(record.get("_excess_label") for record in prepared["data"]["values"]))
         self.assertEqual(prepared["title"], "Spending")
+
+    def test_rounded_pie_total_of_99_is_not_shown_as_missing(self):
+        prepared = prepare_vega_lite_spec(
+            {"mark": "arc", "encoding": {}},
+            [
+                {
+                    "category": category,
+                    "value": 33.0,
+                    "official_value": 33.0,
+                    "feedback_status": "correct",
+                }
+                for category in ("A", "B", "C")
+            ],
+            "Rounded shares",
+            chart_type="pie",
+            unit="%",
+        )
+
+        self.assertFalse(
+            any(
+                record.get("feedback_status") == "missing_total"
+                for record in prepared["data"]["values"]
+            )
+        )
+        self.assertEqual(prepared["layer"][0]["encoding"]["theta"]["scale"]["domain"], [0, 99.0])
 
     def test_pie_labels_have_no_text_outline(self):
         prepared = prepare_vega_lite_spec(

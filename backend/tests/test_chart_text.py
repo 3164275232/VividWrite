@@ -8,10 +8,14 @@ from chart_text import (
     InvalidExtractedChartData,
     add_chart_type_metadata,
     build_table_fact_checks,
+    infer_deplot_value_precision,
     normalize_deplot_numeric_precision,
     normalize_pie_deplot_text,
+    parse_numeric_chart_table,
     parse_series_framework,
     parse_validated_pie_table,
+    round_chart_value,
+    round_deplot_table_values,
 )
 
 
@@ -30,6 +34,47 @@ ISOLATED_PLOT_TEXT = (
 
 
 class ChartTextTests(unittest.TestCase):
+    def test_deplot_values_use_conventional_integer_rounding(self):
+        rounded = round_deplot_table_values(
+            "TITLE | Recycling<0x0A>Year | City A | City B<0x0A>"
+            "2015 | 48.12% | 48.50%<0x0A>2020 | 49.51% | 46%"
+        )
+
+        self.assertEqual(round_chart_value(48.5), 49.0)
+        self.assertIn("2015 | 48% | 49%", rounded)
+        self.assertIn("2020 | 50% | 46%", rounded)
+
+    def test_small_scale_deplot_values_keep_meaningful_decimals(self):
+        rounded = round_deplot_table_values(
+            "TITLE | Passengers<0x0A>Year | Bus | Rail<0x0A>"
+            "2010 | 1.8 | 1.1<0x0A>2020 | 1.3 | 2.2",
+            chart_type="line",
+        )
+
+        self.assertEqual(
+            infer_deplot_value_precision(rounded, "line"),
+            1,
+        )
+        self.assertIn("2010 | 1.8 | 1.1", rounded)
+        self.assertIn("2020 | 1.3 | 2.2", rounded)
+
+    def test_numeric_chart_table_supports_single_and_grouped_bar_series(self):
+        single = parse_numeric_chart_table(
+            "TITLE | Calls<0x0A>Year | Local<0x0A>2001 | 72<0x0A>2002 | 75"
+        )
+        grouped = parse_numeric_chart_table(
+            "City | 2015 | 2020<0x0A>Bristol | 42 | 55<0x0A>Leeds | 35 | 48"
+        )
+
+        self.assertEqual(
+            single,
+            [
+                {"axis_label": "Year", "category": "2001", "series": "Local", "value": 72.0},
+                {"axis_label": "Year", "category": "2002", "series": "Local", "value": 75.0},
+            ],
+        )
+        self.assertEqual(grouped[3]["value"], 48.0)
+
     def test_line_table_snaps_deplot_noise_to_the_shared_tenth_grid(self):
         raw = (
             "TITLE | Passengers<0x0A>Year | Bus | Rail | Metro<0x0A>"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal, ROUND_HALF_UP
 from difflib import get_close_matches
 
 
@@ -42,6 +43,105 @@ def _key(value: str) -> str:
 
 def _format_number(value: float) -> str:
     return str(int(value)) if value.is_integer() else f"{value:g}"
+
+
+def round_chart_value(value: float | int | str) -> float:
+    """Round chart data to the nearest integer using conventional half-up rounding."""
+    return float(Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def quantize_chart_value(value: float | int | str, precision: int = 0) -> float:
+    """Round a chart value to the selected decimal precision using half-up rounding."""
+    safe_precision = max(0, min(6, int(precision)))
+    quantum = Decimal("1").scaleb(-safe_precision)
+    return float(Decimal(str(value)).quantize(quantum, rounding=ROUND_HALF_UP))
+
+
+def infer_deplot_value_precision(text: str, chart_type: str | None = None) -> int:
+    """Choose readable precision without erasing trends in small-scale charts."""
+    if (chart_type or "").casefold() == "pie":
+        return 0
+
+    rows = [_cells(line) for line in _lines(text)]
+    header_index = next(
+        (
+            index
+            for index, cells in enumerate(rows)
+            if len(cells) >= 2
+            and cells[0].casefold() not in {"title", "chart type"}
+            and any(
+                len(candidate) >= 2
+                and any(_NUMERIC_CELL_RE.match(cell) for cell in candidate[1:])
+                for candidate in rows[index + 1 :]
+            )
+        ),
+        None,
+    )
+    if header_index is None:
+        return 0
+
+    numeric_tokens: list[str] = []
+    for cells in rows[header_index + 1 :]:
+        for cell in cells[1:]:
+            match = _NUMERIC_CELL_RE.match(cell)
+            if match:
+                numeric_tokens.append(match.group("value"))
+    if not numeric_tokens:
+        return 0
+
+    max_magnitude = max(abs(float(value)) for value in numeric_tokens)
+    if max_magnitude >= 10:
+        return 0
+
+    observed_precision = max(
+        (
+            len(value.partition(".")[2].rstrip("0"))
+            if "." in value
+            else 0
+        )
+        for value in numeric_tokens
+    )
+    return max(1, min(3, observed_precision))
+
+
+def round_deplot_table_values(
+    text: str,
+    *,
+    precision: int | None = None,
+    chart_type: str | None = None,
+) -> str:
+    """Normalize data cells while preserving row labels such as years."""
+    rows = [_cells(line) for line in _lines(text)]
+    header_index = next(
+        (
+            index
+            for index, cells in enumerate(rows)
+            if len(cells) >= 2
+            and cells[0].casefold() not in {"title", "chart type"}
+            and any(
+                len(candidate) >= 2
+                and any(_NUMERIC_CELL_RE.match(cell) for cell in candidate[1:])
+                for candidate in rows[index + 1 :]
+            )
+        ),
+        None,
+    )
+    if header_index is None:
+        return "\n".join(" | ".join(cells) for cells in rows)
+
+    selected_precision = (
+        infer_deplot_value_precision(text, chart_type)
+        if precision is None
+        else max(0, min(6, int(precision)))
+    )
+    for cells in rows[header_index + 1 :]:
+        for column_index in range(1, len(cells)):
+            match = _NUMERIC_CELL_RE.match(cells[column_index])
+            if match is None:
+                continue
+            rounded = quantize_chart_value(match.group("value"), selected_precision)
+            cells[column_index] = f"{_format_number(rounded)}{match.group('suffix')}"
+    return "\n".join(" | ".join(cells) for cells in rows)
 
 
 def add_chart_type_metadata(text: str, chart_type: str | None) -> str:
@@ -123,6 +223,50 @@ def parse_series_framework(text: str) -> list[tuple[str, str]]:
             continue
         framework.extend((cells[0], name) for name in series)
     return framework
+
+
+def parse_numeric_chart_table(text: str) -> list[dict]:
+    """Return validated long-form cells from a DePlot-style numeric table."""
+    rows = [_cells(line) for line in _lines(text)]
+    header_index = next(
+        (
+            index
+            for index, cells in enumerate(rows)
+            if len(cells) >= 2
+            and cells[0].casefold() not in {"title", "chart type"}
+            and any(
+                len(candidate) >= 2
+                and any(_NUMERIC_CELL_RE.match(cell) for cell in candidate[1:])
+                for candidate in rows[index + 1 :]
+            )
+        ),
+        None,
+    )
+    if header_index is None:
+        return []
+
+    header = rows[header_index]
+    axis_label = header[0]
+    series_names = header[1:]
+    records: list[dict] = []
+    for cells in rows[header_index + 1 :]:
+        if not cells or not cells[0]:
+            continue
+        for column_index, series in enumerate(series_names, start=1):
+            if not series or column_index >= len(cells):
+                continue
+            match = _NUMERIC_CELL_RE.match(cells[column_index])
+            if match is None:
+                continue
+            records.append(
+                {
+                    "axis_label": axis_label,
+                    "category": cells[0],
+                    "series": series,
+                    "value": float(match.group("value")),
+                }
+            )
+    return records
 
 
 def build_table_fact_checks(text: str) -> str:

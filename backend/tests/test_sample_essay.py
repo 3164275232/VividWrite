@@ -37,12 +37,96 @@ class SampleEssayTests(unittest.TestCase):
         with patch("sample_essay.get_deepseek_client", return_value=client):
             response = generate_sample_essay(request)
 
-        self.assertTrue(response.success)
+        self.assertTrue(response.success, response.error)
         self.assertEqual(captured["temperature"], 0.2)
         self.assertIn("never as a table", captured["messages"][0]["content"])
         self.assertIn("ORIGINAL VISUAL TYPE:\nLine graph", captured["messages"][1]["content"])
         self.assertIn("2020 ranking: Rail (2.2) > Bus (1.3)", captured["messages"][1]["content"])
+        self.assertIn("2010 | 1.8 | 1.1", captured["messages"][1]["content"])
+        self.assertIn("retain up to 1 decimal place", captured["messages"][0]["content"])
         self.assertIn("Rail overtakes Bus", captured["messages"][1]["content"])
+
+    @patch("sample_essay.get_deepseek_api_key", return_value="test-key")
+    def test_small_scale_sample_essay_keeps_one_decimal_place(self, _key):
+        class Completions:
+            def create(self, **kwargs):
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content="Bus use fell from 1.80 million to 1.26 million."
+                            )
+                        )
+                    ]
+                )
+
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+        request = SampleEssayRequest(
+            chart_type="line",
+            min_words=1,
+            deplot_text=(
+                "TITLE | Passengers<0x0A>CHART TYPE | Line graph<0x0A>"
+                "Year | Bus<0x0A>2010 | 1.8<0x0A>2020 | 1.3"
+            ),
+            flowchart={
+                "nodes": [
+                    {"type": "background"},
+                    {"type": "presentation"},
+                    {"type": "comment"},
+                ],
+                "edges": [],
+            },
+        )
+
+        with patch("sample_essay.get_deepseek_client", return_value=client):
+            response = generate_sample_essay(request)
+
+        self.assertTrue(response.success, response.error)
+        self.assertEqual(response.essay, "Bus use fell from 1.8 million to 1.3 million.")
+
+    @patch("sample_essay.get_deepseek_api_key", return_value="test-key")
+    def test_sample_essay_data_values_are_returned_as_integers(self, _key):
+        captured = {}
+
+        class Completions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content="Bristol recorded 41.70%, while Leeds reached 48.16%."
+                            )
+                        )
+                    ]
+                )
+
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+        request = SampleEssayRequest(
+            chart_type="bar",
+            min_words=1,
+            deplot_text=(
+                "TITLE | Recycling<0x0A>CHART TYPE | Bar chart<0x0A>"
+                "City | 2015 | 2020<0x0A>Bristol | 41.70 | 55.20<0x0A>"
+                "Leeds | 35.26 | 48.16"
+            ),
+            flowchart={
+                "nodes": [
+                    {"type": "background"},
+                    {"type": "presentation"},
+                    {"type": "comment"},
+                ],
+                "edges": [],
+            },
+        )
+
+        with patch("sample_essay.get_deepseek_client", return_value=client):
+            response = generate_sample_essay(request)
+
+        self.assertTrue(response.success)
+        self.assertEqual(response.essay, "Bristol recorded 42%, while Leeds reached 48%.")
+        self.assertIn("Bristol | 42 | 55", captured["messages"][1]["content"])
+        self.assertIn("Leeds | 35 | 48", captured["messages"][1]["content"])
 
     @patch("sample_essay.get_deepseek_client")
     @patch("sample_essay.get_deepseek_api_key", return_value="test-key")
@@ -104,7 +188,7 @@ class SampleEssayTests(unittest.TestCase):
             deplot_text=(
                 "TITLE | Passengers<0x0A>CHART TYPE | Line graph<0x0A>"
                 "Year | Bus | Rail<0x0A>2010 | 1.8 | 1.1<0x0A>2012 | 1.9 | 1.3<0x0A>"
-                "2014 | 1.7 | 1.5<0x0A>2016 | 1.6 | 1.8<0x0A>"
+                "2014 | 1.7 | 1.5<0x0A>2016 | 1.2 | 1.8<0x0A>"
                 "2018 | 1.5 | 2.0<0x0A>2020 | 1.3 | 2.2"
             ),
             flowchart={

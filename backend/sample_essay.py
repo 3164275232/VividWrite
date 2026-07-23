@@ -10,10 +10,24 @@ from chart_text import (
     InvalidExtractedChartData,
     build_table_fact_checks,
     find_table_fact_contradictions,
+    infer_deplot_value_precision,
     parse_validated_pie_table,
+    quantize_chart_value,
+    round_deplot_table_values,
 )
 
 router = APIRouter()
+
+_DECIMAL_DATA_RE = re.compile(r"(?<![\w.])(?P<value>-?\d+\.\d+)(?![\w.])")
+
+
+def _round_essay_data_values(text: str, precision: int) -> str:
+    return _DECIMAL_DATA_RE.sub(
+        lambda match: (
+            f"{quantize_chart_value(match.group('value'), precision):g}"
+        ),
+        text,
+    )
 
 class SampleEssayRequest(BaseModel):
     deplot_text: str
@@ -120,9 +134,10 @@ def generate_sample_essay(req: SampleEssayRequest):
             error="No flowchart provided. Please create a flowchart structure before generating the sample essay."
         )
 
-    normalized_deplot = (req.deplot_text or '').replace('<0x0A>', '\n')[:8000]
+    raw_deplot = (req.deplot_text or '').replace('<0x0A>', '\n')[:8000]
+    normalized_deplot = raw_deplot
     visual_label = CHART_TYPE_LABELS.get((req.chart_type or "").casefold())
-    marker = re.search(r"^CHART TYPE\s*\|\s*(.+)$", normalized_deplot, flags=re.MULTILINE | re.IGNORECASE)
+    marker = re.search(r"^CHART TYPE\s*\|\s*(.+)$", raw_deplot, flags=re.MULTILINE | re.IGNORECASE)
     if marker:
         visual_label = marker.group(1).strip()
     visual_label = visual_label or "chart"
@@ -130,12 +145,10 @@ def generate_sample_essay(req: SampleEssayRequest):
         f"The original source visual is a {visual_label}. The textual table is only an internal "
         f"machine-readable representation. Refer to the source as a {visual_label}, never as a table. "
     )
-    fact_checks = build_table_fact_checks(normalized_deplot)
-    fact_check_block = fact_checks or "No additional deterministic comparisons were available."
-    is_pie_chart = req.chart_type == "pie" or "CHART TYPE | Pie chart" in normalized_deplot
+    is_pie_chart = req.chart_type == "pie" or "CHART TYPE | Pie chart" in raw_deplot
     if is_pie_chart:
         try:
-            parse_validated_pie_table(normalized_deplot)
+            parse_validated_pie_table(raw_deplot)
         except InvalidExtractedChartData as exc:
             return SampleEssayResponse(
                 success=False,
@@ -144,6 +157,31 @@ def generate_sample_essay(req: SampleEssayRequest):
                     "Please upload the image again so DePlot can re-extract the isolated pie plot."
                 ),
             )
+    chart_type_key = (req.chart_type or "").casefold()
+    statistical_visual = (
+        chart_type_key in {"bar", "line", "pie"}
+        or any(name in visual_label.casefold() for name in ("bar", "line", "pie"))
+    )
+    value_precision = infer_deplot_value_precision(raw_deplot, chart_type_key)
+    if statistical_visual:
+        normalized_deplot = round_deplot_table_values(
+            raw_deplot,
+            precision=value_precision,
+            chart_type=chart_type_key,
+        )
+    if value_precision == 0:
+        precision_guidance = (
+            "All chart data values have been rounded to integers. "
+            "Use integer data values only and never print decimal places. "
+        )
+    else:
+        decimal_label = "decimal place" if value_precision == 1 else "decimal places"
+        precision_guidance = (
+            f"Small-scale chart values retain up to {value_precision} {decimal_label}. "
+            "Preserve that precision where shown and do not round those values to whole numbers. "
+        )
+    fact_checks = build_table_fact_checks(normalized_deplot)
+    fact_check_block = fact_checks or "No additional deterministic comparisons were available."
     flow_summary = summarize_flowchart(req.flowchart)
     requirement = req.requirement or (
         "Write an descriptive academic report (at least 150 words， such as IELTS Task 1) summarizing the main features and making relevant comparisons."
@@ -217,6 +255,7 @@ def generate_sample_essay(req: SampleEssayRequest):
             "You are an expert of descriptive academic writing, such as IELTS Task 1, data commentary. Produce a high-quality sample response. "
             "Neutral objective tone; no bullet points; no first-person; no speculative data beyond given facts. "
             "The chart table is the factual source of truth. Preserve every category-value pairing exactly, and silently verify all numeric claims before answering. "
+            f"{precision_guidance}"
             "Never contradict the deterministic rankings or crossing statements supplied in the user message. "
             "Do not infer causes, motives, priorities, perceptions, or whether a cost is fixed or discretionary unless the chart explicitly states them. "
             f"{visual_type_instruction}"
@@ -229,6 +268,7 @@ def generate_sample_essay(req: SampleEssayRequest):
             "You are an expert of descriptive academic writing, such as IELTS Task 1, data commentary. Produce a high-quality sample response. "
             "Neutral objective tone; no bullet points; no first-person; no speculative data beyond given facts. "
             "The chart table is the factual source of truth. Preserve every category-value pairing exactly, and silently verify all numeric claims before answering. "
+            f"{precision_guidance}"
             "Never contradict the deterministic rankings or crossing statements supplied in the user message. "
             "Do not infer causes, motives, priorities, perceptions, or whether a cost is fixed or discretionary unless the chart explicitly states them. "
             f"{visual_type_instruction}"
@@ -302,6 +342,8 @@ def generate_sample_essay(req: SampleEssayRequest):
             temperature=req.temperature if req.temperature is not None else 0.2,
             max_tokens=800,
         )
+        if statistical_visual:
+            essay = _round_essay_data_values(essay, value_precision)
         fact_attempts = 1
         contradictions = find_table_fact_contradictions(normalized_deplot, essay)
         if contradictions:
@@ -320,6 +362,8 @@ def generate_sample_essay(req: SampleEssayRequest):
                 temperature=0,
                 max_tokens=800,
             )
+            if statistical_visual:
+                essay = _round_essay_data_values(essay, value_precision)
             fact_attempts = 2
             contradictions = find_table_fact_contradictions(normalized_deplot, essay)
             if contradictions:
