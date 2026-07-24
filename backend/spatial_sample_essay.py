@@ -15,6 +15,11 @@ from PIL import Image
 
 from next_sentence import summarize_flowchart
 from sample_essay import SampleEssayResponse
+from structure_feedback_agents import (
+    OPTION_C_LABELS,
+    REQUIRED_OPTION_C_NODE_TYPES,
+    normalize_node_type,
+)
 from wan_image_renderer import SPATIAL_TASK_TYPES
 
 
@@ -70,14 +75,16 @@ def _encode_image(image_path: str | Path) -> str:
 
 def _structure_choice(flowchart: dict | None, use_standard_structure: bool | None) -> SampleEssayResponse | None:
     nodes = flowchart.get("nodes", []) if isinstance(flowchart, dict) else []
-    node_types = {node.get("type") for node in nodes if isinstance(node, dict)}
-    missing = []
-    if "background" not in node_types:
-        missing.append("Background")
-    if "presentation" not in node_types:
-        missing.append("Presentation of Visuals")
-    if "comment" not in node_types:
-        missing.append("Comment on Result")
+    node_types = {
+        normalize_node_type(node.get("type"))
+        for node in nodes
+        if isinstance(node, dict)
+    }
+    missing = [
+        OPTION_C_LABELS[node_type]
+        for node_type in REQUIRED_OPTION_C_NODE_TYPES
+        if node_type not in node_types
+    ]
     if missing and use_standard_structure is None:
         return SampleEssayResponse(
             success=False,

@@ -16,6 +16,7 @@ from revision_review import router as revision_review_router
 from sample_essay import SampleEssayResponse, router as sample_essay_router
 from sentence_mapping import SentenceMappingRequest, SentenceMappingResponse, map_sentences
 from spatial_sample_essay import generate_spatial_sample_essay
+from structure_feedback_agents import router as structure_feedback_router
 from storage import (
     relative_runtime_path,
     save_uploaded_file,
@@ -33,6 +34,7 @@ ensure_runtime_directories()
 app = FastAPI(title="VividWrite API", version="0.2.0")
 app.include_router(sample_essay_router)
 app.include_router(revision_review_router)
+app.include_router(structure_feedback_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

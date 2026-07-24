@@ -1,120 +1,88 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Plus, RotateCcw, Trash2 } from 'lucide-react';
 
-// Type style definitions for DATA COMMENTARY MOVE structure
 const TYPE_STYLES = {
-  background: { 
-    color: '#fff8e8',
-    border: '#b97912',
-    title: 'Background', 
-    defaultText: 'Disciplinary knowledge (IELTS: request; Academic: aim, etc.)',
-    standard: true
+  introduction: {
+    color: '#fff7df',
+    border: '#a76609',
+    title: 'Introduction / Orient the Visual',
+    defaultText: 'Paraphrase the task and identify what the visual presents.',
   },
-  presentation: { 
-    color: '#eef8f0',
-    border: '#368a4c',
-    title: 'Presentation of Visual', 
-    defaultText: 'Core step: Guide different ways of introducing visuals. Choose from multiple options:',
-    core: true
+  overview: {
+    color: '#eaf7ef',
+    border: '#247047',
+    title: 'Overview / Highlight Key Patterns',
+    defaultText: 'Summarize the most important trends, contrasts, or overall features.',
   },
-  comment: { 
-    color: '#edf5ff',
-    border: '#397bbf',
-    title: 'Comment on Result', 
-    defaultText: 'Final step: Students add interpretations or highlight key findings.',
-    final: true
+  key_details_a: {
+    color: '#eaf3ff',
+    border: '#2f67a8',
+    title: 'Key Details A / Report & Compare',
+    defaultText: 'Report and compare the first logically grouped set of data.',
   },
-  // Sub-options for Presentation of Visual
-  summary: { 
-    color: '#f6f2fa',
-    border: '#8063a6',
-    title: 'a. Summary', 
-    defaultText: 'Basic introduction of the visual：Figure 1 shows... ',
-    subtype: 'presentation'
+  key_details_b: {
+    color: '#fff0f2',
+    border: '#a9475a',
+    title: 'Key Details B / Report & Compare',
+    defaultText: 'Report and compare the second logically grouped set of data.',
   },
-  results: { 
-    color: '#edf8f8',
-    border: '#438c91',
-    title: 'b. Results', 
-    defaultText: 'Specific data presentation：Figure 1 shows City A had 100,000 people in 1990',
-    subtype: 'presentation'
+  optional_commentary: {
+    color: '#f3f0f8',
+    border: '#71558f',
+    title: 'Optional Commentary / Interpret',
+    defaultText: 'Interpret only when supported by the task or visual; do not invent causes or conclusions.',
+    optional: true,
   },
-  reference_explanation: { 
-    color: '#fff1f4',
-    border: '#b85d75',
-    title: 'c. Reference & Explanation', 
-    defaultText: 'Comparison, trend analysis, and detailed explanation',
-    subtype: 'presentation'
-  }
+  custom: {
+    color: '#f3f4f6',
+    border: '#5f6368',
+    title: 'Custom Structure Node',
+    defaultText: 'Rename this node to describe its role in your writing plan.',
+  },
 };
 
-// DATA COMMENTARY MOVE node templates
 const initialNodes = [
   {
-    id: 'background', type: 'background', x: 220, y: 30, width: 200, height: 100,
-    title: TYPE_STYLES.background.title,
-    text: TYPE_STYLES.background.defaultText,
-    color: TYPE_STYLES.background.color, 
-    border: TYPE_STYLES.background.border,
-    standard: true
+    id: 'introduction', type: 'introduction', x: 205, y: 20, width: 230, height: 84,
+    ...TYPE_STYLES.introduction,
+    text: TYPE_STYLES.introduction.defaultText,
   },
   {
-    id: 'presentation', type: 'presentation', x: 220, y: 160, width: 200, height: 100,
-    title: TYPE_STYLES.presentation.title,
-    text: TYPE_STYLES.presentation.defaultText,
-    color: TYPE_STYLES.presentation.color, 
-    border: TYPE_STYLES.presentation.border,
-    core: true
+    id: 'overview', type: 'overview', x: 205, y: 125, width: 230, height: 84,
+    ...TYPE_STYLES.overview,
+    text: TYPE_STYLES.overview.defaultText,
   },
   {
-    id: 'summary', type: 'summary', x: 0, y: 280, width: 180, height: 100,
-    title: TYPE_STYLES.summary.title,
-    text: TYPE_STYLES.summary.defaultText,
-    color: TYPE_STYLES.summary.color, 
-    border: TYPE_STYLES.summary.border,
-    subtype: 'presentation'
+    id: 'key_details_a', type: 'key_details_a', x: 205, y: 230, width: 230, height: 84,
+    ...TYPE_STYLES.key_details_a,
+    text: TYPE_STYLES.key_details_a.defaultText,
   },
   {
-    id: 'results', type: 'results', x: 200, y: 280, width: 180, height: 120,
-    title: TYPE_STYLES.results.title,
-    text: TYPE_STYLES.results.defaultText,
-    color: TYPE_STYLES.results.color, 
-    border: TYPE_STYLES.results.border,
-    subtype: 'presentation'
+    id: 'key_details_b', type: 'key_details_b', x: 205, y: 335, width: 230, height: 84,
+    ...TYPE_STYLES.key_details_b,
+    text: TYPE_STYLES.key_details_b.defaultText,
   },
   {
-    id: 'reference_explanation', type: 'reference_explanation', x: 430, y: 280, width: 180, height: 120,
-    title: TYPE_STYLES.reference_explanation.title,
-    text: TYPE_STYLES.reference_explanation.defaultText,
-    color: TYPE_STYLES.reference_explanation.color, 
-    border: TYPE_STYLES.reference_explanation.border,
-    subtype: 'presentation'
+    id: 'optional_commentary', type: 'optional_commentary', x: 205, y: 440, width: 230, height: 92,
+    ...TYPE_STYLES.optional_commentary,
+    text: TYPE_STYLES.optional_commentary.defaultText,
   },
-  {
-    id: 'comment', type: 'comment', x: 150, y: 450, width: 200, height: 120,
-    title: TYPE_STYLES.comment.title,
-    text: TYPE_STYLES.comment.defaultText,
-    color: TYPE_STYLES.comment.color, 
-    border: TYPE_STYLES.comment.border,
-    final: true
-  }
 ];
 
 const initialEdges = [
-  { id: 'e1', from: 'background', to: 'presentation', type: 'sequence' },
-  { id: 'e2', from: 'presentation', to: 'summary', type: 'parent-child' },
-  { id: 'e3', from: 'presentation', to: 'results', type: 'parent-child' },
-  { id: 'e4', from: 'presentation', to: 'reference_explanation', type: 'parent-child' },
-  { id: 'e5', from: 'presentation', to: 'comment', type: 'sequence' },
+  { id: 'e1', from: 'introduction', to: 'overview', type: 'sequence' },
+  { id: 'e2', from: 'overview', to: 'key_details_a', type: 'sequence' },
+  { id: 'e3', from: 'key_details_a', to: 'key_details_b', type: 'sequence' },
+  { id: 'e4', from: 'key_details_b', to: 'optional_commentary', type: 'sequence' },
 ];
 
-export default function Flowchart({ imageReady = false, onFlowchartChange, onNodeClick, missingNodeIds = new Set(), nodeSentenceCounts = {}, readOnly = false, currentStage = 'planning' }) {
+export default function Flowchart({ imageReady = false, onFlowchartChange, onNodeClick, missingNodeIds = new Set(), nodeSentenceCounts = {}, nodeParagraphCounts = {}, readOnly = false, currentStage = 'planning' }) {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
   const [creatingEdge, setCreatingEdge] = useState(null); // { fromNodeId, startX, startY, currentX, currentY }
-  const [newNodeType, setNewNodeType] = useState('presentation');
+  const [newNodeType, setNewNodeType] = useState('introduction');
 
   const canvasRef = useRef(null);
   const dragInfoRef = useRef(null); // { id, offsetX, offsetY }
@@ -155,23 +123,15 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
     if (creatingEdge) setCreatingEdge(null);
   };
 
-  // New explicit add node (replacing previous double-click-to-add)
   const addNode = () => {
     if (!imageReady || readOnly) return;
     const style = TYPE_STYLES[newNodeType];
-    let computedTitle = style.title;
-    
-    // Handle special cases for presentation subtypes
-    if (newNodeType === 'summary' || newNodeType === 'results' || newNodeType === 'reference_explanation') {
-      const existingCount = nodes.filter(n => n.type === newNodeType).length;
-      if (existingCount > 0) {
-        computedTitle = `${style.title} ${existingCount + 1}`;
-      }
-    }
-    
-    // Position strategy: stack downward; place below lowest existing node of same type else increment by 120
+    const existingCount = nodes.filter(n => n.type === newNodeType).length;
+    const computedTitle = existingCount > 0
+      ? `${style.title} ${existingCount + 1}`
+      : style.title;
     const baseY = nodes.length ? Math.max(...nodes.map(n => n.y + n.height)) + 40 : 30;
-    const x = 320; // center-ish default
+    const x = 320;
     const id = 'node_' + Math.random().toString(36).slice(2, 8);
     
     const newNode = {
@@ -184,15 +144,10 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
       title: computedTitle,
       text: style.defaultText,
       color: style.color,
-      border: style.border
+      border: style.border,
+      optional: Boolean(style.optional),
     };
-    
-                // Add special properties for different node types
-                if (style.standard) newNode.standard = true;
-                if (style.core) newNode.core = true;
-                if (style.final) newNode.final = true;
-                if (style.subtype) newNode.subtype = style.subtype;
-    
+
     setNodes(prev => [...prev, newNode]);
   };
 
@@ -219,18 +174,12 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
       const duplicate = edges.some(ed => ed.from === creatingEdge.fromNodeId && ed.to === target.id);
       if (!duplicate) {
         const id = 'e_' + Math.random().toString(36).slice(2, 8);
-        // Determine edge type based on node types
-        const fromNode = getNodeById(creatingEdge.fromNodeId);
-        const toNode = getNodeById(target.id);
-        let edgeType = 'sequence'; // default
-        
-        // Parent-child relationship: presentation -> summary/results/reference_explanation
-        if (fromNode?.type === 'presentation' && 
-            (toNode?.type === 'summary' || toNode?.type === 'results' || toNode?.type === 'reference_explanation')) {
-          edgeType = 'parent-child';
-        }
-        
-        setEdges(prev => [...prev, { id, from: creatingEdge.fromNodeId, to: target.id, type: edgeType }]);
+        setEdges(prev => [...prev, {
+          id,
+          from: creatingEdge.fromNodeId,
+          to: target.id,
+          type: 'sequence',
+        }]);
       }
     }
     setCreatingEdge(null);
@@ -299,15 +248,8 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
       const midY = (y1 + y2) / 2;
       const isSelected = edge.id === selectedEdgeId;
       
-      // Determine edge style based on type
-      const isParentChild = edge.type === 'parent-child';
-      const isSequence = edge.type === 'sequence';
-      
-      // Different styles for different edge types
-      const strokeColor = isSelected ? '#0a66d8' : (isParentChild ? '#8063a6' : '#77777c');
-      const strokeWidth = isSelected ? 3 : (isParentChild ? 2 : 2);
-      const strokeDasharray = isParentChild ? '5,5' : 'none';
-      const markerEnd = isSequence ? 'url(#arrow)' : 'url(#circle)';
+      const strokeColor = isSelected ? '#0a66d8' : '#77777c';
+      const strokeWidth = isSelected ? 3 : 2;
       
       return (
         <g key={edge.id} style={{ cursor: 'pointer' }}>
@@ -324,9 +266,8 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
             d={`M ${x1} ${y1} Q ${midX} ${midY} ${x2} ${y2}`}
             stroke={strokeColor}
             strokeWidth={strokeWidth}
-            strokeDasharray={strokeDasharray}
             fill="none"
-            markerEnd={markerEnd}
+            markerEnd="url(#arrow)"
             onMouseDown={(e) => { e.stopPropagation(); setSelectedEdgeId(edge.id); setSelectedNodeId(null); }}
           />
           {isSelected && (
@@ -361,7 +302,7 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
     if (!imageReady) return;
     if (typeof onFlowchartChange === 'function') {
       onFlowchartChange({
-        nodes: nodes.map(n => ({ id: n.id, type: n.type, title: n.title, text: n.text, x: n.x, y: n.y, width: n.width, height: n.height })),
+        nodes: nodes.map(n => ({ id: n.id, type: n.type, title: n.title, text: n.text, x: n.x, y: n.y, width: n.width, height: n.height, optional: Boolean(n.optional) })),
         edges: edges.map(e => ({ id: e.id, from: e.from, to: e.to, type: e.type || 'sequence' }))
       });
     }
@@ -378,16 +319,16 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
         <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4 }}>
           New node type:
           <select value={newNodeType} onChange={(e) => setNewNodeType(e.target.value)} style={{ fontSize: '0.75rem' }} disabled={editingDisabled}>
-            <option value="background">Background</option>
-            <option value="presentation">Presentation of Visual</option>
-            <option value="summary">a. Summary</option>
-            <option value="results">b. Results</option>
-            <option value="reference_explanation">c. Reference & Explanation</option>
-            <option value="comment">Comment on Result</option>
+            <option value="introduction">Introduction / Orient the Visual</option>
+            <option value="overview">Overview / Highlight Key Patterns</option>
+            <option value="key_details_a">Key Details A / Report & Compare</option>
+            <option value="key_details_b">Key Details B / Report & Compare</option>
+            <option value="optional_commentary">Optional Commentary / Interpret</option>
+            <option value="custom">Custom Structure Node</option>
           </select>
         </label>
         <span className="flowchart-status" style={{ fontSize: '0.7rem', color: '#555', lineHeight: 1.2 }}>
-          {editingDisabled ? (readOnly ? 'Read-only view (revision stage): node editing disabled' : 'Please upload an image first (Flowchart disabled until image uploaded)') : 'DATA COMMENTARY MOVE: Background → Presentation (core) → Comment (final) | Drag nodes to move | Drag bottom-right dot to create links'}
+          {editingDisabled ? (readOnly ? 'Read-only view (revision stage): node editing disabled' : 'Please upload an image first (Flowchart disabled until image uploaded)') : 'Option C: Introduction -> Overview -> Key Details A -> Key Details B -> Optional Commentary | Drag nodes to move or link'}
         </span>
       </div>
 
@@ -421,9 +362,6 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
             <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
               <path d="M0,0 L10,5 L0,10 z" fill="#666" />
             </marker>
-            <marker id="circle" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto" markerUnits="strokeWidth">
-              <circle cx="4" cy="4" r="3" fill="#9c27b0" />
-            </marker>
           </defs>
           {renderEdges()}
           {tempEdge}
@@ -432,9 +370,8 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
         {nodes.map(node => {
           const isSelected = node.id === selectedNodeId;
           const isMissing = missingNodeIds.has(node.id);
-          // nodeSentenceCounts now stores arrays of sentence indices; display length starting from 1 logically (count of sentences)
-          const rawVal = nodeSentenceCounts[node.id];
-          const sentenceCount = Array.isArray(rawVal) ? rawVal.length : (typeof rawVal === 'number' ? rawVal : 0);
+          const rawVal = nodeParagraphCounts[node.id] ?? nodeSentenceCounts[node.id];
+          const mappingCount = Array.isArray(rawVal) ? rawVal.length : (typeof rawVal === 'number' ? rawVal : 0);
           return (
             <div
               className={`flowchart-node ${isSelected ? 'is-selected' : ''} ${isMissing ? 'is-missing' : ''}`}
@@ -448,7 +385,7 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
                 height: node.height,
                 background: isMissing ? '#f9f9f9' : node.color,
                 border: isMissing ? '2px dashed #77777c' : `2px solid ${isSelected ? '#0a66d8' : node.border}`,
-                borderRadius: 10,
+                borderRadius: 8,
                 padding: '8px 10px 10px 10px',
                 boxSizing: 'border-box',
                 display: 'flex',
@@ -459,10 +396,8 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
                 backdropFilter: 'blur(2px)',
                 filter: isMissing ? 'grayscale(1)' : 'none',
                 opacity: isMissing ? 0.9 : 1,
-                // Add special styling for different node types
                 borderStyle: node.optional ? 'dashed' : 'solid',
-                borderWidth: node.core ? '3px' : '2px',
-                fontWeight: node.final ? 'bold' : 'normal',
+                borderWidth: '2px',
               }}
               onClick={(e) => { e.stopPropagation(); if (onNodeClick) onNodeClick(node.id); }}
               title={
@@ -470,13 +405,13 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
                   ? 'Content missing: please add this structural point in the main text' 
                   : currentStage === 'planning'
                     ? 'Start writing to enable sentence highlighting'
-                    : sentenceCount 
-                      ? `Linked sentences: ${sentenceCount}` 
-                      : 'Click to view related sentences'
+                    : mappingCount
+                      ? `Linked paragraphs: ${mappingCount}`
+                      : 'Click to view related writing'
               }
             >
-              <div style={{ fontWeight: 'bold', fontSize: 13, marginBottom: 4, marginTop: 20 }}
-                contentEditable={!readOnly}
+              <div style={{ fontWeight: 'bold', fontSize: 13, marginBottom: 4, marginTop: node.optional ? 18 : 4 }}
+                contentEditable={!editingDisabled}
                 suppressContentEditableWarning
                 onDoubleClick={(e) => { if (editingDisabled) return; e.stopPropagation(); setSelectedNodeId(node.id); }}
                 onBlur={(e) => updateNodeTitle(node.id, e.currentTarget.textContent.slice(0,60))}
@@ -487,33 +422,12 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
               <div style={{ flex: 1, lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'pre-line' }}>{node.text}</div>
               {!isMissing && (
                 <div style={{ position: 'absolute', top: 4, right: 6, fontSize: 10, color: '#333', background: 'rgba(255,255,255,0.7)', padding: '1px 4px', borderRadius: 4 }}>
-                  {sentenceCount}
+                  {mappingCount}
                 </div>
               )}
-              {/* Add type indicators */}
               {node.optional && (
-                <div style={{ position: 'absolute', top: 4, left: 6, fontSize: 8, color: '#ff9800', background: 'rgba(255,255,255,0.8)', padding: '1px 3px', borderRadius: 3, fontWeight: 'bold' }}>
+                <div style={{ position: 'absolute', top: 4, left: 6, fontSize: 8, color: '#6d3f91', background: 'rgba(255,255,255,0.8)', padding: '1px 3px', borderRadius: 3, fontWeight: 'bold' }}>
                   OPTIONAL
-                </div>
-              )}
-              {node.core && (
-                <div style={{ position: 'absolute', top: 4, left: 6, fontSize: 8, color: '#4caf50', background: 'rgba(255,255,255,0.8)', padding: '1px 3px', borderRadius: 3, fontWeight: 'bold' }}>
-                  CORE
-                </div>
-              )}
-              {node.final && (
-                <div style={{ position: 'absolute', top: 4, left: 6, fontSize: 8, color: '#2196f3', background: 'rgba(255,255,255,0.8)', padding: '1px 3px', borderRadius: 3, fontWeight: 'bold' }}>
-                  FINAL
-                </div>
-              )}
-              {node.core && (
-                <div style={{ position: 'absolute', top: 4, right: 6, fontSize: 8, color: '#9c27b0', background: 'rgba(255,255,255,0.8)', padding: '1px 3px', borderRadius: 3, fontWeight: 'bold' }}>
-                  HAS SUB-OPTIONS
-                </div>
-              )}
-              {node.subtype === 'presentation' && (
-                <div style={{ position: 'absolute', top: 4, left: 6, fontSize: 8, color: '#9c27b0', background: 'rgba(255,255,255,0.8)', padding: '1px 3px', borderRadius: 3, fontWeight: 'bold' }}>
-                  SUB-OPTION
                 </div>
               )}
               <div

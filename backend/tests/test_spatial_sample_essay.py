@@ -45,9 +45,10 @@ class SpatialSampleEssayTests(unittest.TestCase):
     def complete_flowchart(self) -> dict:
         return {
             "nodes": [
-                {"type": "background"},
-                {"type": "presentation"},
-                {"type": "comment"},
+                {"type": "introduction"},
+                {"type": "overview"},
+                {"type": "key_details_a"},
+                {"type": "key_details_b"},
             ],
             "edges": [],
         }

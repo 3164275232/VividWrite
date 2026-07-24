@@ -8,6 +8,7 @@ from chart_text import (
     InvalidExtractedChartData,
     add_chart_type_metadata,
     build_table_fact_checks,
+    find_table_fact_contradictions,
     infer_deplot_value_precision,
     normalize_deplot_numeric_precision,
     normalize_pie_deplot_text,
@@ -16,6 +17,7 @@ from chart_text import (
     parse_validated_pie_table,
     round_chart_value,
     round_deplot_table_values,
+    soften_false_monotonic_claims,
 )
 
 
@@ -93,7 +95,24 @@ class ChartTextTests(unittest.TestCase):
         facts = build_table_fact_checks(normalized)
         self.assertIn("2016 ranking: Rail (1.8) > Bus (1.6) > Metro (1.5)", facts)
         self.assertIn("Between 2014 and 2016, Rail overtakes Bus", facts)
+        self.assertIn("Bus trend: is non-monotonic and decreases overall", facts)
+        self.assertIn("Rail trend: increases at every recorded interval", facts)
         self.assertIn("Between 2016 and 2018, Metro overtakes Bus", facts)
+
+    def test_false_monotonic_modifier_can_be_softened_without_changing_direction(self):
+        table = (
+            "Year | Bus | Rail<0x0A>2010 | 1.8 | 1.1<0x0A>"
+            "2012 | 1.9 | 1.3<0x0A>2020 | 1.3 | 2.2"
+        )
+        prose = (
+            "Bus usage experienced a consistent decline, while rail increased continuously."
+        )
+
+        repaired = soften_false_monotonic_claims(table, prose)
+
+        self.assertIn("Bus usage experienced an overall decline", repaired)
+        self.assertIn("rail increased continuously", repaired)
+        self.assertEqual(find_table_fact_contradictions(table, repaired), [])
 
     def test_pie_normalization_uses_full_metadata_and_isolated_values(self):
         normalized = normalize_pie_deplot_text(FULL_DEPLOT_TEXT, ISOLATED_PLOT_TEXT)

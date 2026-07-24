@@ -8,6 +8,11 @@ from pydantic import BaseModel
 import re
 from dotenv import load_dotenv
 from deepseek_config import get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
+from structure_feedback_agents import (
+    OPTION_C_LABELS,
+    OPTION_C_NODE_TYPES,
+    normalize_node_type,
+)
 
 load_dotenv()
 
@@ -38,37 +43,21 @@ def summarize_flowchart(flowchart: Optional[dict]) -> str:
         return ""
     groups: Dict[str, List[str]] = {}
     for n in nodes:
-        t = n.get("type", "unknown")
+        t = normalize_node_type(n.get("type"))
         title = (n.get("title") or n.get("id") or "Untitled").strip()
         groups.setdefault(t, []).append(title[:60])
     
     parts = []
-    # Updated order for DATA COMMENTARY MOVE structure
-    order = ["background", "presentation", "summary", "results", "reference_explanation", "comment"]
-    
-    # Process main stages first
-    for t in order:
+    for t in OPTION_C_NODE_TYPES:
         if t in groups:
-            if t == "background":
-                label = "Background"
-            elif t == "presentation":
-                label = "Presentation of Visual (Core)"
-            elif t == "comment":
-                label = "Comment on Result (Final)"
-            elif t == "summary":
-                label = "Summary Option"
-            elif t == "results":
-                label = "Results Option"
-            elif t == "reference_explanation":
-                label = "Reference & Explanation Option"
-            else:
-                label = t.capitalize()
+            label = OPTION_C_LABELS[t]
+            if t == "optional_commentary":
+                label += " (optional)"
             parts.append(f"{label}: " + "; ".join(groups[t]))
     
-    # Process any remaining node types not in the main order
     for t, titles in groups.items():
-        if t not in order:
-            parts.append(f"{t.capitalize()}: " + "; ".join(titles))
+        if t not in OPTION_C_NODE_TYPES:
+            parts.append(f"Custom node ({t}): " + "; ".join(titles))
     
     return " | ".join(parts)
 
@@ -99,7 +88,8 @@ def _build_messages(req: NextSentenceRequest) -> List[Dict[str, str]]:
         "- Use numbers ONLY if clearly present in chart data; otherwise use qualitative/comparative phrasing.\n"
         "- Vary openings among candidates.\n"
         "- Avoid repeating the immediately previous sentence content.\n"
-        "- If overview just finished, begin detailing a salient comparison or trend; if mid-body, continue consistent detail; if approaching conclusion, start synthesizing.\n"
+        "- Follow Option C progression: Introduction, Overview, Key Details A, then Key Details B.\n"
+        "- Optional Commentary is used only when the task or visual supports interpretation; never invent causes and never add a separate conclusion.\n"
         "OUTPUT FORMAT: Return ONLY valid JSON in this exact format: {\"candidates\": [\"sentence1\", \"sentence2\", \"sentence3\"]}\n"
         "CRITICAL: Do not include any other text, explanations, or formatting. Only the JSON object.\n"
     )

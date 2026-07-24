@@ -270,7 +270,7 @@ def parse_numeric_chart_table(text: str) -> list[dict]:
 
 
 def build_table_fact_checks(text: str) -> str:
-    """Derive rankings and crossings that generated prose must not contradict."""
+    """Derive rankings, temporal trends, and crossings prose must not contradict."""
     rows = [_cells(line) for line in _lines(text)]
     header_index = next(
         (
@@ -310,6 +310,42 @@ def build_table_fact_checks(text: str) -> str:
                 ranking_text += separator
             ranking_text += f"{name} ({_format_number(value)})"
         facts.append(f"{period} ranking: {ranking_text}.")
+
+    axis_key = _key(rows[header_index][0])
+    temporal_axis = axis_key in {"year", "date", "period", "time"} or all(
+        re.fullmatch(r"\d{4}", period) for period, _ in periods
+    )
+    if temporal_axis and len(periods) >= 2:
+        for series_index, name in enumerate(series):
+            values = [row_values[series_index] for _, row_values in periods]
+            changes = [
+                current - previous
+                for previous, current in zip(values, values[1:])
+            ]
+            path = " -> ".join(
+                f"{period}: {_format_number(row_values[series_index])}"
+                for period, row_values in periods
+            )
+            if all(change > 0 for change in changes):
+                description = "increases at every recorded interval"
+            elif all(change < 0 for change in changes):
+                description = "decreases at every recorded interval"
+            elif all(change >= 0 for change in changes):
+                description = "never decreases, but includes at least one flat interval"
+            elif all(change <= 0 for change in changes):
+                description = "never increases, but includes at least one flat interval"
+            else:
+                if values[-1] > values[0]:
+                    overall = "increases overall"
+                elif values[-1] < values[0]:
+                    overall = "decreases overall"
+                else:
+                    overall = "ends at its starting value"
+                description = (
+                    f"is non-monotonic and {overall}; do not call it steady, "
+                    "consistent, continuous, or sustained"
+                )
+            facts.append(f"{name} trend: {description} ({path}).")
 
     for left_index in range(len(series)):
         for right_index in range(left_index + 1, len(series)):
@@ -483,6 +519,72 @@ def find_table_fact_contradictions(table_text: str, prose: str) -> list[str]:
                     )
 
     return list(dict.fromkeys(contradictions))
+
+
+_STEADY_UP_ADJECTIVE_RE = re.compile(
+    r"\b(?:steady|consistent|continuous|sustained)\s+"
+    r"(?=(?:growth|increase|rise|upward trend)\b)",
+    flags=re.IGNORECASE,
+)
+_STEADY_DOWN_ADJECTIVE_RE = re.compile(
+    r"\b(?:steady|consistent|continuous|sustained)\s+"
+    r"(?=(?:decline|decrease|fall|drop|downward trend)\b)",
+    flags=re.IGNORECASE,
+)
+_STEADY_UP_ADVERB_RE = re.compile(
+    r"\b(?P<verb>rose|grew|increased|climbed)\s+"
+    r"(?:steadily|consistently|continuously)\b",
+    flags=re.IGNORECASE,
+)
+_STEADY_DOWN_ADVERB_RE = re.compile(
+    r"\b(?P<verb>fell|declined|decreased|dropped)\s+"
+    r"(?:steadily|consistently|continuously)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def soften_false_monotonic_claims(table_text: str, prose: str) -> str:
+    """Remove only false monotonic modifiers when the endpoint trend is still true."""
+    series, periods = _parse_numeric_series_table(table_text)
+    if len(series) < 1 or len(periods) < 2:
+        return prose
+
+    non_monotonic: dict[str, int] = {}
+    for index, name in enumerate(series):
+        values = [row_values[index] for _, row_values in periods]
+        rises = any(current > previous for previous, current in zip(values, values[1:]))
+        falls = any(current < previous for previous, current in zip(values, values[1:]))
+        if rises and falls:
+            non_monotonic[name] = 1 if values[-1] > values[0] else -1 if values[-1] < values[0] else 0
+
+    if not non_monotonic:
+        return prose
+
+    parts = re.split(
+        r"([,;]|\b(?:while|whereas|although|but)\b)",
+        prose,
+        flags=re.IGNORECASE,
+    )
+    for part_index in range(0, len(parts), 2):
+        clause = parts[part_index]
+        for name, endpoint_direction in non_monotonic.items():
+            if not _contains_series(clause, name):
+                continue
+            if endpoint_direction > 0 and _STEADY_UP_RE.search(clause):
+                clause = _STEADY_UP_ADJECTIVE_RE.sub("overall ", clause)
+                clause = _STEADY_UP_ADVERB_RE.sub(
+                    lambda match: f"{match.group('verb')} overall",
+                    clause,
+                )
+            elif endpoint_direction < 0 and _STEADY_DOWN_RE.search(clause):
+                clause = _STEADY_DOWN_ADJECTIVE_RE.sub("overall ", clause)
+                clause = _STEADY_DOWN_ADVERB_RE.sub(
+                    lambda match: f"{match.group('verb')} overall",
+                    clause,
+                )
+            clause = re.sub(r"\ba\s+overall\b", "an overall", clause, flags=re.IGNORECASE)
+        parts[part_index] = clause
+    return "".join(parts)
 
 
 def _extract_title(text: str) -> str:

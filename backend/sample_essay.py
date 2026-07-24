@@ -5,6 +5,12 @@ import re
 from typing import Optional, Dict, Any
 from next_sentence import summarize_flowchart
 from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
+from structure_feedback_agents import (
+    OPTION_C_LABELS,
+    OPTION_C_NODE_TYPES,
+    REQUIRED_OPTION_C_NODE_TYPES,
+    normalize_node_type,
+)
 from chart_text import (
     CHART_TYPE_LABELS,
     InvalidExtractedChartData,
@@ -14,6 +20,7 @@ from chart_text import (
     parse_validated_pie_table,
     quantize_chart_value,
     round_deplot_table_values,
+    soften_false_monotonic_claims,
 )
 
 router = APIRouter()
@@ -73,24 +80,25 @@ def generate_sample_essay(req: SampleEssayRequest):
     if not req.deplot_text or not req.deplot_text.strip():
         return SampleEssayResponse(success=False, error="deplot_text required")
     
-    # Check flowchart structure completeness
+    # Check Option C flowchart structure completeness. Optional Commentary is
+    # deliberately excluded from the required set.
     if req.flowchart and req.flowchart.get("nodes"):
         nodes = req.flowchart.get("nodes", [])
-        node_types = [node.get("type") for node in nodes]
-        
-        # Check for key structures
-        has_background = "background" in node_types
-        has_presentation = "presentation" in node_types
-        has_comment = "comment" in node_types
-        
-        # Build structure report
-        missing_structures = []
-        if not has_background:
-            missing_structures.append("Background")
-        if not has_presentation:
-            missing_structures.append("Presentation of Visuals")
-        if not has_comment:
-            missing_structures.append("Comment on Result")
+        normalized_node_types = [
+            normalize_node_type(node.get("type")) for node in nodes
+        ]
+        structure_presence = {
+            node_type: node_type in normalized_node_types
+            for node_type in OPTION_C_NODE_TYPES
+        }
+        missing_node_types = [
+            node_type
+            for node_type in REQUIRED_OPTION_C_NODE_TYPES
+            if not structure_presence[node_type]
+        ]
+        missing_structures = [
+            OPTION_C_LABELS[node_type] for node_type in missing_node_types
+        ]
         
         if missing_structures and req.use_standard_structure is None:
             # Return choice dialog information instead of error
@@ -110,7 +118,7 @@ def generate_sample_essay(req: SampleEssayRequest):
                         {
                             "id": "standard",
                             "title": "Use standard IELTS structure",
-                            "description": "Background → Presentation → Comment (complete essay)",
+                            "description": "Introduction -> Overview -> Key Details A -> Key Details B (complete essay)",
                             "value": True
                         }
                     ],
@@ -118,15 +126,11 @@ def generate_sample_essay(req: SampleEssayRequest):
                 }
             )
         
-        # Structure confirmation message
-        structure_status = []
-        if has_background:
-            structure_status.append("OK Background")
-        if has_presentation:
-            structure_status.append("OK Presentation of Visuals")
-        if has_comment:
-            structure_status.append("OK Comment on Result")
-        
+        structure_status = [
+            OPTION_C_LABELS[node_type]
+            for node_type in OPTION_C_NODE_TYPES
+            if structure_presence[node_type]
+        ]
         print(f"Flowchart structure confirmed: {' | '.join(structure_status)}")
     else:
         return SampleEssayResponse(
@@ -184,152 +188,83 @@ def generate_sample_essay(req: SampleEssayRequest):
     fact_check_block = fact_checks or "No additional deterministic comparisons were available."
     flow_summary = summarize_flowchart(req.flowchart)
     requirement = req.requirement or (
-        "Write an descriptive academic report (at least 150 words， such as IELTS Task 1) summarizing the main features and making relevant comparisons."
+        "Write a descriptive academic report of at least 150 words, such as IELTS "
+        "Task 1, summarizing the main features and making relevant comparisons."
     )
     
-    # Determine structure based on user choice
-    if req.use_standard_structure:
-        # Use standard IELTS structure regardless of flowchart
-        structure_guidance = "Structure your essay to follow the standard IELTS Task 1 format: Background → Presentation of Visual (core) → Comment on Result (final). "
-        essay_structure = "Structure your essay as: Background → Presentation of Visual (with appropriate sub-option) → Comment on Result. "
-        print("Using standard IELTS structure as requested by user")
-    else:
-        # Use flowchart structure as-is
-        nodes = req.flowchart.get("nodes", []) if req.flowchart else []
-        node_types = [node.get("type") for node in nodes]
-        
-        # Detect main structure components
-        has_background = "background" in node_types
-        has_presentation = "presentation" in node_types
-        has_comment = "comment" in node_types
-        
-        # Detect presentation sub-options
-        presentation_subtypes = []
-        for node in nodes:
-            if node.get("type") in ["summary", "results", "reference_explanation"]:
-                presentation_subtypes.append(node.get("type"))
-        
-        # Build structure guidance based on actual flowchart content
-        structure_parts = []
-        if has_background:
-            structure_parts.append("Background")
-        if has_presentation:
-            structure_parts.append("Presentation of Visual (core)")
-        if has_comment:
-            structure_parts.append("Comment on Result (final)")
-        
-        structure_guidance = f"Structure your essay to follow the flowchart plan: {' → '.join(structure_parts)}. "
-        
-        # Build essay structure with specific sub-options
-        essay_parts = []
-        if has_background:
-            essay_parts.append("Background")
-        if has_presentation:
-            essay_parts.append("Presentation of Visual")
-        if has_comment:
-            essay_parts.append("Comment on Result")
-        
-        essay_structure = f"Structure your essay as: {' → '.join(essay_parts)}. "
-        
-        # Add specific guidance for presentation sub-options
-        if presentation_subtypes:
-            sub_options_text = []
-            if "summary" in presentation_subtypes:
-                sub_options_text.append("Summary")
-            if "results" in presentation_subtypes:
-                sub_options_text.append("Results")
-            if "reference_explanation" in presentation_subtypes:
-                sub_options_text.append("Reference & Explanation")
-            
-            essay_structure += f" For Presentation of Visual, include these sub-options: {', '.join(sub_options_text)}. "
-        
-        print(f"Using flowchart structure as-is:")
-        print(f"  - Background: {has_background}")
-        print(f"  - Presentation: {has_presentation}")
-        print(f"  - Comment: {has_comment}")
-        print(f"  - Presentation sub-options: {presentation_subtypes}")
-        print(f"  - Structure: {' -> '.join(structure_parts)}")
-    
-    if req.use_standard_structure:
-        system_prompt = (
-            "You are an expert of descriptive academic writing, such as IELTS Task 1, data commentary. Produce a high-quality sample response. "
-            "Neutral objective tone; no bullet points; no first-person; no speculative data beyond given facts. "
-            "The chart table is the factual source of truth. Preserve every category-value pairing exactly, and silently verify all numeric claims before answering. "
-            f"{precision_guidance}"
-            "Never contradict the deterministic rankings or crossing statements supplied in the user message. "
-            "Do not infer causes, motives, priorities, perceptions, or whether a cost is fixed or discretionary unless the chart explicitly states them. "
-            f"{visual_type_instruction}"
-            f"{structure_guidance}"
-            "For Presentation of Visual, choose appropriate sub-options (Summary, Results, or Reference & Explanation) based on the data type and requirements. "
-            "Use the standard IELTS Task 1 structure regardless of the flowchart provided."
+    nodes = req.flowchart.get("nodes", []) if req.flowchart else []
+    flowchart_types = [
+        normalize_node_type(node.get("type")) for node in nodes
+    ]
+    selected_types = (
+        list(REQUIRED_OPTION_C_NODE_TYPES)
+        if req.use_standard_structure
+        else list(dict.fromkeys(flowchart_types))
+    )
+    structure_parts = [
+        OPTION_C_LABELS[node_type]
+        for node_type in OPTION_C_NODE_TYPES
+        if node_type in selected_types
+    ]
+    structure_guidance = (
+        "Use the standard Option C IELTS Task 1 structure: "
+        "Introduction -> Overview -> Key Details A -> Key Details B. "
+        if req.use_standard_structure
+        else f"Follow only this flowchart structure: {' -> '.join(structure_parts)}. "
+    )
+    if "optional_commentary" in selected_types:
+        structure_guidance += (
+            "Optional Commentary may be included only when the task or visual supports "
+            "the interpretation. It must not invent causes or unsupported conclusions. "
         )
-    else:
-        system_prompt = (
-            "You are an expert of descriptive academic writing, such as IELTS Task 1, data commentary. Produce a high-quality sample response. "
-            "Neutral objective tone; no bullet points; no first-person; no speculative data beyond given facts. "
-            "The chart table is the factual source of truth. Preserve every category-value pairing exactly, and silently verify all numeric claims before answering. "
-            f"{precision_guidance}"
-            "Never contradict the deterministic rankings or crossing statements supplied in the user message. "
-            "Do not infer causes, motives, priorities, perceptions, or whether a cost is fixed or discretionary unless the chart explicitly states them. "
-            f"{visual_type_instruction}"
-            f"{structure_guidance}"
-            "For Presentation of Visual, choose appropriate sub-options (Summary, Results, or Reference & Explanation) based on the data type and requirements. "
-            "CRITICAL RESTRICTION: You MUST ONLY include sections that are explicitly present in the flowchart structure. "
-            "DO NOT add Background if it's not in the flowchart. DO NOT add Comment if it's not in the flowchart. "
-            "ONLY write content for the sections that exist in the flowchart structure provided. "
-            "If the flowchart only contains 'Presentation of Visual', write ONLY presentation content. "
-            "If the flowchart contains 'Presentation of Visual' and 'Comment on Result', write ONLY those two sections. "
-            "NEVER add sections that are not explicitly listed in the flowchart structure."
+
+    system_prompt = (
+        "You are an expert in descriptive academic writing, including IELTS Task 1 "
+        "and data commentary. Produce a high-quality sample response. "
+        "Use a neutral objective tone, full paragraphs, no bullet points, and no first person. "
+        "The chart data is the factual source of truth. Preserve every category-value "
+        "pairing exactly and silently verify all numeric claims before answering. "
+        f"{precision_guidance}"
+        "Never contradict the deterministic rankings or crossing statements supplied "
+        "in the user message. Do not infer causes, motives, priorities, perceptions, "
+        "or whether a cost is fixed or discretionary unless the visual explicitly states them. "
+        f"{visual_type_instruction}"
+        f"{structure_guidance}"
+        "The Overview must synthesize main patterns rather than list isolated values. "
+        "Group supporting data logically across Key Details A and Key Details B. "
+        "Do not generate an independent conclusion."
+    )
+    if not req.use_standard_structure:
+        system_prompt += (
+            " Include only functions represented by the current flowchart. "
+            "Do not silently add a missing structural section."
         )
-        
-        # Add specific guidance for presentation sub-options if detected
-        if presentation_subtypes:
-            sub_options_guidance = f"IMPORTANT: The flowchart contains these Presentation sub-options: {', '.join(presentation_subtypes)}. You MUST include content for ALL of these sub-options in your essay. "
-            system_prompt += sub_options_guidance
-    # essay_structure is now defined above based on user choice
-    
+
+    common_prompt = (
+        f"OFFICIAL REQUIREMENT:\n{requirement}\n\n"
+        f"ORIGINAL VISUAL TYPE:\n{visual_label}\n\n"
+        f"CHART TEXTUAL DATA (primary facts, may contain minor OCR noise):\n"
+        f"{normalized_deplot}\n\n"
+        f"DETERMINISTIC COMPARISON CHECKS (must not be contradicted):\n"
+        f"{fact_check_block}\n\n"
+    )
     if req.use_standard_structure:
         user_prompt = (
-            f"OFFICIAL REQUIREMENT:\n{requirement}\n\n"
-            f"ORIGINAL VISUAL TYPE:\n{visual_label}\n\n"
-            f"CHART TEXTUAL DATA (primary facts, may contain minor OCR noise):\n{normalized_deplot}\n\n"
-            f"DETERMINISTIC COMPARISON CHECKS (must not be contradicted):\n{fact_check_block}\n\n"
-            f"TASK: Write the full report using the standard Background → Presentation → Comment structure. Minimum {req.min_words or 150} words. "
-            f"{essay_structure}"
-            "Do NOT include any meta explanations or headings. Return ONLY the raw essay text."
+            common_prompt
+            + "TASK: Write the full report using Introduction, Overview, Key Details A, "
+            f"and Key Details B. Minimum {req.min_words or 150} words. "
+            "Do not add a separate conclusion, headings, or meta explanation. "
+            "Return only the raw essay text."
         )
     else:
         user_prompt = (
-            f"OFFICIAL REQUIREMENT:\n{requirement}\n\n"
-            f"ORIGINAL VISUAL TYPE:\n{visual_label}\n\n"
-            f"CHART TEXTUAL DATA (primary facts, may contain minor OCR noise):\n{normalized_deplot}\n\n"
-            f"DETERMINISTIC COMPARISON CHECKS (must not be contradicted):\n{fact_check_block}\n\n"
-            f"FLOWCHART STRUCTURE (writer plan - follow this structure EXACTLY):\n{flow_summary}\n\n"
-            f"TASK: Write the full report following the flowchart structure EXACTLY. Minimum {req.min_words or 150} words. "
-            f"{essay_structure}\n\n"
-            "CRITICAL RESTRICTIONS:\n"
-            "1. ONLY include sections that are explicitly listed in the flowchart structure above.\n"
-            "2. DO NOT add Background section if it's not in the flowchart.\n"
-            "3. DO NOT add Comment section if it's not in the flowchart.\n"
-            "4. DO NOT add any sections not specified in the flowchart.\n"
-            "5. If flowchart only has Presentation, write ONLY presentation content.\n"
-            "6. If flowchart has Presentation + Comment, write ONLY those two sections.\n"
-            "7. Do NOT include any meta explanations or headings. Return ONLY the raw essay text."
+            common_prompt
+            + f"FLOWCHART STRUCTURE:\n{flow_summary}\n\n"
+            + "TASK: Write the full report following the current flowchart exactly. "
+            + f"Minimum {req.min_words or 150} words. "
+            + "Do not add functions absent from the flowchart. Do not add a separate "
+            + "conclusion, headings, or meta explanation. Return only the raw essay text."
         )
-        
-        # Add specific guidance for presentation sub-options if detected
-        if presentation_subtypes:
-            sub_options_restrictions = f"\n\nPRESENTATION SUB-OPTIONS REQUIREMENTS:\n"
-            sub_options_restrictions += f"The flowchart contains these Presentation sub-options: {', '.join(presentation_subtypes)}.\n"
-            sub_options_restrictions += f"You MUST include content for ALL of these sub-options in your essay.\n"
-            if "summary" in presentation_subtypes:
-                sub_options_restrictions += "- Include Summary: overview statements and general trends.\n"
-            if "results" in presentation_subtypes:
-                sub_options_restrictions += "- Include Results: specific data presentation and numerical comparisons.\n"
-            if "reference_explanation" in presentation_subtypes:
-                sub_options_restrictions += "- Include Reference & Explanation: detailed analysis, comparisons, and trend explanations.\n"
-            
-            user_prompt += sub_options_restrictions
 
     client = get_deepseek_client()
     model = get_deepseek_model(req.model)
@@ -351,8 +286,15 @@ def generate_sample_essay(req: SampleEssayRequest):
                 f"{user_prompt}\n\n"
                 "REWRITE REQUIRED: The previous draft failed deterministic factual validation.\n"
                 + "\n".join(f"- {item}" for item in contradictions)
-                + "\nRewrite the complete report and correct every issue above. Return only the raw essay text.\n\n"
-                f"PREVIOUS DRAFT:\n{essay}"
+                + (
+                    "\nRewrite the complete report and correct every issue above. "
+                    "Do not reuse any rejected equality or monotonic wording. "
+                    "Distinguish an overall change from a steady, consistent, continuous, "
+                    "or sustained change: those modifiers are allowed only when every "
+                    "recorded interval moves in the same direction. "
+                    "Return only the raw essay text.\n\n"
+                )
+                + f"PREVIOUS DRAFT:\n{essay}"
             )
             essay = _generate_essay_text(
                 client=client,
@@ -367,14 +309,23 @@ def generate_sample_essay(req: SampleEssayRequest):
             fact_attempts = 2
             contradictions = find_table_fact_contradictions(normalized_deplot, essay)
             if contradictions:
-                return SampleEssayResponse(
-                    success=False,
-                    error=(
-                        "DeepSeek generated a sample essay that still contradicts the extracted chart "
-                        "after one automatic rewrite: " + " ".join(contradictions)
-                    ),
-                    debug={"model": model, "fact_validation_attempts": fact_attempts},
+                repaired_essay = soften_false_monotonic_claims(normalized_deplot, essay)
+                repaired_contradictions = find_table_fact_contradictions(
+                    normalized_deplot,
+                    repaired_essay,
                 )
+                if repaired_essay != essay and not repaired_contradictions:
+                    essay = repaired_essay
+                    contradictions = []
+                else:
+                    return SampleEssayResponse(
+                        success=False,
+                        error=(
+                            "DeepSeek generated a sample essay that still contradicts the extracted "
+                            "chart after one automatic rewrite: " + " ".join(contradictions)
+                        ),
+                        debug={"model": model, "fact_validation_attempts": fact_attempts},
+                    )
     except Exception as e:
         print(f"DeepSeek sample essay generation failed with model {model}: {e}")
         return SampleEssayResponse(
@@ -406,16 +357,16 @@ def generate_sample_essay(req: SampleEssayRequest):
             "words": word_count,
             "fact_validation_attempts": fact_attempts,
             "flowchart_used": bool(flow_summary),
-            "has_background": has_background,
             "structure_check": {
-                "background": has_background,
-                "presentation": has_presentation,
-                "comment": has_comment,
-                "all_required_present": len(missing_structures) == 0
+                **structure_presence,
+                "required_nodes": list(REQUIRED_OPTION_C_NODE_TYPES),
+                "optional_nodes": ["optional_commentary"],
+                "all_required_present": not missing_node_types,
             },
             "user_choice": {
                 "use_standard_structure": req.use_standard_structure,
-                "missing_structures": missing_structures if 'missing_structures' in locals() else []
-            }
+                "missing_structures": missing_structures,
+            },
+            "flowchart_node_types": flowchart_types,
         },
     )

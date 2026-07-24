@@ -52,6 +52,10 @@ export function mapSentences(payload) {
   return postJson('/api/map-sentences', payload, 'Sentence mapping failed');
 }
 
+export function analyzeStructure(payload) {
+  return postJson('/api/analyze-structure', payload, 'Structure analysis failed');
+}
+
 export function extractDeplot(formData) {
   return requestJson('/api/deplot-extract', {
     method: 'POST',

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import ErrorBoundary from './ErrorBoundary.jsx';
 import CmEditor from './CmEditor.jsx';
-import { analyzeChartWithImage, requestNextSentence, mapSentences, extractDeplot, saveFinalImage, saveRevisionText, generateSampleEssay, generateSpatialSampleEssay, reviewRevision, resolveBackendUrl } from "./api";
+import { analyzeChartWithImage, analyzeStructure, requestNextSentence, extractDeplot, saveFinalImage, saveRevisionText, generateSampleEssay, generateSpatialSampleEssay, reviewRevision, resolveBackendUrl } from "./api";
 import Login from "./Login";
 import {
   ArrowRight,
@@ -203,6 +203,12 @@ export default function App() {
   const [showSaveReminder, setShowSaveReminder] = useState(false);
   //修改1
   const [rightContent, setRightContent] = useState("Flowchart");
+
+  useEffect(() => {
+    if (currentStage === 'revision') {
+      setRightContent('Visual Feedback');
+    }
+  }, [currentStage]);
   
   const [chartUrl, setChartUrl] = useState(null);
   const [chartData, setChartData] = useState(null);
@@ -215,7 +221,7 @@ export default function App() {
   //添加图片上传功能
   const [uploadedImage, setUploadedImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
-  const [chartType, setChartType] = useState("bar"); // All types use the same unified chart pipeline.
+  const [chartType, setChartType] = useState("auto"); // All types use the same unified chart pipeline.
   const isSpatialTask = SPATIAL_TASK_TYPES.has(chartType);
   const [flowchartData, setFlowchartData] = useState({ nodes: [], edges: [] });
   const [isNextSentenceLoading, setIsNextSentenceLoading] = useState(false);
@@ -306,108 +312,107 @@ export default function App() {
   }, [deplotText, runDeplotExtraction]);
   const [missingNodes, setMissingNodes] = useState([]); // array of {id,title,reason}
   const [sentenceRanges, setSentenceRanges] = useState([]); // [{index,start,end,text}]
+  const [paragraphRanges, setParagraphRanges] = useState([]); // [{paragraph_index,start,end,text}]
+  const [structureFeedback, setStructureFeedback] = useState(null);
   const [mappingStatus, setMappingStatus] = useState('idle'); // idle | loading | ok | missing | error
-  // Missing states (restored)
   const [nodeToSentenceIndices, setNodeToSentenceIndices] = useState({}); // { nodeId: [sentenceIndex,...] }
+  const [nodeToParagraphIndices, setNodeToParagraphIndices] = useState({}); // { nodeId: [paragraphIndex,...] }
   const [lastAddition, setLastAddition] = useState(null); // { start,end,prevText }
   const editorRef = useRef(null);
 
-  // Helper: build highlight ranges from sentence indices
-  const buildHighlightRanges = (indices) => {
-    if (!Array.isArray(indices) || !Array.isArray(sentenceRanges)) {
+  const buildHighlightRanges = (indices, ranges, indexKey = 'index') => {
+    if (!Array.isArray(indices) || !Array.isArray(ranges)) {
       return [];
     }
     return indices.map(i => {
-      const s = sentenceRanges[i];
-      if (!s) return null;
-      return { from: s.start, to: s.end };
+      const range = ranges.find(item => item[indexKey] === i);
+      if (!range) return null;
+      return { from: range.start, to: range.end };
     }).filter(Boolean);
   };
 
-  // Manual mapping trigger (renamed from triggerMapping)
   const runStructureAnalyze = useCallback(() => {
-    // When re-running, clear previous mapping states only after starting
     setMappingStatus('loading');
-    // Optionally keep old mapping visible until new result returns (skip clearing nodeToSentenceIndices here)
     if (!uploadedImage || !text.trim() || !flowchartData?.nodes?.length) {
       setMappingStatus('idle');
       return;
     }
-    mapSentences({ current_text: text, flowchart: flowchartData })
+    analyzeStructure({
+      current_text: text,
+      flowchart: flowchartData,
+      deplot_text: deplotText || null,
+      chart_type: chartType,
+    })
       .then(res => {
         if (res.error) {
           setMappingStatus('error');
           return;
         }
         const sentences = res.sentences || [];
+        const paragraphs = res.paragraphs || [];
         setSentenceRanges(sentences);
-        if (res.mappings && res.mappings.length > 0) {
-          const nodeMap = {};
-          res.mappings.forEach(m => {
-            if (m.node_ids) {
-              m.node_ids.forEach(nid => {
-                if (!nodeMap[nid]) nodeMap[nid] = [];
-                nodeMap[nid].push(m.sentence_index);
-              });
-            } else if (m.primary_node) {
-              if (!nodeMap[m.primary_node]) nodeMap[m.primary_node] = [];
-              nodeMap[m.primary_node].push(m.sentence_index);
+        setParagraphRanges(paragraphs);
+        setStructureFeedback(res.structure_feedback || null);
+
+        const sentenceNodeMap = {};
+        (res.mappings || []).forEach(mapping => {
+          const nodeIds = mapping.node_ids?.length
+            ? mapping.node_ids
+            : mapping.primary_node
+              ? [mapping.primary_node]
+              : [];
+          nodeIds.forEach(nodeId => {
+            if (!sentenceNodeMap[nodeId]) sentenceNodeMap[nodeId] = [];
+            sentenceNodeMap[nodeId].push(mapping.sentence_index);
+          });
+        });
+        Object.keys(sentenceNodeMap).forEach(nodeId => {
+          sentenceNodeMap[nodeId] = Array.from(new Set(sentenceNodeMap[nodeId])).sort((a, b) => a - b);
+        });
+
+        const paragraphNodeMap = {};
+        (res.paragraph_mappings || []).forEach(mapping => {
+          if (mapping.primary_node) {
+            if (!paragraphNodeMap[mapping.primary_node]) {
+              paragraphNodeMap[mapping.primary_node] = [];
             }
-          });
-          Object.keys(nodeMap).forEach(k => { nodeMap[k] = Array.from(new Set(nodeMap[k])).sort((a,b)=>a-b); });
-          
-          // Special handling for presentation nodes: count should equal abc nodes sum
-          const presentationNodes = Object.keys(nodeMap).filter(id => {
-            const node = flowchartData?.nodes?.find(n => n.id === id);
-            return node?.type === 'presentation';
-          });
-          const abcNodes = Object.keys(nodeMap).filter(id => {
-            const node = flowchartData?.nodes?.find(n => n.id === id);
-            return node?.type === 'summary' || node?.type === 'results' || node?.type === 'reference_explanation';
-          });
-          
-          // For each presentation node, set its count to the sum of abc nodes
-          presentationNodes.forEach(presId => {
-            const abcIndices = new Set();
-            abcNodes.forEach(abcId => {
-              if (nodeMap[abcId]) {
-                nodeMap[abcId].forEach(idx => abcIndices.add(idx));
-              }
-            });
-            nodeMap[presId] = Array.from(abcIndices).sort((a,b) => a-b);
-          });
-          
-          setNodeToSentenceIndices(nodeMap);
-          setMissingNodes([]);
-          setMappingStatus('ok');
-        } else if (res.missing_nodes) {
-          setMissingNodes(res.missing_nodes);
-          setNodeToSentenceIndices({});
-          setMappingStatus(res.missing_nodes.length ? 'missing' : 'error');
-        } else {
-          setMappingStatus('error');
-        }
+            paragraphNodeMap[mapping.primary_node].push(mapping.paragraph_index);
+          }
+        });
+        Object.keys(paragraphNodeMap).forEach(nodeId => {
+          paragraphNodeMap[nodeId] = Array.from(new Set(paragraphNodeMap[nodeId])).sort((a, b) => a - b);
+        });
+
+        const reportedMissingNodes = res.missing_nodes || [];
+        setNodeToSentenceIndices(sentenceNodeMap);
+        setNodeToParagraphIndices(paragraphNodeMap);
+        setMissingNodes(reportedMissingNodes);
+        setMappingStatus(reportedMissingNodes.length ? 'missing' : 'ok');
       })
       .catch(err => {
         console.warn('Mapping error', err);
         setMappingStatus('error');
       });
-  }, [text, flowchartData, uploadedImage]);
+  }, [text, flowchartData, uploadedImage, deplotText, chartType]);
 
   const handleNodeClickHighlight = (nodeId) => {
     if (!editorRef.current) {
       return;
     }
-    if (mappingStatus !== 'ok') {
-      return; // only when mappings present
-    }
-    // Cancel active suggestion highlight (mutual exclusion)
-    setActiveSuggestionId(null);
-    const indices = nodeToSentenceIndices[nodeId];
-    if (!indices || indices.length === 0) {
+    if (!['ok', 'missing'].includes(mappingStatus)) {
       return;
     }
-    const ranges = buildHighlightRanges(indices);
+    setActiveSuggestionId(null);
+    const paragraphHighlights = buildHighlightRanges(
+      nodeToParagraphIndices[nodeId] || [],
+      paragraphRanges,
+      'paragraph_index',
+    );
+    const sentenceHighlights = buildHighlightRanges(
+      nodeToSentenceIndices[nodeId] || [],
+      sentenceRanges,
+    );
+    const ranges = paragraphHighlights.length ? paragraphHighlights : sentenceHighlights;
     if (ranges.length === 0) {
       return;
     }
@@ -1673,7 +1678,7 @@ export default function App() {
                     <span>
                       Mapping Status: {mappingStatus === 'idle' && '(Not analyzed)'}
                       {mappingStatus === 'loading' && 'Analyzing structure...'}
-                      {mappingStatus === 'ok' && 'Sentence mapping established'}
+                      {mappingStatus === 'ok' && 'Paragraph and sentence mapping established'}
                       {mappingStatus === 'missing' && `Missing ${missingNodes.length} structural node(s)`}
                       {mappingStatus === 'error' && 'Mapping failed'}
                     </span>
@@ -1681,6 +1686,23 @@ export default function App() {
                       <span style={{ color: '#c00' }}>Please fill missing node content then click Structure Analyze again</span>
                     )}
                   </div>
+                  {structureFeedback && mappingStatus !== 'loading' && (
+                    <div style={{
+                      marginBottom: '0.5rem',
+                      padding: '0.45rem 0.6rem',
+                      borderLeft: `3px solid ${structureFeedback.is_complete ? '#247047' : '#b45309'}`,
+                      background: structureFeedback.is_complete ? '#f0fdf4' : '#fff7ed',
+                      fontSize: '0.7rem',
+                      lineHeight: 1.35,
+                    }}>
+                      <strong>{structureFeedback.summary}</strong>
+                      {structureFeedback.suggestions?.length > 0 && (
+                        <div style={{ marginTop: '0.2rem' }}>
+                          {structureFeedback.suggestions.join(' ')}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div style={{ flex: 1, minHeight: 0 }}>
                     <Flowchart
                       imageReady={!!imagePreview}
@@ -1688,6 +1710,7 @@ export default function App() {
                       onNodeClick={currentStage === 'planning' ? null : handleNodeClickHighlight}
                       missingNodeIds={new Set(missingNodes.map(m => m.id))}
                       nodeSentenceCounts={nodeToSentenceIndices}
+                      nodeParagraphCounts={nodeToParagraphIndices}
                       readOnly={currentStage === 'revision'}
                       currentStage={currentStage}
                     />
