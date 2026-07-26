@@ -1,44 +1,80 @@
-const configuredApiBase = import.meta.env.VITE_API_BASE;
+const configuredApiBase = import.meta.env?.VITE_API_BASE;
 export const API_BASE = (
   configuredApiBase === undefined ? 'http://127.0.0.1:8000' : configuredApiBase
 ).replace(/\/$/, '');
 
+const TRANSIENT_GATEWAY_STATUSES = new Set([502, 503, 504]);
+const TRANSIENT_RETRY_DELAY_MS = 800;
+
 function backendUnavailableMessage(action) {
-  return `${action}: cannot reach backend at ${API_BASE}. Make sure the FastAPI backend is running and VITE_API_BASE points to it.`;
+  const target = API_BASE || 'the current server';
+  return `${action}: cannot reach backend at ${target}. Make sure the FastAPI backend is running and VITE_API_BASE points to it.`;
 }
 
-async function requestJson(path, options, action) {
-  let response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, {
-      ...options,
-      credentials: 'include',
-    });
-  } catch {
-    throw new Error(backendUnavailableMessage(action));
-  }
+function transientFailureMessage(action, status) {
+  const suffix = status ? ` (HTTP ${status})` : '';
+  return `${action}: the connection was interrupted after one automatic retry${suffix}. Please try again.`;
+}
 
-  let data = {};
-  try {
-    data = await response.json();
-  } catch {
-    // Preserve the HTTP status when the backend returns a non-JSON response.
-  }
-  if (!response.ok) {
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function requestJson(path, options, action, { retryTransient = false } = {}) {
+  const maxAttempts = retryTransient ? 2 : 1;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let response;
+    try {
+      response = await fetch(`${API_BASE}${path}`, {
+        ...options,
+        credentials: 'include',
+      });
+    } catch (error) {
+      const canRetry = retryTransient && attempt < maxAttempts && error?.name !== 'AbortError';
+      if (canRetry) {
+        await wait(TRANSIENT_RETRY_DELAY_MS);
+        continue;
+      }
+      if (retryTransient && error?.name !== 'AbortError') {
+        throw new Error(transientFailureMessage(action));
+      }
+      throw new Error(backendUnavailableMessage(action));
+    }
+
+    let data = {};
+    try {
+      data = await response.json();
+    } catch {
+      // Preserve the HTTP status when the backend returns a non-JSON response.
+    }
+    if (response.ok) {
+      return data;
+    }
+
+    const transientGatewayFailure = TRANSIENT_GATEWAY_STATUSES.has(response.status);
+    if (retryTransient && transientGatewayFailure && attempt < maxAttempts) {
+      await wait(TRANSIENT_RETRY_DELAY_MS);
+      continue;
+    }
     if (response.status === 401 && !path.startsWith('/api/auth/')) {
       window.dispatchEvent(new Event('vividwrite:unauthorized'));
     }
+    if (retryTransient && transientGatewayFailure) {
+      throw new Error(transientFailureMessage(action, response.status));
+    }
     throw new Error(data.detail || data.error || data.message || `HTTP ${response.status}`);
   }
-  return data;
+
+  throw new Error(transientFailureMessage(action));
 }
 
-function postJson(path, payload, action) {
+function postJson(path, payload, action, requestPolicy) {
   return requestJson(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  }, action);
+  }, action, requestPolicy);
 }
 
 export function resolveBackendUrl(url) {
@@ -85,7 +121,7 @@ export function extractDeplot(formData) {
   return requestJson('/api/deplot-extract', {
     method: 'POST',
     body: formData,
-  }, 'DePlot extraction failed');
+  }, 'DePlot extraction failed', { retryTransient: true });
 }
 
 export function saveFinalImage(username, file) {
@@ -103,7 +139,12 @@ export function saveRevisionText(username, text) {
 }
 
 export function generateSampleEssay(payload) {
-  return postJson('/api/generate-sample-essay', payload, 'Sample essay generation failed');
+  return postJson(
+    '/api/generate-sample-essay',
+    payload,
+    'Sample essay generation failed',
+    { retryTransient: true },
+  );
 }
 
 export function generateSpatialSampleEssay(payload) {
@@ -119,7 +160,7 @@ export function generateSpatialSampleEssay(payload) {
   return requestJson('/api/generate-spatial-sample-essay', {
     method: 'POST',
     body: formData,
-  }, 'Spatial sample essay generation failed');
+  }, 'Spatial sample essay generation failed', { retryTransient: true });
 }
 
 export function reviewRevision(payload) {
