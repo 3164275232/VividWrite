@@ -137,7 +137,7 @@ body.no-scroll {
 .input-wrapper input {
   width: 100%;
   min-height: 44px;
-  padding: 10px 12px 10px 40px;
+  padding: 10px 40px;
   color: #1d1d1f;
   background: #fff;
   border: 1px solid #c9c9ce;
@@ -170,6 +170,32 @@ body.no-scroll {
   justify-content: center;
   color: #77777c;
   pointer-events: none;
+}
+
+.password-visibility {
+  position: absolute;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #77777c;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.password-visibility:hover {
+  color: #1d1d1f;
+  background: #f0f0f2;
+}
+
+.password-visibility:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(10, 102, 216, 0.18);
 }
 
 .error-msg {
@@ -211,6 +237,11 @@ body.no-scroll {
 
 .app-shell .login-root .actions button:active {
   transform: translateY(1px);
+}
+
+.app-shell .login-root .actions button:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 .app-shell .login-root .actions button:focus-visible {

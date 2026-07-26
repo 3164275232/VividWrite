@@ -5,9 +5,12 @@ from main import app, generate_revision_suggestions
 
 class AppStructureTests(unittest.TestCase):
     def test_only_business_routes_remain(self):
-        paths = {getattr(route, "path", None) for route in app.routes}
+        paths = set(app.openapi()["paths"])
 
         self.assertIn("/health", paths)
+        self.assertIn("/api/auth/login", paths)
+        self.assertIn("/api/auth/me", paths)
+        self.assertIn("/api/auth/logout", paths)
         self.assertIn("/api/deplot-extract", paths)
         self.assertIn("/api/analyze-chart-with-image", paths)
         self.assertIn("/api/generate-spatial-sample-essay", paths)

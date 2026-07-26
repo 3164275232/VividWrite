@@ -88,7 +88,7 @@ def _build_messages(req: NextSentenceRequest) -> List[Dict[str, str]]:
         "- Use numbers ONLY if clearly present in chart data; otherwise use qualitative/comparative phrasing.\n"
         "- Vary openings among candidates.\n"
         "- Avoid repeating the immediately previous sentence content.\n"
-        "- Follow Option C progression: Introduction, Overview, Key Details A, then Key Details B.\n"
+        "- Follow the Task 1 progression: Introduction, Overview, Key Details A, then Key Details B.\n"
         "- Optional Commentary is used only when the task or visual supports interpretation; never invent causes and never add a separate conclusion.\n"
         "OUTPUT FORMAT: Return ONLY valid JSON in this exact format: {\"candidates\": [\"sentence1\", \"sentence2\", \"sentence3\"]}\n"
         "CRITICAL: Do not include any other text, explanations, or formatting. Only the JSON object.\n"

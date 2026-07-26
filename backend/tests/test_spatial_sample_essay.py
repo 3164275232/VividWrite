@@ -118,12 +118,30 @@ class SpatialSampleEssayTests(unittest.TestCase):
                 "QWEN_VL_BASE_URL": "",
                 "QWEN_VL_WORKSPACE_ID": "",
                 "WAN_WORKSPACE_ID": "ws-example",
+                "WAN_REGION": "",
+                "ALIBABA_MODEL_STUDIO_REGION": "",
             },
             clear=False,
         ):
             self.assertEqual(
                 get_qwen_vl_base_url(),
                 "https://ws-example.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+            )
+
+    def test_workspace_id_can_target_singapore_openai_compatible_url(self):
+        with patch.dict(
+            os.environ,
+            {
+                "QWEN_VL_BASE_URL": "",
+                "QWEN_VL_WORKSPACE_ID": "",
+                "WAN_WORKSPACE_ID": "ws-example",
+                "WAN_REGION": "singapore",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                get_qwen_vl_base_url(),
+                "https://ws-example.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
             )
 
     def test_map_and_process_retry_a_147_word_draft_instead_of_failing(self):

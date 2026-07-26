@@ -127,6 +127,21 @@ class WanSpatialFeedbackTests(unittest.TestCase):
                 "https://ws-example.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
             )
 
+    def test_workspace_endpoint_can_target_singapore(self):
+        with patch.dict(
+            os.environ,
+            {
+                "WAN_API_ENDPOINT": "",
+                "WAN_WORKSPACE_ID": "ws-example",
+                "WAN_REGION": "ap-southeast-1",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                get_wan_endpoint(),
+                "https://ws-example.ap-southeast-1.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

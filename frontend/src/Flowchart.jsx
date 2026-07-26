@@ -328,7 +328,7 @@ export default function Flowchart({ imageReady = false, onFlowchartChange, onNod
           </select>
         </label>
         <span className="flowchart-status" style={{ fontSize: '0.7rem', color: '#555', lineHeight: 1.2 }}>
-          {editingDisabled ? (readOnly ? 'Read-only view (revision stage): node editing disabled' : 'Please upload an image first (Flowchart disabled until image uploaded)') : 'Option C: Introduction -> Overview -> Key Details A -> Key Details B -> Optional Commentary | Drag nodes to move or link'}
+          {editingDisabled ? (readOnly ? 'Read-only view (revision stage): node editing disabled' : 'Please upload an image first (Flowchart disabled until image uploaded)') : 'Task 1 structure: Introduction -> Overview -> Key Details A -> Key Details B -> Optional Commentary | Drag nodes to move or link'}
         </span>
       </div>
 

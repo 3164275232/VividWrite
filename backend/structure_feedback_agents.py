@@ -2,7 +2,7 @@
 
 The agents in this module have separate roles, prompts, typed inputs, typed
 outputs, and ``run`` methods. The orchestrator keeps the public response stable
-while providing deterministic Option C fallbacks when an LLM is unavailable or
+while providing deterministic Task 1 fallbacks when an LLM is unavailable or
 returns invalid JSON.
 """
 from __future__ import annotations
@@ -312,7 +312,7 @@ class TaskUnderstandingAgent(BaseStructureAgent):
     output_model = TaskUnderstandingResult
     role_prompt = (
         "You identify the IELTS Academic Writing Task 1 visual type, the objective "
-        "writing goal, and the expected Option C structure. Use chart_type and "
+        "writing goal, and the expected Task 1 structure. Use chart_type and "
         "DePlot text as evidence. Do not assess the student's quality."
     )
 
@@ -496,7 +496,7 @@ class IELTSStructureAgent(BaseStructureAgent):
     name = "IELTSStructureAgent"
     output_model = IELTSStructureResult
     role_prompt = (
-        "You evaluate IELTS Task 1 structure under Option C. Check whether "
+        "You evaluate the standard IELTS Task 1 structure. Check whether "
         "Introduction, Overview, Key Details A, and Key Details B exist, whether "
         "their order is reasonable, and whether each paragraph's function is clear. "
         "Optional Commentary is never required and is not a conclusion."
@@ -760,7 +760,7 @@ class FeedbackIntegrationAgent(BaseStructureAgent):
     output_model = FeedbackIntegrationResult
     role_prompt = (
         "You integrate the four specialist results into concise, actionable "
-        "structure feedback. Option C is complete when Introduction, Overview, "
+        "structure feedback. The structure is complete when Introduction, Overview, "
         "Key Details A, and Key Details B are present. Optional Commentary is never "
         "required and must not introduce unsupported causes or conclusions."
     )
@@ -789,13 +789,17 @@ class FeedbackIntegrationAgent(BaseStructureAgent):
         if agent_input.commentary.unsupported_interpretation_warning:
             suggestions.append(agent_input.commentary.unsupported_interpretation_warning)
         is_complete = not missing
+        missing_labels = [
+            OPTION_C_LABELS.get(node_type, node_type).split(" / ")[0]
+            for node_type in missing
+        ]
         return FeedbackIntegrationResult(
             overall_status="complete" if is_complete else "incomplete",
             is_complete=is_complete,
             summary=(
-                "The required Option C structure is present."
+                "Your essay includes all required Task 1 sections."
                 if is_complete
-                else f"Missing required structure: {', '.join(missing)}."
+                else f"Missing required Task 1 sections: {', '.join(missing_labels)}."
             ),
             missing_nodes=missing,
             order_issues=list(agent_input.ielts_structure.order_issues),
@@ -1188,7 +1192,10 @@ class StructureFeedbackOrchestrator:
                 MissingNodeInfo(
                     id=node.id if node else node_type,
                     title=node.title if node else OPTION_C_LABELS[node_type],
-                    reason=f"Required Option C function '{node_type}' was not detected.",
+                    reason=(
+                        f"Required Task 1 section '{OPTION_C_LABELS[node_type]}' "
+                        "was not detected."
+                    ),
                     required=True,
                 )
             )

@@ -148,6 +148,42 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(color["scale"]["range"], ["#1f77b4", "#ff7f0e", "#2ca02c"])
         self.assertEqual(prepared["encoding"]["x"]["axis"]["labelAngle"], 0)
 
+    def test_renderer_uses_installed_font_and_visible_guide_text(self):
+        payload = _model_payload()
+        payload["vega_lite_spec"]["config"] = {"font": "Arial"}
+        payload["vega_lite_spec"]["encoding"]["x"]["axis"] = {
+            "labelColor": "white",
+            "titleColor": "white",
+        }
+        payload["vega_lite_spec"]["encoding"]["y"]["axis"] = {
+            "labelColor": "white",
+            "titleColor": "white",
+        }
+        payload["vega_lite_spec"]["encoding"]["color"]["legend"] = {
+            "labelColor": "white",
+            "titleColor": "white",
+        }
+
+        prepared = prepare_vega_lite_spec(
+            payload["vega_lite_spec"],
+            payload["records"],
+            "Calls",
+            chart_type="bar",
+        )
+
+        self.assertEqual(prepared["config"]["font"], "DejaVu Sans")
+        self.assertEqual(prepared["config"]["title"]["color"], "#111827")
+        for channel in ("x", "y"):
+            axis = prepared["encoding"][channel]["axis"]
+            self.assertTrue(axis["labels"])
+            self.assertEqual(axis["labelColor"], "#374151")
+            self.assertEqual(axis["titleColor"], "#111827")
+            self.assertEqual(axis["labelFont"], "DejaVu Sans")
+        legend = prepared["encoding"]["color"]["legend"]
+        self.assertEqual(legend["labelColor"], "#374151")
+        self.assertEqual(legend["titleColor"], "#111827")
+        self.assertEqual(legend["labelFont"], "DejaVu Sans")
+
     def test_bar_accuracy_is_compared_with_official_cells_locally(self):
         result = {
             "chart_type": "bar",
@@ -381,6 +417,48 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
 
         self.assertEqual(prepared["mark"]["point"], {"filled": True, "size": 60})
         self.assertFalse(prepared["encoding"]["y"]["scale"]["zero"])
+
+    def test_incorrect_line_value_gets_a_prominent_pink_point_overlay(self):
+        prepared = prepare_vega_lite_spec(
+            {
+                "mark": "line",
+                "encoding": {
+                    "x": {"field": "period", "type": "ordinal"},
+                    "y": {"field": "value", "type": "quantitative"},
+                    "color": {"field": "series", "type": "nominal"},
+                },
+            },
+            [
+                {
+                    "period": "2010",
+                    "series": "Bus",
+                    "value": 2.2,
+                    "official_value": 1.8,
+                    "feedback_status": "incorrect",
+                },
+                {
+                    "period": "2020",
+                    "series": "Bus",
+                    "value": 1.3,
+                    "official_value": 1.3,
+                    "feedback_status": "correct",
+                },
+            ],
+            "Passengers",
+            chart_type="line",
+        )
+
+        self.assertEqual(len(prepared["layer"]), 2)
+        overlay = prepared["layer"][1]
+        self.assertEqual(overlay["mark"]["type"], "point")
+        self.assertEqual(overlay["mark"]["color"], "#f9a8d4")
+        self.assertEqual(overlay["mark"]["stroke"], "#be185d")
+        self.assertEqual(overlay["mark"]["size"], 220)
+        self.assertNotIn("color", overlay["encoding"])
+        self.assertEqual(overlay["encoding"]["y"]["field"], "_line_error_value")
+        self.assertEqual(overlay["encoding"]["y"]["title"], "value")
+        self.assertEqual(prepared["data"]["values"][0]["_line_error_value"], 2.2)
+        self.assertIsNone(prepared["data"]["values"][1]["_line_error_value"])
 
     def test_pie_renderer_adds_category_and_percentage_labels(self):
         records = [

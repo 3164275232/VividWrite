@@ -1,10 +1,13 @@
 import { useState, useEffect } from "react";
-import { ArrowRight, UserRound } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, LockKeyhole, UserRound } from "lucide-react";
 import "./Login.css";
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, passwordRequired = true }) {
   const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   // Temporarily disable scrollbars while login screen is active
   useEffect(() => {
@@ -16,15 +19,27 @@ export default function Login({ onLogin }) {
     };
   }, []);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const trimmed = username.trim();
     if (!trimmed) {
       setError("Username required");
       return;
     }
+    if (passwordRequired && !password) {
+      setError("Password required");
+      return;
+    }
+
     setError("");
-    onLogin(trimmed);
+    setIsSubmitting(true);
+    try {
+      await onLogin(trimmed, password);
+    } catch (loginError) {
+      setError(loginError?.message || "Login failed");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -41,7 +56,7 @@ export default function Login({ onLogin }) {
           <div className="login-header">
             <span className="login-kicker">Welcome back</span>
             <h1 id="login-title">Continue your writing practice</h1>
-            <p>Enter your username to open your Task 1 workspace.</p>
+            <p>Sign in with the test account assigned to you.</p>
           </div>
         <form
           className="login-form-wrapper"
@@ -69,18 +84,52 @@ export default function Login({ onLogin }) {
                 autoFocus
               />
             </div>
-            <p
-              id="username-error"
-              className="error-msg"
-              role="alert"
-              aria-live="assertive"
-            >
-              {error}
-            </p>
           </div>
 
+          {passwordRequired && (
+            <div className="field-group">
+              <label htmlFor="password-input">Password</label>
+              <div className="input-wrapper">
+                <span className="input-icon" aria-hidden="true">
+                  <LockKeyhole size={18} strokeWidth={1.8} />
+                </span>
+                <input
+                  id="password-input"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Please enter the shared password"
+                  aria-invalid={!!error}
+                  aria-describedby={error ? "login-error" : undefined}
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  className="password-visibility"
+                  onClick={() => setShowPassword((visible) => !visible)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  title={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <p
+            id="login-error"
+            className="error-msg"
+            role="alert"
+            aria-live="assertive"
+          >
+            {error}
+          </p>
+
           <div className="actions">
-            <button type="submit">Open workspace <ArrowRight size={16} /></button>
+            <button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Signing in..." : "Open workspace"}
+              {!isSubmitting && <ArrowRight size={16} />}
+            </button>
           </div>
         </form>
         </section>

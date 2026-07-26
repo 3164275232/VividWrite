@@ -1,13 +1,29 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import ErrorBoundary from './ErrorBoundary.jsx';
 import CmEditor from './CmEditor.jsx';
-import { analyzeChartWithImage, analyzeStructure, requestNextSentence, extractDeplot, saveFinalImage, saveRevisionText, generateSampleEssay, generateSpatialSampleEssay, reviewRevision, resolveBackendUrl } from "./api";
+import {
+  analyzeChartWithImage,
+  analyzeStructure,
+  extractDeplot,
+  generateSampleEssay,
+  generateSpatialSampleEssay,
+  getAuthConfig,
+  getCurrentUser,
+  login as loginUser,
+  logout as logoutUser,
+  requestNextSentence,
+  resolveBackendUrl,
+  reviewRevision,
+  saveFinalImage,
+  saveRevisionText,
+} from "./api";
 import Login from "./Login";
 import {
   ArrowRight,
   BarChart3,
   FileText,
   GitBranch,
+  LogOut,
   RotateCcw,
   Sparkles,
   Upload,
@@ -180,6 +196,8 @@ export default function App() {
   // Dev debug flag (set VITE_SHOW_DEBUG=true in .env to enable)
   const SHOW_DEBUG = import.meta.env.VITE_SHOW_DEBUG === 'true';
 
+  const [authReady, setAuthReady] = useState(false);
+  const [passwordRequired, setPasswordRequired] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [username, setUsername] = useState(""); // NEW: current logged in user
   const [leftWidth, setLeftWidth] = useState(60); // Percentage width of the left pane
@@ -203,6 +221,51 @@ export default function App() {
   const [showSaveReminder, setShowSaveReminder] = useState(false);
   //修改1
   const [rightContent, setRightContent] = useState("Flowchart");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const restoreSession = async () => {
+      try {
+        const config = await getAuthConfig();
+        if (!cancelled) {
+          setPasswordRequired(config?.password_required !== false);
+        }
+      } catch (error) {
+        console.warn('Could not load login settings', error);
+      }
+
+      try {
+        const session = await getCurrentUser();
+        if (!cancelled && session?.authenticated && session?.username) {
+          setUsername(session.username);
+          setIsLoggedIn(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setUsername("");
+          setIsLoggedIn(false);
+        }
+      } finally {
+        if (!cancelled) {
+          setAuthReady(true);
+        }
+      }
+    };
+
+    const handleUnauthorized = () => {
+      setUsername("");
+      setIsLoggedIn(false);
+      setShowPostLoginTips(false);
+    };
+
+    window.addEventListener('vividwrite:unauthorized', handleUnauthorized);
+    restoreSession();
+    return () => {
+      cancelled = true;
+      window.removeEventListener('vividwrite:unauthorized', handleUnauthorized);
+    };
+  }, []);
 
   useEffect(() => {
     if (currentStage === 'revision') {
@@ -238,18 +301,30 @@ export default function App() {
   const [isExtractingDeplot, setIsExtractingDeplot] = useState(false);
   const [deplotError, setDeplotError] = useState("");
   // Track background DePlot extraction task without showing UI
-  const deplotTaskRef = useRef({ seq: 0, promise: null });
+  const deplotTaskRef = useRef({ seq: 0, promise: null, key: null });
   // Helper to run DePlot extraction; if showOverlay=true, show analyzing modal while waiting
   const runDeplotExtraction = useCallback(async (
     file,
     { showOverlay = false, chartTypeOverride = null } = {}
   ) => {
     if (!file) return Promise.reject(new Error('No image file'));
+    const effectiveChartType = chartTypeOverride || chartType;
+    const taskKey = [
+      file.name,
+      file.size,
+      file.lastModified,
+      effectiveChartType,
+    ].join(':');
+    const activeTask = deplotTaskRef.current;
+    if (activeTask.promise && activeTask.key === taskKey) {
+      return activeTask.promise;
+    }
+
     // bump sequence to invalidate older responses when starting a new task
     const seq = ++deplotTaskRef.current.seq;
     const fd = new FormData();
     fd.append('image', file);
-    fd.append('chart_type', chartTypeOverride || chartType);
+    fd.append('chart_type', effectiveChartType);
     const exec = async () => {
       try {
         if (showOverlay) setIsExtractingDeplot(true);
@@ -273,12 +348,20 @@ export default function App() {
         if (showOverlay) setIsExtractingDeplot(false);
         // clear stored promise when this task completes (only if still current)
         if (deplotTaskRef.current.seq === seq) {
-          deplotTaskRef.current.promise = null;
+          deplotTaskRef.current = {
+            seq,
+            promise: null,
+            key: taskKey,
+          };
         }
       }
     };
     const p = exec();
-    deplotTaskRef.current.promise = p;
+    deplotTaskRef.current = {
+      seq,
+      promise: p,
+      key: taskKey,
+    };
     return p;
   }, [chartType]);
 
@@ -319,6 +402,13 @@ export default function App() {
   const [nodeToParagraphIndices, setNodeToParagraphIndices] = useState({}); // { nodeId: [paragraphIndex,...] }
   const [lastAddition, setLastAddition] = useState(null); // { start,end,prevText }
   const editorRef = useRef(null);
+
+  useEffect(() => {
+    if (rightContent !== 'Flowchart') {
+      editorRef.current?.clearHighlights();
+      setActiveSuggestionId(null);
+    }
+  }, [rightContent]);
 
   const buildHighlightRanges = (indices, ranges, indexKey = 'index') => {
     if (!Array.isArray(indices) || !Array.isArray(ranges)) {
@@ -420,11 +510,19 @@ export default function App() {
     editorRef.current.highlightSentenceRanges(ranges);
   };
 
-  const handleLogin = (uname) => {
-    setUsername(uname);
+  const handleLogin = async (uname, password) => {
+    const session = await loginUser(uname, password);
+    setUsername(session.username);
     setIsLoggedIn(true);
     // Show tips modal right after login
     setShowPostLoginTips(true);
+  };
+
+  const handleLogout = async () => {
+    await logoutUser();
+    setUsername("");
+    setIsLoggedIn(false);
+    setShowPostLoginTips(false);
   };
 
   const handleNextStage = async () => {
@@ -526,8 +624,11 @@ export default function App() {
     setChartUrl(null);
     setChartData(null);
     // Invalidate any pending DePlot extraction and clear related state
-    deplotTaskRef.current.seq += 1;
-    deplotTaskRef.current.promise = null;
+    deplotTaskRef.current = {
+      seq: deplotTaskRef.current.seq + 1,
+      promise: null,
+      key: null,
+    };
     setDeplotText("");
     setDeplotError("");
   };
@@ -553,26 +654,14 @@ export default function App() {
     setChartUrl(null);
     setChartData(null);
 
-    // 若还没有 DePlot 文本，先尝试自动提取一次
     let deplotForAnalysis = isSpatialTask ? '(Not required for spatial tasks)' : deplotText;
     if (!isSpatialTask && !deplotForAnalysis.trim()) {
       try {
-        setIsExtractingDeplot(true);
-        const fd = new FormData();
-        fd.append('image', uploadedImage);
-        fd.append('chart_type', chartType);
-        const depRes = await extractDeplot(fd);
-        if (depRes?.extracted_text && depRes.extracted_text.trim()) {
-          deplotForAnalysis = depRes.extracted_text;
-          setDeplotText(depRes.extracted_text); // 缓存
-          setDeplotError("");
-        } else {
-    setDeplotError("DePlot returned empty result, continuing with placeholder text");
-        }
+        deplotForAnalysis = await ensureDeplotText(uploadedImage, {
+          errorPrefix: 'Automatic DePlot extraction failed',
+        });
       } catch {
-  setDeplotError("Automatic DePlot extraction failed, continuing with placeholder text");
-      } finally {
-        setIsExtractingDeplot(false);
+        setDeplotError("Automatic DePlot extraction failed, continuing with placeholder text");
       }
     }
 
@@ -949,7 +1038,20 @@ export default function App() {
   return (
     <>
     <main className="app-shell" style={{ margin: 0, padding: 0, fontFamily: "system-ui, sans-serif", height: "100vh", width: "100vw", display: "flex", flexDirection: "column" }}>
-      {isLoggedIn ? (
+      {!authReady ? (
+        <section className="login-root" role="status" aria-live="polite">
+          <div className="login-shell">
+            <header className="login-brand">
+              <span className="login-brand-mark">V</span>
+              <span>
+                <strong>VividWrite</strong>
+                <small>IELTS Writing Studio</small>
+              </span>
+            </header>
+            <p className="login-footnote">Checking session...</p>
+          </div>
+        </section>
+      ) : isLoggedIn ? (
         <ErrorBoundary>
         <>
           {showPostLoginTips && (
@@ -1031,6 +1133,30 @@ export default function App() {
                 title="Go to next stage"
               >
                 Next Stage <ArrowRight size={15} />
+              </button>
+              <span style={{ color: '#ddd', fontSize: '0.8rem', fontWeight: 600 }}>
+                {username}
+              </span>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={handleLogout}
+                aria-label="Log out"
+                title="Log out"
+                style={{
+                  width: 34,
+                  height: 34,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#fff',
+                  background: '#4a4a4a',
+                  border: '1px solid #666',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                }}
+              >
+                <LogOut size={16} />
               </button>
             </div>
           </nav>
@@ -1154,7 +1280,7 @@ export default function App() {
               <div style={{ background: '#fff', padding: '1.5rem 1.25rem 1.25rem', borderRadius: 8, width: 320, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', gap: '0.9rem', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Analyzing Image...</h3>
                 <div style={{ fontSize: '0.85rem', color: '#444', textAlign: 'center', lineHeight: 1.4 }}>
-                  Running DePlot model to extract underlying chart data. This may take a few seconds.
+                  Extracting chart data with DePlot. The first run can take one to three minutes; keep this page open.
                 </div>
                 <div style={{ width: '100%', height: 6, background: '#e5e5e5', borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{ width: '65%', height: '100%', background: 'linear-gradient(90deg,#007bff,#5a9bff)', animation: 'deplot-bar 1.2s infinite alternate' }} />
@@ -1241,8 +1367,11 @@ export default function App() {
                         setChartUrl(null);
                         setChartData(null);
                         setDeplotError("");
-                        deplotTaskRef.current.seq += 1;
-                        deplotTaskRef.current.promise = null;
+                        deplotTaskRef.current = {
+                          seq: deplotTaskRef.current.seq + 1,
+                          promise: null,
+                          key: null,
+                        };
                         setDeplotText("");
                         if (SPATIAL_TASK_TYPES.has(nextType)) {
                           setIsExtractingDeplot(false);
@@ -1860,11 +1989,11 @@ export default function App() {
         </ErrorBoundary>
       ) : (
         <>
-          <Login onLogin={handleLogin} />
+          <Login onLogin={handleLogin} passwordRequired={passwordRequired} />
         </>
       )}
     </main>
-    {currentStage !== 'revision' && showCandidatePanel && aiCandidates.length > 0 && (
+    {isLoggedIn && currentStage !== 'revision' && showCandidatePanel && aiCandidates.length > 0 && (
       <div className="candidate-panel" style={{ position: 'fixed', bottom: 16, right: 16, width: 380, maxWidth: '90vw', background: '#fff', border: '1px solid #ddd', boxShadow: '0 4px 18px rgba(0,0,0,0.15)', borderRadius: 8, zIndex: 4000, display: 'flex', flexDirection: 'column', maxHeight: '60vh' }}>
         <div className="candidate-panel-header" style={{ padding: '0.65rem 0.85rem', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <strong style={{ fontSize: 14 }}>Candidate Next Sentences ({aiCandidates.length})</strong>

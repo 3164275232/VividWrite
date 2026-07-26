@@ -80,7 +80,7 @@ def generate_sample_essay(req: SampleEssayRequest):
     if not req.deplot_text or not req.deplot_text.strip():
         return SampleEssayResponse(success=False, error="deplot_text required")
     
-    # Check Option C flowchart structure completeness. Optional Commentary is
+    # Check the Task 1 flowchart structure. Optional Commentary is
     # deliberately excluded from the required set.
     if req.flowchart and req.flowchart.get("nodes"):
         nodes = req.flowchart.get("nodes", [])
@@ -207,7 +207,7 @@ def generate_sample_essay(req: SampleEssayRequest):
         if node_type in selected_types
     ]
     structure_guidance = (
-        "Use the standard Option C IELTS Task 1 structure: "
+        "Use the standard IELTS Task 1 structure: "
         "Introduction -> Overview -> Key Details A -> Key Details B. "
         if req.use_standard_structure
         else f"Follow only this flowchart structure: {' -> '.join(structure_parts)}. "

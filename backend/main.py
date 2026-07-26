@@ -2,12 +2,13 @@ import json
 import sys
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from auth import authentication_middleware, router as auth_router
 from deplot_extractor import extract_table_from_image_deplot
 from hybrid_feedback import HybridFeedbackService
 from next_sentence import NextSentenceRequest, NextSentenceResponse, generate_next_sentence
@@ -32,9 +33,11 @@ for stream in (sys.stdout, sys.stderr):
 ensure_runtime_directories()
 
 app = FastAPI(title="VividWrite API", version="0.2.0")
+app.include_router(auth_router)
 app.include_router(sample_essay_router)
 app.include_router(revision_review_router)
 app.include_router(structure_feedback_router)
+app.middleware("http")(authentication_middleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -215,9 +218,14 @@ async def spatial_sample_essay(
 
 
 @app.post("/api/save-final-image")
-async def save_final_image(username: str = Form(...), image: UploadFile = File(...)):
+async def save_final_image(
+    request: Request,
+    username: str = Form(...),
+    image: UploadFile = File(...),
+):
     try:
-        path = await save_user_image(username, image)
+        authenticated_user = getattr(request.state, "username", None)
+        path = await save_user_image(authenticated_user or username, image)
         return {"success": True, "path": relative_runtime_path(path)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -226,9 +234,10 @@ async def save_final_image(username: str = Form(...), image: UploadFile = File(.
 
 
 @app.post("/api/save-revision-text", response_model=RevisionTextOut)
-def save_revision_text(payload: RevisionTextIn):
+def save_revision_text(request: Request, payload: RevisionTextIn):
     try:
-        path = save_user_revision(payload.username, payload.text)
+        authenticated_user = getattr(request.state, "username", None)
+        path = save_user_revision(authenticated_user or payload.username, payload.text)
         return RevisionTextOut(success=True, path=relative_runtime_path(path))
     except ValueError as exc:
         return RevisionTextOut(success=False, error=str(exc))

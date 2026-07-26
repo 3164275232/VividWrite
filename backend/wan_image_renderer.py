@@ -8,11 +8,11 @@ import os
 import uuid
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import requests
 from dotenv import load_dotenv
 from PIL import Image
+from model_studio_regions import model_studio_workspace_host
 
 
 load_dotenv()
@@ -41,12 +41,11 @@ def get_wan_endpoint() -> str:
     workspace_id = (os.getenv("WAN_WORKSPACE_ID") or "").strip()
     if workspace_id:
         # Accept the short ws-* ID, the workspace hostname, or a full workspace URL.
-        parsed = urlparse(workspace_id if "://" in workspace_id else f"//{workspace_id}")
-        hostname = (parsed.hostname or workspace_id).strip().rstrip("/")
-        if hostname.endswith(".maas.aliyuncs.com"):
-            base = f"https://{hostname}"
-        else:
-            base = f"https://{hostname}.cn-beijing.maas.aliyuncs.com"
+        hostname = model_studio_workspace_host(
+            workspace_id,
+            region=os.getenv("WAN_REGION") or os.getenv("ALIBABA_MODEL_STUDIO_REGION"),
+        )
+        base = f"https://{hostname}"
         return (
             f"{base}/api/v1/services/"
             "aigc/multimodal-generation/generation"

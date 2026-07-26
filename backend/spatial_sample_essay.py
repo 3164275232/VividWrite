@@ -7,12 +7,12 @@ import io
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from openai import OpenAI
 from PIL import Image
 
+from model_studio_regions import model_studio_workspace_host, normalize_model_studio_region
 from next_sentence import summarize_flowchart
 from sample_essay import SampleEssayResponse
 from structure_feedback_agents import (
@@ -28,6 +28,10 @@ load_dotenv()
 
 DEFAULT_QWEN_VL_MODEL = "qwen3.7-plus"
 DEFAULT_QWEN_VL_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+REGIONAL_QWEN_VL_BASE_URLS = {
+    "cn-beijing": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "ap-southeast-1": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+}
 
 
 def get_qwen_vl_api_key() -> str | None:
@@ -48,12 +52,15 @@ def get_qwen_vl_base_url() -> str:
         return explicit.rstrip("/")
 
     workspace = (os.getenv("QWEN_VL_WORKSPACE_ID") or os.getenv("WAN_WORKSPACE_ID") or "").strip()
+    region = (
+        os.getenv("QWEN_VL_REGION")
+        or os.getenv("WAN_REGION")
+        or os.getenv("ALIBABA_MODEL_STUDIO_REGION")
+    )
     if not workspace:
-        return DEFAULT_QWEN_VL_BASE_URL
-    parsed = urlparse(workspace if "://" in workspace else f"//{workspace}")
-    hostname = (parsed.hostname or workspace).strip().rstrip("/")
-    if not hostname.endswith(".maas.aliyuncs.com"):
-        hostname = f"{hostname}.cn-beijing.maas.aliyuncs.com"
+        selected_region = normalize_model_studio_region(region)
+        return REGIONAL_QWEN_VL_BASE_URLS.get(selected_region, DEFAULT_QWEN_VL_BASE_URL)
+    hostname = model_studio_workspace_host(workspace, region=region)
     return f"https://{hostname}/compatible-mode/v1"
 
 

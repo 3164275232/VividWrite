@@ -1,4 +1,7 @@
-export const API_BASE = (import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000').replace(/\/$/, '');
+const configuredApiBase = import.meta.env.VITE_API_BASE;
+export const API_BASE = (
+  configuredApiBase === undefined ? 'http://127.0.0.1:8000' : configuredApiBase
+).replace(/\/$/, '');
 
 function backendUnavailableMessage(action) {
   return `${action}: cannot reach backend at ${API_BASE}. Make sure the FastAPI backend is running and VITE_API_BASE points to it.`;
@@ -7,7 +10,10 @@ function backendUnavailableMessage(action) {
 async function requestJson(path, options, action) {
   let response;
   try {
-    response = await fetch(`${API_BASE}${path}`, options);
+    response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      credentials: 'include',
+    });
   } catch {
     throw new Error(backendUnavailableMessage(action));
   }
@@ -19,6 +25,9 @@ async function requestJson(path, options, action) {
     // Preserve the HTTP status when the backend returns a non-JSON response.
   }
   if (!response.ok) {
+    if (response.status === 401 && !path.startsWith('/api/auth/')) {
+      window.dispatchEvent(new Event('vividwrite:unauthorized'));
+    }
     throw new Error(data.detail || data.error || data.message || `HTTP ${response.status}`);
   }
   return data;
@@ -35,6 +44,22 @@ function postJson(path, payload, action) {
 export function resolveBackendUrl(url) {
   if (!url || /^https?:\/\//i.test(url)) return url || null;
   return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
+export function getAuthConfig() {
+  return requestJson('/api/auth/config', {}, 'Loading login settings failed');
+}
+
+export function getCurrentUser() {
+  return requestJson('/api/auth/me', {}, 'Checking your login failed');
+}
+
+export function login(username, password) {
+  return postJson('/api/auth/login', { username, password }, 'Login failed');
+}
+
+export function logout() {
+  return postJson('/api/auth/logout', {}, 'Logout failed');
 }
 
 export function analyzeChartWithImage(formData) {

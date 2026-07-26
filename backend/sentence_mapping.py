@@ -25,7 +25,7 @@ SentenceMappingResponse = StructureAnalysisResponse
 
 
 def map_sentences(req: SentenceMappingRequest) -> SentenceMappingResponse:
-    """Run the Option C multi-agent pipeline through the legacy function name."""
+    """Run the Task 1 multi-agent pipeline through the legacy function name."""
     return StructureFeedbackOrchestrator(
         model=req.model,
         temperature=req.temperature,

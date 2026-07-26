@@ -29,6 +29,9 @@ TEXT_OUTLINE_KEYS = {
     "strokeJoin",
     "strokeMiterLimit",
 }
+CHART_FONT = "DejaVu Sans"
+GUIDE_LABEL_COLOR = "#374151"
+GUIDE_TITLE_COLOR = "#111827"
 PIE_ALERT_COLOR = "#dc2626"
 PIE_ALERT_DARK = "#991b1b"
 PIE_ERROR_FILL = "#f9a8d4"
@@ -37,6 +40,8 @@ PIE_ERROR_TEXT = "#701a3d"
 BAR_ERROR_FILL = "#f9a8d4"
 BAR_ERROR_STROKE = "#be185d"
 BAR_ERROR_TEXT = "#701a3d"
+LINE_ERROR_FILL = "#f9a8d4"
+LINE_ERROR_STROKE = "#be185d"
 PIE_PLOT_WIDTH = 600
 PIE_PLOT_HEIGHT = 420
 PIE_FALLBACK_PALETTE = [
@@ -257,6 +262,51 @@ def _normalise_line_marks(value: Any) -> None:
 
     for child in value.values():
         _normalise_line_marks(child)
+
+
+def _normalise_chart_text_styles(value: Any) -> None:
+    """Use an installed font and keep chart guides readable on white."""
+    if isinstance(value, list):
+        for item in value:
+            _normalise_chart_text_styles(item)
+        return
+    if not isinstance(value, dict):
+        return
+
+    if "font" in value:
+        value["font"] = CHART_FONT
+
+    encoding = value.get("encoding")
+    if isinstance(encoding, dict):
+        for channel, definition in encoding.items():
+            if not isinstance(definition, dict):
+                continue
+            if channel in {"x", "y", "row", "column"}:
+                axis = definition.get("axis")
+                if isinstance(axis, dict):
+                    axis.update(
+                        {
+                            "labels": True,
+                            "labelColor": GUIDE_LABEL_COLOR,
+                            "labelFont": CHART_FONT,
+                            "titleColor": GUIDE_TITLE_COLOR,
+                            "titleFont": CHART_FONT,
+                        }
+                    )
+            elif channel in {"color", "fill", "stroke", "shape", "size", "opacity"}:
+                legend = definition.get("legend")
+                if isinstance(legend, dict):
+                    legend.update(
+                        {
+                            "labelColor": GUIDE_LABEL_COLOR,
+                            "labelFont": CHART_FONT,
+                            "titleColor": GUIDE_TITLE_COLOR,
+                            "titleFont": CHART_FONT,
+                        }
+                    )
+
+    for child in value.values():
+        _normalise_chart_text_styles(child)
 
 
 def _validate_tree(value: Any, *, depth: int = 0) -> None:
@@ -804,6 +854,76 @@ def _prepare_bar_feedback(spec: dict, records: list[dict]) -> tuple[dict, list[d
     return prepared, render_records
 
 
+def _find_line_encoding(spec: dict) -> dict | None:
+    shared_encoding = spec.get("encoding") if isinstance(spec.get("encoding"), dict) else {}
+    if _mark_type(spec.get("mark")) == "line":
+        return copy.deepcopy(shared_encoding)
+    layers = spec.get("layer")
+    if not isinstance(layers, list):
+        return None
+    for layer in layers:
+        if not isinstance(layer, dict) or _mark_type(layer.get("mark")) != "line":
+            continue
+        encoding = copy.deepcopy(shared_encoding)
+        if isinstance(layer.get("encoding"), dict):
+            encoding.update(copy.deepcopy(layer["encoding"]))
+        return encoding
+    return None
+
+
+def _prepare_line_feedback(spec: dict, records: list[dict]) -> tuple[dict, list[dict]]:
+    """Overlay a prominent pink point only on explicit incorrect line values."""
+    issue_statuses = {"incorrect", "conflicting"}
+    if not any(record.get("feedback_status") in issue_statuses for record in records):
+        return spec, records
+
+    encoding = _find_line_encoding(spec)
+    if encoding is None:
+        return spec, records
+    value_channel = _bar_value_channel(encoding)
+    if value_channel is None:
+        return spec, records
+
+    render_records = copy.deepcopy(records)
+    for record in render_records:
+        is_error = record.get("feedback_status") in issue_statuses
+        record["_line_error_value"] = record.get("value") if is_error else None
+
+    overlay_encoding = copy.deepcopy(encoding)
+    value_definition = copy.deepcopy(overlay_encoding[value_channel])
+    original_value_field = str(value_definition.get("field") or "value")
+    value_definition["field"] = "_line_error_value"
+    value_definition["title"] = value_definition.get("title") or original_value_field
+    overlay_encoding[value_channel] = value_definition
+    for channel in ("color", "fill", "stroke", "opacity", "shape", "size"):
+        overlay_encoding.pop(channel, None)
+
+    overlay_layer = {
+        "mark": {
+            "type": "point",
+            "filled": True,
+            "size": 220,
+            "color": LINE_ERROR_FILL,
+            "stroke": LINE_ERROR_STROKE,
+            "strokeWidth": 3,
+            "opacity": 1,
+        },
+        "encoding": overlay_encoding,
+    }
+
+    prepared = copy.deepcopy(spec)
+    if isinstance(prepared.get("layer"), list):
+        prepared["layer"].append(overlay_layer)
+    else:
+        base_layer = {
+            key: value
+            for key, value in prepared.items()
+            if key not in {"data", "title", "width", "height", "autosize", "config", "$schema"}
+        }
+        prepared = {"layer": [base_layer, overlay_layer]}
+    return prepared, render_records
+
+
 def prepare_vega_lite_spec(
     spec: dict,
     records: list[dict],
@@ -828,6 +948,8 @@ def prepare_vega_lite_spec(
         render_records = records
         if chart_type == "bar":
             prepared, render_records = _prepare_bar_feedback(prepared, records)
+        elif chart_type == "line":
+            prepared, render_records = _prepare_line_feedback(prepared, records)
     _validate_tree(prepared)
     _remove_text_outlines(prepared)
     if chart_type == "line":
@@ -850,21 +972,42 @@ def prepare_vega_lite_spec(
     prepared["config"].update(
         {
             "background": "white",
-            "font": "Arial",
-            "axis": {"labelFontSize": 12, "titleFontSize": 13, "gridColor": "#e5e7eb"},
-            "legend": {
+            "font": CHART_FONT,
+            "axis": {
+                "labelColor": GUIDE_LABEL_COLOR,
+                "labelFont": CHART_FONT,
                 "labelFontSize": 12,
+                "titleColor": GUIDE_TITLE_COLOR,
+                "titleFont": CHART_FONT,
+                "titleFontSize": 13,
+                "domainColor": "#9ca3af",
+                "tickColor": "#9ca3af",
+                "gridColor": "#e5e7eb",
+            },
+            "legend": {
+                "labelColor": GUIDE_LABEL_COLOR,
+                "labelFont": CHART_FONT,
+                "labelFontSize": 12,
+                "titleColor": GUIDE_TITLE_COLOR,
+                "titleFont": CHART_FONT,
                 "titleFontSize": 12,
                 "labelLimit": 320,
                 "titleLimit": 320,
             },
-            "title": {"fontSize": 16, "anchor": "middle", "offset": 16},
+            "title": {
+                "color": GUIDE_TITLE_COLOR,
+                "font": CHART_FONT,
+                "fontSize": 16,
+                "anchor": "middle",
+                "offset": 16,
+            },
             "text": {"stroke": None, "strokeWidth": 0, "strokeOpacity": 0},
             "view": {"stroke": None},
         }
     )
     if palette:
         prepared["config"]["range"] = {"category": palette}
+    _normalise_chart_text_styles(prepared)
     return prepared
 
 

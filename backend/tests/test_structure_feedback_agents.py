@@ -91,6 +91,11 @@ class StructureFeedbackAgentTests(unittest.TestCase):
 
         self.assertTrue(response.structure_feedback.is_complete)
         self.assertEqual(response.missing_nodes, [])
+        self.assertEqual(
+            response.structure_feedback.summary,
+            "Your essay includes all required Task 1 sections.",
+        )
+        self.assertNotIn("Option C", response.model_dump_json())
         self.assertNotIn(
             "optional_commentary",
             response.structure_feedback.missing_nodes,
