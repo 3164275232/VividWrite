@@ -24,6 +24,14 @@ from storage import (
     save_user_image,
     save_user_revision,
 )
+from task_image_detection import (
+    HIGH_CONFIDENCE_THRESHOLD,
+    SPATIAL_TASK_TYPES,
+    STATISTICAL_TASK_TYPES,
+    SUPPORTED_TASK_TYPES,
+    TaskImageDetectionError,
+    classify_task_image,
+)
 
 
 for stream in (sys.stdout, sys.stderr):
@@ -56,6 +64,18 @@ class ChartAnalysisResponse(BaseModel):
     chart_url: Optional[str] = None
     revision_suggestions: Optional[list] = None
     error: Optional[str] = None
+
+
+class TaskImagePreparationResponse(BaseModel):
+    success: bool
+    image_id: str | None = None
+    filename: str | None = None
+    task_type: str
+    confidence: float
+    detection_source: str
+    needs_confirmation: bool
+    deplot_text: str | None = None
+    error: str | None = None
 
 
 class RevisionTextIn(BaseModel):
@@ -114,6 +134,10 @@ def generate_revision_suggestions(chart_data: dict, student_answer: str) -> list
     return suggestions
 
 
+def _normalize_deplot_response_text(raw_text: str) -> str:
+    return raw_text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<0x0A>")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -147,7 +171,7 @@ async def deplot_extract(
             str(image_path),
             chart_type,
         ) or ""
-        normalized = raw_text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<0x0A>")
+        normalized = _normalize_deplot_response_text(raw_text)
         return {
             "extracted_text": normalized,
             "image_id": image_path.name,
@@ -155,6 +179,86 @@ async def deplot_extract(
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"DePlot extraction failed: {exc}") from exc
+
+
+@app.post("/api/prepare-task-image", response_model=TaskImagePreparationResponse)
+async def prepare_task_image(
+    image: UploadFile = File(...),
+    chart_type: str = Form("auto"),
+    extract_deplot: bool = Form(False),
+):
+    image_path = await save_uploaded_file(image, UPLOADS_DIR)
+    selected_type = (chart_type or "auto").strip().lower()
+
+    if selected_type != "auto":
+        task_type = selected_type if selected_type in SUPPORTED_TASK_TYPES else "unknown"
+        needs_confirmation = task_type == "unknown"
+        deplot_text = None
+        if extract_deplot and task_type in STATISTICAL_TASK_TYPES:
+            try:
+                raw_text = await run_in_threadpool(
+                    extract_table_from_image_deplot,
+                    str(image_path),
+                    task_type,
+                ) or ""
+                deplot_text = _normalize_deplot_response_text(raw_text)
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"DePlot extraction failed: {exc}") from exc
+        return TaskImagePreparationResponse(
+            success=True,
+            image_id=image_path.name,
+            filename=image.filename,
+            task_type=task_type,
+            confidence=1.0 if not needs_confirmation else 0.0,
+            detection_source="manual",
+            needs_confirmation=needs_confirmation,
+            deplot_text=deplot_text,
+        )
+
+    try:
+        classification = await run_in_threadpool(classify_task_image, str(image_path))
+    except TaskImageDetectionError as exc:
+        return TaskImagePreparationResponse(
+            success=True,
+            image_id=image_path.name,
+            filename=image.filename,
+            task_type="unknown",
+            confidence=0.0,
+            detection_source="qwen-vision-error",
+            needs_confirmation=True,
+            deplot_text=None,
+            error=str(exc),
+        )
+
+    task_type = classification.task_type
+    needs_confirmation = (
+        task_type == "unknown"
+        or classification.confidence < HIGH_CONFIDENCE_THRESHOLD
+        or task_type not in (STATISTICAL_TASK_TYPES | SPATIAL_TASK_TYPES)
+    )
+    deplot_text = None
+    if extract_deplot and not needs_confirmation and task_type in STATISTICAL_TASK_TYPES:
+        try:
+            raw_text = await run_in_threadpool(
+                extract_table_from_image_deplot,
+                str(image_path),
+                task_type,
+            ) or ""
+            deplot_text = _normalize_deplot_response_text(raw_text)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"DePlot extraction failed: {exc}") from exc
+
+    return TaskImagePreparationResponse(
+        success=True,
+        image_id=image_path.name,
+        filename=image.filename,
+        task_type=task_type,
+        confidence=classification.confidence,
+        detection_source=classification.detection_source,
+        needs_confirmation=needs_confirmation,
+        deplot_text=deplot_text,
+        error=None if not needs_confirmation else classification.reason or None,
+    )
 
 
 @app.post("/api/analyze-chart-with-image", response_model=ChartAnalysisResponse)

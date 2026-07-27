@@ -11,6 +11,7 @@ import {
   getCurrentUser,
   login as loginUser,
   logout as logoutUser,
+  prepareTaskImage,
   requestNextSentence,
   resolveBackendUrl,
   reviewRevision,
@@ -32,7 +33,14 @@ import {
 import "./App.css";
 import Flowchart from "./Flowchart";//对应修改1
 
-import { analysisRequirement, sampleEssayRequirement, SPATIAL_TASK_TYPES } from './utils/taskTypes';
+import {
+  analysisRequirement,
+  KNOWN_TASK_TYPES,
+  sampleEssayRequirement,
+  SPATIAL_TASK_TYPES,
+  STATISTICAL_TASK_TYPES,
+  taskTypeLabel,
+} from './utils/taskTypes';
 
 function formatFeedbackNumber(value) {
   const number = Number(value);
@@ -284,8 +292,16 @@ export default function App() {
   //添加图片上传功能
   const [uploadedImage, setUploadedImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
-  const [chartType, setChartType] = useState("auto"); // All types use the same unified chart pipeline.
-  const isSpatialTask = SPATIAL_TASK_TYPES.has(chartType);
+  const [selectedChartType, setSelectedChartType] = useState("auto");
+  const [resolvedChartType, setResolvedChartType] = useState(null);
+  const [taskDetection, setTaskDetection] = useState(null);
+  const [isPreparingTaskImage, setIsPreparingTaskImage] = useState(false);
+  const [taskPreparationPhase, setTaskPreparationPhase] = useState("");
+  const effectiveChartType = selectedChartType === "auto"
+    ? (resolvedChartType || "auto")
+    : selectedChartType;
+  const isSpatialTask = SPATIAL_TASK_TYPES.has(effectiveChartType);
+  const isStatisticalTask = STATISTICAL_TASK_TYPES.has(effectiveChartType);
   const [flowchartData, setFlowchartData] = useState({ nodes: [], edges: [] });
   const [isNextSentenceLoading, setIsNextSentenceLoading] = useState(false);
   const [isSampleEssayLoading, setIsSampleEssayLoading] = useState(false); // separate loading state
@@ -300,6 +316,7 @@ export default function App() {
   // DePlot extraction states
   const [isExtractingDeplot, setIsExtractingDeplot] = useState(false);
   const [deplotError, setDeplotError] = useState("");
+  const taskImagePreparationRef = useRef({ seq: 0, promise: null, key: null });
   // Track background DePlot extraction task without showing UI
   const deplotTaskRef = useRef({ seq: 0, promise: null, key: null });
   // Helper to run DePlot extraction; if showOverlay=true, show analyzing modal while waiting
@@ -308,12 +325,15 @@ export default function App() {
     { showOverlay = false, chartTypeOverride = null } = {}
   ) => {
     if (!file) return Promise.reject(new Error('No image file'));
-    const effectiveChartType = chartTypeOverride || chartType;
+    const deplotChartType = chartTypeOverride || effectiveChartType;
+    if (!STATISTICAL_TASK_TYPES.has(deplotChartType)) {
+      return Promise.reject(new Error('Please confirm a statistical chart type before DePlot extraction.'));
+    }
     const taskKey = [
       file.name,
       file.size,
       file.lastModified,
-      effectiveChartType,
+      deplotChartType,
     ].join(':');
     const activeTask = deplotTaskRef.current;
     if (activeTask.promise && activeTask.key === taskKey) {
@@ -324,7 +344,7 @@ export default function App() {
     const seq = ++deplotTaskRef.current.seq;
     const fd = new FormData();
     fd.append('image', file);
-    fd.append('chart_type', effectiveChartType);
+    fd.append('chart_type', deplotChartType);
     const exec = async () => {
       try {
         if (showOverlay) setIsExtractingDeplot(true);
@@ -363,9 +383,12 @@ export default function App() {
       key: taskKey,
     };
     return p;
-  }, [chartType]);
+  }, [effectiveChartType]);
 
-  const ensureDeplotText = useCallback(async (file, { errorPrefix = 'DePlot extraction failed' } = {}) => {
+  const ensureDeplotText = useCallback(async (
+    file,
+    { errorPrefix = 'DePlot extraction failed', chartTypeOverride = null } = {},
+  ) => {
     const cachedText = deplotText.trim();
     if (cachedText) return deplotText;
     if (!file) throw new Error('Please upload an image first.');
@@ -375,7 +398,7 @@ export default function App() {
       const pendingTask = deplotTaskRef.current?.promise;
       const res = pendingTask
         ? await pendingTask
-        : await runDeplotExtraction(file, { showOverlay: false });
+        : await runDeplotExtraction(file, { showOverlay: false, chartTypeOverride });
 
       const extracted = res?.extracted_text?.trim() ? res.extracted_text : '';
       if (!extracted) {
@@ -393,6 +416,134 @@ export default function App() {
       setIsExtractingDeplot(false);
     }
   }, [deplotText, runDeplotExtraction]);
+
+  const prepareUploadedTaskImage = useCallback(async (
+    file,
+    selectedTypeOverride = selectedChartType,
+  ) => {
+    if (!file) return null;
+    const selectedType = selectedTypeOverride || "auto";
+    const taskKey = [
+      file.name,
+      file.size,
+      file.lastModified,
+      selectedType,
+    ].join(':');
+    const activeTask = taskImagePreparationRef.current;
+    if (activeTask.promise && activeTask.key === taskKey) {
+      return activeTask.promise;
+    }
+
+    const seq = activeTask.seq + 1;
+    const exec = async () => {
+      setIsPreparingTaskImage(true);
+      setTaskPreparationPhase(selectedType === "auto" ? "detecting" : "");
+      try {
+        const formData = new FormData();
+        formData.append('image', file);
+        formData.append('chart_type', selectedType);
+        formData.append('extract_deplot', 'false');
+        const result = await prepareTaskImage(formData);
+        if (taskImagePreparationRef.current.seq !== seq) {
+          return result;
+        }
+
+        setTaskDetection(result || null);
+        if (selectedType === "auto") {
+          if (result?.needs_confirmation || !KNOWN_TASK_TYPES.has(result?.task_type)) {
+            setResolvedChartType(null);
+            setIsExtractingDeplot(false);
+            setDeplotError(
+              'Auto Detect could not confidently identify this image. Please choose Map Task, Process Diagram, or a chart type manually.'
+            );
+            return result;
+          }
+          setResolvedChartType(result.task_type);
+        } else {
+          setResolvedChartType(null);
+        }
+
+        const preparedType = selectedType === "auto" ? result?.task_type : selectedType;
+        if (STATISTICAL_TASK_TYPES.has(preparedType)) {
+          if (result?.deplot_text?.trim()) {
+            setDeplotText(result.deplot_text);
+            setDeplotError("");
+          } else {
+            setTaskPreparationPhase("deplot");
+            await runDeplotExtraction(file, {
+              showOverlay: false,
+              chartTypeOverride: preparedType,
+            }).catch(() => null);
+          }
+        } else {
+          setDeplotText("");
+          setDeplotError("");
+          setIsExtractingDeplot(false);
+        }
+        return result;
+      } catch (error) {
+        if (taskImagePreparationRef.current.seq === seq) {
+          setTaskDetection({
+            task_type: "unknown",
+            confidence: 0,
+            needs_confirmation: true,
+            detection_source: "frontend-error",
+            error: error.message,
+          });
+          setResolvedChartType(null);
+          setIsExtractingDeplot(false);
+          setDeplotError(error.message || 'Task type detection failed. Please choose the task type manually.');
+        }
+        throw error;
+      } finally {
+        if (taskImagePreparationRef.current.seq === seq) {
+          taskImagePreparationRef.current = {
+            seq,
+            promise: null,
+            key: taskKey,
+          };
+          setIsPreparingTaskImage(false);
+          setTaskPreparationPhase("");
+        }
+      }
+    };
+
+    const promise = exec();
+    taskImagePreparationRef.current = {
+      seq,
+      promise,
+      key: taskKey,
+    };
+    return promise;
+  }, [runDeplotExtraction, selectedChartType]);
+
+  const resolveTaskTypeForAction = useCallback(async () => {
+    const currentType = selectedChartType === "auto" ? resolvedChartType : selectedChartType;
+    if (KNOWN_TASK_TYPES.has(currentType)) {
+      return currentType;
+    }
+    if (!uploadedImage) {
+      throw new Error('Please upload an image first.');
+    }
+
+    const taskKey = [
+      uploadedImage.name,
+      uploadedImage.size,
+      uploadedImage.lastModified,
+      selectedChartType,
+    ].join(':');
+    const activeTask = taskImagePreparationRef.current;
+    const result = activeTask.promise && activeTask.key === taskKey
+      ? await activeTask.promise
+      : await prepareUploadedTaskImage(uploadedImage, selectedChartType);
+    const resolvedType = selectedChartType === "auto" ? result?.task_type : selectedChartType;
+    if (result?.needs_confirmation || !KNOWN_TASK_TYPES.has(resolvedType)) {
+      throw new Error(
+        'Auto Detect could not confidently identify this image. Please choose Map Task, Process Diagram, or a chart type manually.'
+      );
+    }
+    return resolvedType;
+  }, [prepareUploadedTaskImage, resolvedChartType, selectedChartType, uploadedImage]);
   const [missingNodes, setMissingNodes] = useState([]); // array of {id,title,reason}
   const [sentenceRanges, setSentenceRanges] = useState([]); // [{index,start,end,text}]
   const [paragraphRanges, setParagraphRanges] = useState([]); // [{paragraph_index,start,end,text}]
@@ -431,7 +582,7 @@ export default function App() {
       current_text: text,
       flowchart: flowchartData,
       deplot_text: deplotText || null,
-      chart_type: chartType,
+      chart_type: effectiveChartType,
     })
       .then(res => {
         if (res.error) {
@@ -483,7 +634,7 @@ export default function App() {
         console.warn('Mapping error', err);
         setMappingStatus('error');
       });
-  }, [text, flowchartData, uploadedImage, deplotText, chartType]);
+  }, [text, flowchartData, uploadedImage, deplotText, effectiveChartType]);
 
   const handleNodeClickHighlight = (nodeId) => {
     if (!editorRef.current) {
@@ -547,7 +698,7 @@ export default function App() {
 
     // Keep DePlot extraction in the background. Stage changes should not be blocked by
     // first-time model loading or a slow chart parse.
-    if (currentStage === 'planning' && !isSpatialTask) {
+    if (currentStage === 'planning' && isStatisticalTask) {
       setIsExtractingDeplot(false);
       if (!deplotText.trim() && !deplotTaskRef.current?.promise) {
         runDeplotExtraction(uploadedImage, { showOverlay: false }).catch(() => {
@@ -611,10 +762,11 @@ export default function App() {
       // Reset previous DePlot results and errors
       setDeplotText("");
       setDeplotError("");
-      // Spatial tasks go directly to the reference-image renderer and do not use DePlot.
-      if (!isSpatialTask) {
-        runDeplotExtraction(file, { showOverlay: false }).catch(() => {/* error already recorded; keep silent here */});
-      }
+      setTaskDetection(null);
+      setResolvedChartType(null);
+      prepareUploadedTaskImage(file, selectedChartType).catch(() => {
+        // Error is already stored in deplotError; users can manually choose the task type.
+      });
     }
   };
 
@@ -623,6 +775,11 @@ export default function App() {
     setImagePreview(null);
     setChartUrl(null);
     setChartData(null);
+    taskImagePreparationRef.current = {
+      seq: taskImagePreparationRef.current.seq + 1,
+      promise: null,
+      key: null,
+    };
     // Invalidate any pending DePlot extraction and clear related state
     deplotTaskRef.current = {
       seq: deplotTaskRef.current.seq + 1,
@@ -631,6 +788,10 @@ export default function App() {
     };
     setDeplotText("");
     setDeplotError("");
+    setTaskDetection(null);
+    setResolvedChartType(null);
+    setIsPreparingTaskImage(false);
+    setTaskPreparationPhase("");
   };
 //修改2
     // 默认显示Visual Feedback
@@ -644,6 +805,15 @@ export default function App() {
       return;
     }
 
+    let taskTypeForAnalysis;
+    try {
+      taskTypeForAnalysis = await resolveTaskTypeForAction();
+    } catch (error) {
+      setAnalysisError(error.message);
+      return;
+    }
+    const analysisIsSpatial = SPATIAL_TASK_TYPES.has(taskTypeForAnalysis);
+
     // Persist revision full text snapshot
     if (currentStage === 'revision' && username) {
       try { await saveRevisionText(username, text); } catch (e) { console.warn('Failed to save revision text', e); }
@@ -654,11 +824,12 @@ export default function App() {
     setChartUrl(null);
     setChartData(null);
 
-    let deplotForAnalysis = isSpatialTask ? '(Not required for spatial tasks)' : deplotText;
-    if (!isSpatialTask && !deplotForAnalysis.trim()) {
+    let deplotForAnalysis = analysisIsSpatial ? '(Not required for spatial tasks)' : deplotText;
+    if (!analysisIsSpatial && !deplotForAnalysis.trim()) {
       try {
         deplotForAnalysis = await ensureDeplotText(uploadedImage, {
           errorPrefix: 'Automatic DePlot extraction failed',
+          chartTypeOverride: taskTypeForAnalysis,
         });
       } catch {
         setDeplotError("Automatic DePlot extraction failed, continuing with placeholder text");
@@ -673,8 +844,8 @@ export default function App() {
         // prepare chart form data (reuse existing logic)
         const formData = new FormData();
         formData.append('image', uploadedImage);
-        formData.append('chart_type', chartType);
-        const requirement = analysisRequirement(chartType);
+        formData.append('chart_type', taskTypeForAnalysis);
+        const requirement = analysisRequirement(taskTypeForAnalysis);
         formData.append('requirement', requirement);
         formData.append('student_answer', text);
         formData.append('deplot_text', deplotForAnalysis);
@@ -705,8 +876,8 @@ export default function App() {
         // Planning/drafting keep previous analyze (chart + simple suggestions)
         const formData = new FormData();
         formData.append('image', uploadedImage);
-        formData.append('chart_type', chartType);
-        const requirement = analysisRequirement(chartType);
+        formData.append('chart_type', taskTypeForAnalysis);
+        const requirement = analysisRequirement(taskTypeForAnalysis);
         formData.append('requirement', requirement);
         formData.append('student_answer', text);
         if (!deplotForAnalysis.trim()) deplotForAnalysis = '(No DePlot data extracted)';
@@ -803,7 +974,14 @@ export default function App() {
       setLastAddition(null);
       setAiCandidates([]);
       setShowCandidatePanel(false);
-      if (isSpatialTask) {
+      let taskTypeForNextSentence;
+      try {
+        taskTypeForNextSentence = await resolveTaskTypeForAction();
+      } catch (error) {
+        setNextSentenceError(error.message);
+        return;
+      }
+      if (SPATIAL_TASK_TYPES.has(taskTypeForNextSentence)) {
         setNextSentenceError('Next Sentence for map/process tasks needs a vision-language model and is not enabled yet.');
         return;
       }
@@ -850,11 +1028,20 @@ export default function App() {
       return;
     }
     setNextSentenceError("");
+    let taskTypeForSampleEssay;
+    try {
+      taskTypeForSampleEssay = await resolveTaskTypeForAction();
+    } catch (error) {
+      setNextSentenceError(error.message);
+      return;
+    }
+    const sampleEssayIsSpatial = SPATIAL_TASK_TYPES.has(taskTypeForSampleEssay);
     let dep = "";
-    if (!isSpatialTask) {
+    if (!sampleEssayIsSpatial) {
       try {
         dep = await ensureDeplotText(uploadedImage, {
-          errorPrefix: 'Failed to extract DePlot data for sample essay'
+          errorPrefix: 'Failed to extract DePlot data for sample essay',
+          chartTypeOverride: taskTypeForSampleEssay,
         });
       } catch (e) {
         setNextSentenceError(e.message || 'Failed to extract DePlot data for sample essay');
@@ -864,12 +1051,12 @@ export default function App() {
 
     try {
       setIsSampleEssayLoading(true);
-      const requirement = sampleEssayRequirement(chartType);
-      const requestData = isSpatialTask
-        ? { image: uploadedImage, flowchart: flowchartData, requirement, chart_type: chartType }
-        : { deplot_text: dep, flowchart: flowchartData, requirement, chart_type: chartType };
-      const requestKind = isSpatialTask ? 'spatial' : 'statistical';
-      const res = isSpatialTask
+      const requirement = sampleEssayRequirement(taskTypeForSampleEssay);
+      const requestData = sampleEssayIsSpatial
+        ? { image: uploadedImage, flowchart: flowchartData, requirement, chart_type: taskTypeForSampleEssay }
+        : { deplot_text: dep, flowchart: flowchartData, requirement, chart_type: taskTypeForSampleEssay };
+      const requestKind = sampleEssayIsSpatial ? 'spatial' : 'statistical';
+      const res = sampleEssayIsSpatial
         ? await generateSpatialSampleEssay(requestData)
         : await generateSampleEssay(requestData);
       
@@ -1275,12 +1462,16 @@ export default function App() {
           )}
 
           {/* Stage transition toast removed */}
-          {isExtractingDeplot && currentStage !== 'planning' && (
+          {(isExtractingDeplot || isPreparingTaskImage) && currentStage !== 'planning' && (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2500 }}>
               <div style={{ background: '#fff', padding: '1.5rem 1.25rem 1.25rem', borderRadius: 8, width: 320, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', gap: '0.9rem', alignItems: 'center' }}>
-                <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Analyzing Image...</h3>
+                <h3 style={{ margin: 0, fontSize: '1.05rem' }}>
+                  {taskPreparationPhase === 'detecting' ? 'Detecting Image...' : 'Analyzing Image...'}
+                </h3>
                 <div style={{ fontSize: '0.85rem', color: '#444', textAlign: 'center', lineHeight: 1.4 }}>
-                  Extracting chart data with DePlot. The first run can take one to three minutes; keep this page open.
+                  {taskPreparationPhase === 'detecting'
+                    ? 'Detecting IELTS task type...'
+                    : 'Extracting chart data with DePlot. The first run can take one to three minutes; keep this page open.'}
                 </div>
                 <div style={{ width: '100%', height: 6, background: '#e5e5e5', borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{ width: '65%', height: '100%', background: 'linear-gradient(90deg,#007bff,#5a9bff)', animation: 'deplot-bar 1.2s infinite alternate' }} />
@@ -1360,26 +1551,31 @@ export default function App() {
                       Chart Type:
                     </label>
                     <select
-                      value={chartType}
+                      value={selectedChartType}
                       onChange={(e) => {
                         const nextType = e.target.value;
-                        setChartType(nextType);
+                        setSelectedChartType(nextType);
                         setChartUrl(null);
                         setChartData(null);
                         setDeplotError("");
+                        setTaskDetection(null);
+                        setResolvedChartType(null);
+                        setIsPreparingTaskImage(false);
+                        setTaskPreparationPhase("");
+                        taskImagePreparationRef.current = {
+                          seq: taskImagePreparationRef.current.seq + 1,
+                          promise: null,
+                          key: null,
+                        };
                         deplotTaskRef.current = {
                           seq: deplotTaskRef.current.seq + 1,
                           promise: null,
                           key: null,
                         };
                         setDeplotText("");
-                        if (SPATIAL_TASK_TYPES.has(nextType)) {
-                          setIsExtractingDeplot(false);
-                        } else if (uploadedImage) {
-                          runDeplotExtraction(uploadedImage, {
-                            showOverlay: false,
-                            chartTypeOverride: nextType,
-                          }).catch(() => {});
+                        setIsExtractingDeplot(false);
+                        if (uploadedImage) {
+                          prepareUploadedTaskImage(uploadedImage, nextType).catch(() => {});
                         }
                       }}
                       style={{
@@ -1399,6 +1595,20 @@ export default function App() {
                       <option value="map">Map Task</option>
                       <option value="process">Process Diagram</option>
                     </select>
+                    {isPreparingTaskImage && (
+                      <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: '#444' }}>
+                        {taskPreparationPhase === 'detecting'
+                          ? 'Detecting IELTS task type...'
+                          : taskPreparationPhase === 'deplot'
+                          ? 'Extracting chart data with DePlot...'
+                          : 'Preparing task image...'}
+                      </div>
+                    )}
+                    {selectedChartType === 'auto' && taskDetection && !taskDetection.needs_confirmation && KNOWN_TASK_TYPES.has(taskDetection.task_type) && (
+                      <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: '#166534' }}>
+                        Auto Detect: {taskTypeLabel(taskDetection.task_type)} ({Math.round(Number(taskDetection.confidence || 0) * 100)}% confidence)
+                      </div>
+                    )}
                   </div>
                 )}
                 

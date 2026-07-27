@@ -60,6 +60,31 @@ class HybridFeedbackTests(unittest.TestCase):
         self.assertEqual(spatial.kwargs["task_type"], "map")
         self.assertIsNone(statistical.kwargs)
 
+    def test_routes_process_to_deterministic_process_pipeline(self):
+        statistical = FakeStatisticalService()
+        map_service = FakeSpatialService()
+        process_service = FakeSpatialService()
+        with tempfile.TemporaryDirectory() as folder:
+            image_path = Path(folder) / "process.png"
+            image_path.write_bytes(b"reference")
+            result, filename = HybridFeedbackService(
+                folder,
+                statistical_service=statistical,
+                spatial_service=map_service,
+                process_service=process_service,
+            ).generate(
+                chart_type="process",
+                requirement="Describe the process.",
+                student_answer="The material is carried by plane.",
+                image_path=image_path,
+            )
+
+        self.assertEqual(filename, "spatial.png")
+        self.assertEqual(result["style"]["renderer"], "generative-image")
+        self.assertEqual(process_service.kwargs["task_type"], "process")
+        self.assertIsNone(map_service.kwargs)
+        self.assertIsNone(statistical.kwargs)
+
     def test_spatial_json_call_requires_an_image(self):
         with tempfile.TemporaryDirectory() as folder:
             service = HybridFeedbackService(folder, spatial_service=FakeSpatialService())

@@ -11,6 +11,7 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn("/api/auth/login", paths)
         self.assertIn("/api/auth/me", paths)
         self.assertIn("/api/auth/logout", paths)
+        self.assertIn("/api/prepare-task-image", paths)
         self.assertIn("/api/deplot-extract", paths)
         self.assertIn("/api/analyze-chart-with-image", paths)
         self.assertIn("/api/generate-spatial-sample-essay", paths)

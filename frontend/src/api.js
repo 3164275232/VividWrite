@@ -105,6 +105,13 @@ export function analyzeChartWithImage(formData) {
   }, 'Chart analysis failed');
 }
 
+export function prepareTaskImage(formData) {
+  return requestJson('/api/prepare-task-image', {
+    method: 'POST',
+    body: formData,
+  }, 'Task type detection failed', { retryTransient: true });
+}
+
 export function requestNextSentence(payload) {
   return postJson('/api/next-sentence', payload, 'Next sentence generation failed');
 }
