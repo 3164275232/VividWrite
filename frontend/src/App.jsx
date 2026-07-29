@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import ErrorBoundary from './ErrorBoundary.jsx';
 import CmEditor from './CmEditor.jsx';
+import RevisionWorkspace from './RevisionWorkspace.jsx';
 import {
   analyzeChartWithImage,
   analyzeStructure,
@@ -1277,50 +1278,54 @@ export default function App() {
                 <div style={{ fontSize: '0.9rem', background: '#555', padding: '0.4rem 0.75rem', borderRadius: '4px' }}>
                   <strong>Stage:</strong> {currentStage.charAt(0).toUpperCase() + currentStage.slice(1)}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', color: '#ccc' }}>
-                  {stages.map((stage, index) => (
-                    <div key={stage} style={{ display: 'flex', alignItems: 'center' }}>
-                      <div style={{
-                        width: '8px',
-                        height: '8px',
-                        borderRadius: '50%',
-                        background: index <= stageIndex ? '#28a745' : '#666',
-                        border: index === stageIndex ? '2px solid #fff' : 'none'
-                      }} />
-                      {index < stages.length - 1 && (
+                {currentStage !== 'revision' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', color: '#ccc' }}>
+                    {stages.map((stage, index) => (
+                      <div key={stage} style={{ display: 'flex', alignItems: 'center' }}>
                         <div style={{
-                          width: '12px',
-                          height: '1px',
-                          background: index < stageIndex ? '#28a745' : '#666',
-                          margin: '0 0.25rem'
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          background: index <= stageIndex ? '#28a745' : '#666',
+                          border: index === stageIndex ? '2px solid #fff' : 'none'
                         }} />
-                      )}
-                    </div>
-                  ))}
-                </div>
+                        {index < stages.length - 1 && (
+                          <div style={{
+                            width: '12px',
+                            height: '1px',
+                            background: index < stageIndex ? '#28a745' : '#666',
+                            margin: '0 0.25rem'
+                          }} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               {/* Removed inline status badges in favor of modal */}
-              <button
-                className="next-stage-button"
-                onClick={() => {
-                  console.log('Button clicked!', { stageIndex, stagesLength: stages.length, disabled: stageIndex === stages.length - 1 });
-                  handleNextStage();
-                }}
-                disabled={stageIndex === stages.length - 1}
-                style={{
-                  background: stageIndex === stages.length - 1 ? '#555' : '#007bff',
-                  color: 'white',
-                  border: 'none',
-                  padding: '0.5rem 0.9rem',
-                  borderRadius: '4px',
-                  cursor: stageIndex === stages.length - 1 ? 'not-allowed' : 'pointer',
-                  fontSize: '0.9rem',
-                  opacity: stageIndex === stages.length - 1 ? 0.6 : 1
-                }}
-                title="Go to next stage"
-              >
-                Next Stage <ArrowRight size={15} />
-              </button>
+              {currentStage !== 'revision' && (
+                <button
+                  className="next-stage-button"
+                  onClick={() => {
+                    console.log('Button clicked!', { stageIndex, stagesLength: stages.length, disabled: stageIndex === stages.length - 1 });
+                    handleNextStage();
+                  }}
+                  disabled={stageIndex === stages.length - 1}
+                  style={{
+                    background: stageIndex === stages.length - 1 ? '#555' : '#007bff',
+                    color: 'white',
+                    border: 'none',
+                    padding: '0.5rem 0.9rem',
+                    borderRadius: '4px',
+                    cursor: stageIndex === stages.length - 1 ? 'not-allowed' : 'pointer',
+                    fontSize: '0.9rem',
+                    opacity: stageIndex === stages.length - 1 ? 0.6 : 1
+                  }}
+                  title="Go to next stage"
+                >
+                  Next Stage <ArrowRight size={15} />
+                </button>
+              )}
               <span style={{ color: '#ddd', fontSize: '0.8rem', fontWeight: 600 }}>
                 {username}
               </span>
@@ -1507,6 +1512,46 @@ export default function App() {
               </div>
             </div>
           )}
+          {currentStage === 'revision' ? (
+            <RevisionWorkspace
+              imagePreview={imagePreview}
+              chartUrl={chartUrl}
+              chartData={chartData}
+              chartFeedbackDetails={<ChartFeedbackDetails chartData={chartData} />}
+              text={text}
+              onTextChange={setText}
+              editorRef={editorRef}
+              isAnalyzing={isAnalyzing}
+              onAnalyze={handleAnalyzeText}
+              analysisError={analysisError}
+              reviewSuggestions={reviewSuggestions}
+              revisionReview={revisionReview}
+              activeSuggestionId={activeSuggestionId}
+              setActiveSuggestionId={setActiveSuggestionId}
+              applySuggestion={applySuggestion}
+              mappingStatus={mappingStatus}
+              missingNodes={missingNodes}
+              structureFeedback={structureFeedback}
+              onAnalyzeStructure={runStructureAnalyze}
+              structureAnalyzeDisabled={
+                mappingStatus === 'loading'
+                || !uploadedImage
+                || !flowchartData?.nodes?.length
+              }
+              structureMap={(
+                <Flowchart
+                  imageReady={!!imagePreview}
+                  onFlowchartChange={setFlowchartData}
+                  onNodeClick={handleNodeClickHighlight}
+                  missingNodeIds={new Set(missingNodes.map((node) => node.id))}
+                  nodeSentenceCounts={nodeToSentenceIndices}
+                  nodeParagraphCounts={nodeToParagraphIndices}
+                  readOnly
+                  currentStage={currentStage}
+                />
+              )}
+            />
+          ) : (
           <div className="workspace" style={{ display: "flex", flexGrow: 1, width: "100%" }}>
             <div
               className="workspace-left"
@@ -2195,6 +2240,7 @@ export default function App() {
               )}
             </div>
           </div>
+          )}
         </>
         </ErrorBoundary>
       ) : (
