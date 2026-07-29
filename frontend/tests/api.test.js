@@ -46,12 +46,12 @@ test('sample essay does not retry a request error', async () => {
   let calls = 0;
   globalThis.fetch = async () => {
     calls += 1;
-    return Response.json({ detail: 'Invalid flowchart' }, { status: 400 });
+      return Response.json({ detail: 'Invalid request' }, { status: 400 });
   };
 
   await assert.rejects(
     () => generateSampleEssay({ deplot_text: 'Year | Value' }),
-    /Invalid flowchart/,
+      /Invalid request/,
   );
   assert.equal(calls, 1);
 });

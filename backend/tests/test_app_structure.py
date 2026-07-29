@@ -5,7 +5,8 @@ from main import app, generate_revision_suggestions
 
 class AppStructureTests(unittest.TestCase):
     def test_only_business_routes_remain(self):
-        paths = set(app.openapi()["paths"])
+        schema = app.openapi()
+        paths = set(schema["paths"])
 
         self.assertIn("/health", paths)
         self.assertIn("/api/auth/login", paths)
@@ -15,9 +16,12 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn("/api/deplot-extract", paths)
         self.assertIn("/api/analyze-chart-with-image", paths)
         self.assertIn("/api/generate-spatial-sample-essay", paths)
+        self.assertNotIn("/api/analyze-structure", paths)
+        self.assertNotIn("/api/map-sentences", paths)
         self.assertNotIn("/api/hello", paths)
         self.assertNotIn("/api/echo", paths)
         self.assertNotIn("/api/analyze-chart", paths)
+        self.assertNotIn("flowchart", str(schema).lower())
 
     def test_revision_suggestions_report_missing_and_short_answers(self):
         suggestions = generate_revision_suggestions(

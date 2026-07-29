@@ -13,13 +13,7 @@ from openai import OpenAI
 from PIL import Image
 
 from model_studio_regions import model_studio_workspace_host, normalize_model_studio_region
-from next_sentence import summarize_flowchart
 from sample_essay import SampleEssayResponse
-from structure_feedback_agents import (
-    OPTION_C_LABELS,
-    REQUIRED_OPTION_C_NODE_TYPES,
-    normalize_node_type,
-)
 from wan_image_renderer import SPATIAL_TASK_TYPES
 
 
@@ -80,65 +74,18 @@ def _encode_image(image_path: str | Path) -> str:
     return f"data:image/jpeg;base64,{encoded}"
 
 
-def _structure_choice(flowchart: dict | None, use_standard_structure: bool | None) -> SampleEssayResponse | None:
-    nodes = flowchart.get("nodes", []) if isinstance(flowchart, dict) else []
-    node_types = {
-        normalize_node_type(node.get("type"))
-        for node in nodes
-        if isinstance(node, dict)
-    }
-    missing = [
-        OPTION_C_LABELS[node_type]
-        for node_type in REQUIRED_OPTION_C_NODE_TYPES
-        if node_type not in node_types
-    ]
-    if missing and use_standard_structure is None:
-        return SampleEssayResponse(
-            success=False,
-            requires_choice=True,
-            choice_info={
-                "title": "Flowchart Structure Analysis",
-                "missing_structures": missing,
-                "options": [
-                    {
-                        "id": "flowchart",
-                        "title": "Continue with current flowchart structure",
-                        "description": "Use your flowchart as-is (may result in incomplete essay)",
-                        "value": False,
-                    },
-                    {
-                        "id": "standard",
-                        "title": "Use standard IELTS structure",
-                        "description": "Use an introduction, overview and detailed paragraphs",
-                        "value": True,
-                    },
-                ],
-                "message": f"Your flowchart is missing: {', '.join(missing)}. Choose how to proceed:",
-            },
-        )
-    return None
-
-
 def _prompt(
     task_type: str,
     requirement: str,
-    flowchart: dict | None,
-    use_standard_structure: bool | None,
     min_words: int,
 ) -> str:
     visual_name = "map or site-plan visual" if task_type == "map" else "process diagram"
     target_min = max(180, min_words + 30)
     target_max = max(220, target_min + 40)
-    if use_standard_structure or not flowchart or not flowchart.get("nodes"):
-        structure = (
-            "Use the standard IELTS Task 1 structure: a paraphrased introduction, a clear overview, "
-            "and two logically grouped detail paragraphs."
-        )
-    else:
-        structure = (
-            "Follow this student-selected writing plan while keeping the report coherent:\n"
-            f"{summarize_flowchart(flowchart)}"
-        )
+    structure = (
+        "Use the standard IELTS Task 1 structure: a paraphrased introduction, a clear overview, "
+        "and two logically grouped detail paragraphs."
+    )
 
     task_guidance = (
         "For a map, identify only the time states actually shown, preserve compass directions and "
@@ -183,8 +130,6 @@ def generate_spatial_sample_essay(
     image_path: str | Path,
     chart_type: str,
     requirement: str,
-    flowchart: dict | None,
-    use_standard_structure: bool | None = None,
     min_words: int = 150,
     client: Any | None = None,
 ) -> SampleEssayResponse:
@@ -192,9 +137,6 @@ def generate_spatial_sample_essay(
     if task_type not in SPATIAL_TASK_TYPES:
         return SampleEssayResponse(success=False, error=f"Unsupported spatial task type: {task_type}")
 
-    choice = _structure_choice(flowchart, use_standard_structure)
-    if choice:
-        return choice
     api_key = get_qwen_vl_api_key()
     if not api_key and client is None:
         return SampleEssayResponse(
@@ -206,7 +148,7 @@ def generate_spatial_sample_essay(
         )
 
     model = get_qwen_vl_model()
-    prompt = _prompt(task_type, requirement, flowchart, use_standard_structure, min_words)
+    prompt = _prompt(task_type, requirement, min_words)
     vision_client = client or OpenAI(api_key=api_key, base_url=get_qwen_vl_base_url())
     messages = [
         {

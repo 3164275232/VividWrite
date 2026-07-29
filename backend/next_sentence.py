@@ -8,18 +8,12 @@ from pydantic import BaseModel
 import re
 from dotenv import load_dotenv
 from deepseek_config import get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
-from structure_feedback_agents import (
-    OPTION_C_LABELS,
-    OPTION_C_NODE_TYPES,
-    normalize_node_type,
-)
 
 load_dotenv()
 
 class NextSentenceRequest(BaseModel):
     current_text: str
     deplot_text: str  # REQUIRED textual extraction from chart (model generated)
-    flowchart: Optional[dict] = None  # {nodes:[], edges:[]}
     initial_instruction: Optional[str] = "Assist Descriptive academic writing, Data Commentary, IELTS Writing Task 1 writing"
     requirement: Optional[str] = None
     candidate_count: int = 3  # number of alternative next sentences wanted
@@ -33,45 +27,15 @@ class NextSentenceResponse(BaseModel):
     debug: Optional[dict] = None
     error: Optional[str] = None
 
-# ---- Flowchart summarizer ----
-
-def summarize_flowchart(flowchart: Optional[dict]) -> str:
-    if not flowchart or not isinstance(flowchart, dict):
-        return ""
-    nodes: List[dict] = flowchart.get("nodes", [])
-    if not nodes:
-        return ""
-    groups: Dict[str, List[str]] = {}
-    for n in nodes:
-        t = normalize_node_type(n.get("type"))
-        title = (n.get("title") or n.get("id") or "Untitled").strip()
-        groups.setdefault(t, []).append(title[:60])
-    
-    parts = []
-    for t in OPTION_C_NODE_TYPES:
-        if t in groups:
-            label = OPTION_C_LABELS[t]
-            if t == "optional_commentary":
-                label += " (optional)"
-            parts.append(f"{label}: " + "; ".join(groups[t]))
-    
-    for t, titles in groups.items():
-        if t not in OPTION_C_NODE_TYPES:
-            parts.append(f"Custom node ({t}): " + "; ".join(titles))
-    
-    return " | ".join(parts)
-
 # ---- Build messages ----
 
 def _build_messages(req: NextSentenceRequest) -> List[Dict[str, str]]:
     """Construct a FIXED template messages list.
 
     All segments are ALWAYS present (hard‑coded labels) regardless of emptiness.
-    No conditional logic about presence of initial_instruction / requirement / flowchart.
+    No conditional logic about presence of initial_instruction or requirement.
     This ensures deterministic prompt shape for every call.
     """
-    flow_summary = summarize_flowchart(req.flowchart)
-
     # Always use the same system instructions (deterministic, explicit rules)
     system_content = (
         "ROLE: You are a specialized assistant for Descriptive academic writing, Data Commentary, IELTS Writing Task 1 writing.\n"
@@ -79,7 +43,7 @@ def _build_messages(req: NextSentenceRequest) -> List[Dict[str, str]]:
         "PRIORITIZATION WEIGHTS (High -> Low):\n"
         "1. CHART DATA (deplot_text) factual content and trends.\n"
         "2. EXISTING TEXT progression (avoid repetition, ensure logical follow-on).\n"
-        "3. FLOWCHART structural intent (light guidance only; do not force if unnatural).\n\n"
+        "3. STANDARD IELTS TASK 1 progression and paragraph purpose.\n\n"
         "STRICT RULES FOR EACH CANDIDATE:\n"
         "- Single sentence only (no conjunction chaining with semicolons).\n"
         "- Max 30 words.\n"
@@ -106,7 +70,6 @@ def _build_messages(req: NextSentenceRequest) -> List[Dict[str, str]]:
         f"TASK CONTEXT:\n{initial_instruction}\n\n"
         f"OFFICIAL REQUIREMENT:\n{requirement}\n\n"
         f"EXISTING TEXT (do NOT rewrite it, only continue):\n{req.current_text.strip()}\n\n"
-        f"STRUCTURE SUMMARY (flowchart-derived; may be empty):\n{flow_summary}\n\n"
         f"CHART DATA (Primary factual source – may contain minor OCR noise):\n{normalized_deplot}\n\n"
         f"REQUEST: Provide {req.candidate_count} alternative next-sentence candidates strictly following the rules.\n"
         f"OUTPUT ONLY: {{\"candidates\": [\"sentence1\", \"sentence2\", \"sentence3\"]}}\n"
@@ -203,9 +166,7 @@ def generate_next_sentence(req: NextSentenceRequest) -> NextSentenceResponse:
             "temperature": req.temperature if req.temperature is not None else 0.7,
             "max_tokens": req.max_tokens or 48,
             "first_user_chars": len(messages[1]['content']) if len(messages) > 1 else 0,
-            "flowchart_used": bool(summarize_flowchart(req.flowchart)),
             "deterministic_template": True,
-            "flow_summary_length": len(summarize_flowchart(req.flowchart)),
             "candidate_count_returned": len(candidates),
             "parse_mode": parsed_mode,
         }

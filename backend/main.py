@@ -1,4 +1,3 @@
-import json
 import sys
 from typing import Optional
 
@@ -15,9 +14,7 @@ from next_sentence import NextSentenceRequest, NextSentenceResponse, generate_ne
 from paths import CHARTS_DIR, UPLOADS_DIR, ensure_runtime_directories
 from revision_review import router as revision_review_router
 from sample_essay import SampleEssayResponse, router as sample_essay_router
-from sentence_mapping import SentenceMappingRequest, SentenceMappingResponse, map_sentences
 from spatial_sample_essay import generate_spatial_sample_essay
-from structure_feedback_agents import router as structure_feedback_router
 from storage import (
     relative_runtime_path,
     save_uploaded_file,
@@ -44,7 +41,6 @@ app = FastAPI(title="VividWrite API", version="0.2.0")
 app.include_router(auth_router)
 app.include_router(sample_essay_router)
 app.include_router(revision_review_router)
-app.include_router(structure_feedback_router)
 app.middleware("http")(authentication_middleware)
 app.add_middleware(
     CORSMiddleware,
@@ -149,14 +145,6 @@ def next_sentence(request: NextSentenceRequest):
         return generate_next_sentence(request)
     except Exception as exc:
         return NextSentenceResponse(error=str(exc))
-
-
-@app.post("/api/map-sentences", response_model=SentenceMappingResponse)
-def map_sentences_endpoint(request: SentenceMappingRequest):
-    try:
-        return map_sentences(request)
-    except Exception as exc:
-        return SentenceMappingResponse(error=str(exc))
 
 
 @app.post("/api/deplot-extract")
@@ -297,26 +285,17 @@ async def spatial_sample_essay(
     image: UploadFile = File(...),
     chart_type: str = Form(...),
     requirement: str = Form(""),
-    flowchart: str = Form("{}"),
-    use_standard_structure: Optional[bool] = Form(None),
     min_words: int = Form(150),
 ):
     try:
-        flowchart_data = json.loads(flowchart)
-        if not isinstance(flowchart_data, dict):
-            raise ValueError("flowchart must be a JSON object")
         image_path = await save_uploaded_file(image, UPLOADS_DIR)
         return await run_in_threadpool(
             generate_spatial_sample_essay,
             image_path=image_path,
             chart_type=chart_type,
             requirement=requirement,
-            flowchart=flowchart_data,
-            use_standard_structure=use_standard_structure,
             min_words=min_words,
         )
-    except (json.JSONDecodeError, ValueError) as exc:
-        return SampleEssayResponse(success=False, error=str(exc))
     except Exception as exc:
         return SampleEssayResponse(success=False, error=str(exc))
 

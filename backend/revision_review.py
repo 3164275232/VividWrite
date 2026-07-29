@@ -8,7 +8,6 @@ router = APIRouter()
 # ---------------- Revision Review (Vocabulary / Grammar / Coherence + Overall) -----------------
 class RevisionReviewIn(BaseModel):
     text: str
-    flowchart: dict | None = None
     deplot_text: Optional[str] = None
     # mode retained for compatibility but only 'llm' is honored now
     mode: str | None = None
@@ -75,12 +74,11 @@ def call_llm_revision_review(payload: RevisionReviewIn) -> RevisionReviewOut:
             "SEVERITY: 'high' only for errors that significantly harm meaning, accuracy, or task fulfillment.\n"
             "ID: concise unique token. Message: actionable, specific. Note: optional extra context.\n"
             "SCORING: 5.0–9.0 in 0.5 steps; align score and comment.\n"
-            "OVERALL.summary INSTRUCTION: Instead of a narrative summary, output 3–6 numbered structural improvement recommendations (no leading prose) focusing ONLY on global organization. Format: \"1) <issue> – <actionable structural fix>\". Each item should reference flowchart node titles (if provided) or inferred logical parts (e.g., 'overview', 'body 1', 'body 2'). Cover: missing / under-developed elements, ordering / progression, balance (length or detail), cohesion / transitions, redundancy. Do not restate data details; give structural change guidance. If structure is already strong, provide 2–3 fine‑grained refinement points.\n"
+            "OVERALL.summary INSTRUCTION: Instead of a narrative summary, output 3–6 numbered structural improvement recommendations (no leading prose) focusing ONLY on global organization. Format: \"1) <issue> – <actionable structural fix>\". Reference inferred logical parts such as the introduction, overview, body 1, or body 2. Cover: missing / under-developed elements, ordering / progression, balance (length or detail), cohesion / transitions, redundancy. Do not restate data details; give structural change guidance. If structure is already strong, provide 2–3 fine‑grained refinement points.\n"
             "OUTPUT: exactly one valid JSON object. No commentary outside JSON."
         )
         user_payload = {
             "text": payload.text,
-            "flowchart": payload.flowchart,
             "deplot_text": payload.deplot_text,
         }
         completion = client.chat.completions.create(

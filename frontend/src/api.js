@@ -116,14 +116,6 @@ export function requestNextSentence(payload) {
   return postJson('/api/next-sentence', payload, 'Next sentence generation failed');
 }
 
-export function mapSentences(payload) {
-  return postJson('/api/map-sentences', payload, 'Sentence mapping failed');
-}
-
-export function analyzeStructure(payload) {
-  return postJson('/api/analyze-structure', payload, 'Structure analysis failed');
-}
-
 export function extractDeplot(formData) {
   return requestJson('/api/deplot-extract', {
     method: 'POST',
@@ -159,11 +151,7 @@ export function generateSpatialSampleEssay(payload) {
   formData.append('image', payload.image);
   formData.append('chart_type', payload.chart_type);
   formData.append('requirement', payload.requirement || '');
-  formData.append('flowchart', JSON.stringify(payload.flowchart || {}));
   formData.append('min_words', String(payload.min_words || 150));
-  if (payload.use_standard_structure !== undefined && payload.use_standard_structure !== null) {
-    formData.append('use_standard_structure', String(payload.use_standard_structure));
-  }
   return requestJson('/api/generate-spatial-sample-essay', {
     method: 'POST',
     body: formData,

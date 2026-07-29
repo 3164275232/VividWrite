@@ -1,16 +1,8 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
-import os
 import re
 from typing import Optional, Dict, Any
-from next_sentence import summarize_flowchart
 from deepseek_config import get_deepseek_api_key, get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
-from structure_feedback_agents import (
-    OPTION_C_LABELS,
-    OPTION_C_NODE_TYPES,
-    REQUIRED_OPTION_C_NODE_TYPES,
-    normalize_node_type,
-)
 from chart_text import (
     CHART_TYPE_LABELS,
     InvalidExtractedChartData,
@@ -38,12 +30,10 @@ def _round_essay_data_values(text: str, precision: int) -> str:
 
 class SampleEssayRequest(BaseModel):
     deplot_text: str
-    flowchart: dict | None = None  # {nodes:[], edges:[]}
     requirement: Optional[str] = None
     model: Optional[str] = None
     temperature: Optional[float] = 0.2
     min_words: Optional[int] = 150
-    use_standard_structure: Optional[bool] = None  # True: use standard structure, False: use flowchart as-is, None: prompt user
     chart_type: Optional[str] = None
 
 class SampleEssayResponse(BaseModel):
@@ -51,8 +41,6 @@ class SampleEssayResponse(BaseModel):
     essay: Optional[str] = None
     error: Optional[str] = None
     debug: Optional[Dict[str, Any]] = None
-    requires_choice: Optional[bool] = None  # True when user needs to make a structure choice
-    choice_info: Optional[Dict[str, Any]] = None  # Information for the choice dialog
 
 def _generate_essay_text(client, model: str, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
     chat = client.chat.completions.create(
@@ -74,69 +62,11 @@ def _generate_essay_text(client, model: str, system_prompt: str, user_prompt: st
 
 @router.post("/api/generate-sample-essay", response_model=SampleEssayResponse)
 def generate_sample_essay(req: SampleEssayRequest):
-    """Generate a full IELTS Task 1 sample essay (>=150 words) based on DePlot data + flowchart."""
+    """Generate a full IELTS Task 1 sample essay from extracted chart data."""
     if not get_deepseek_api_key():
         return SampleEssayResponse(success=False, error="DEEPSEEK_API_KEY not configured")
     if not req.deplot_text or not req.deplot_text.strip():
         return SampleEssayResponse(success=False, error="deplot_text required")
-    
-    # Check the Task 1 flowchart structure. Optional Commentary is
-    # deliberately excluded from the required set.
-    if req.flowchart and req.flowchart.get("nodes"):
-        nodes = req.flowchart.get("nodes", [])
-        normalized_node_types = [
-            normalize_node_type(node.get("type")) for node in nodes
-        ]
-        structure_presence = {
-            node_type: node_type in normalized_node_types
-            for node_type in OPTION_C_NODE_TYPES
-        }
-        missing_node_types = [
-            node_type
-            for node_type in REQUIRED_OPTION_C_NODE_TYPES
-            if not structure_presence[node_type]
-        ]
-        missing_structures = [
-            OPTION_C_LABELS[node_type] for node_type in missing_node_types
-        ]
-        
-        if missing_structures and req.use_standard_structure is None:
-            # Return choice dialog information instead of error
-            return SampleEssayResponse(
-                success=False,
-                requires_choice=True,
-                choice_info={
-                    "title": "Flowchart Structure Analysis",
-                    "missing_structures": missing_structures,
-                    "options": [
-                        {
-                            "id": "flowchart",
-                            "title": "Continue with current flowchart structure",
-                            "description": "Use your flowchart as-is (may result in incomplete essay)",
-                            "value": False
-                        },
-                        {
-                            "id": "standard",
-                            "title": "Use standard IELTS structure",
-                            "description": "Introduction -> Overview -> Key Details A -> Key Details B (complete essay)",
-                            "value": True
-                        }
-                    ],
-                    "message": f"Your flowchart is missing: {', '.join(missing_structures)}. Choose how to proceed:"
-                }
-            )
-        
-        structure_status = [
-            OPTION_C_LABELS[node_type]
-            for node_type in OPTION_C_NODE_TYPES
-            if structure_presence[node_type]
-        ]
-        print(f"Flowchart structure confirmed: {' | '.join(structure_status)}")
-    else:
-        return SampleEssayResponse(
-            success=False, 
-            error="No flowchart provided. Please create a flowchart structure before generating the sample essay."
-        )
 
     raw_deplot = (req.deplot_text or '').replace('<0x0A>', '\n')[:8000]
     normalized_deplot = raw_deplot
@@ -186,37 +116,14 @@ def generate_sample_essay(req: SampleEssayRequest):
         )
     fact_checks = build_table_fact_checks(normalized_deplot)
     fact_check_block = fact_checks or "No additional deterministic comparisons were available."
-    flow_summary = summarize_flowchart(req.flowchart)
     requirement = req.requirement or (
         "Write a descriptive academic report of at least 150 words, such as IELTS "
         "Task 1, summarizing the main features and making relevant comparisons."
     )
-    
-    nodes = req.flowchart.get("nodes", []) if req.flowchart else []
-    flowchart_types = [
-        normalize_node_type(node.get("type")) for node in nodes
-    ]
-    selected_types = (
-        list(REQUIRED_OPTION_C_NODE_TYPES)
-        if req.use_standard_structure
-        else list(dict.fromkeys(flowchart_types))
-    )
-    structure_parts = [
-        OPTION_C_LABELS[node_type]
-        for node_type in OPTION_C_NODE_TYPES
-        if node_type in selected_types
-    ]
     structure_guidance = (
         "Use the standard IELTS Task 1 structure: "
         "Introduction -> Overview -> Key Details A -> Key Details B. "
-        if req.use_standard_structure
-        else f"Follow only this flowchart structure: {' -> '.join(structure_parts)}. "
     )
-    if "optional_commentary" in selected_types:
-        structure_guidance += (
-            "Optional Commentary may be included only when the task or visual supports "
-            "the interpretation. It must not invent causes or unsupported conclusions. "
-        )
 
     system_prompt = (
         "You are an expert in descriptive academic writing, including IELTS Task 1 "
@@ -234,11 +141,6 @@ def generate_sample_essay(req: SampleEssayRequest):
         "Group supporting data logically across Key Details A and Key Details B. "
         "Do not generate an independent conclusion."
     )
-    if not req.use_standard_structure:
-        system_prompt += (
-            " Include only functions represented by the current flowchart. "
-            "Do not silently add a missing structural section."
-        )
 
     common_prompt = (
         f"OFFICIAL REQUIREMENT:\n{requirement}\n\n"
@@ -248,23 +150,13 @@ def generate_sample_essay(req: SampleEssayRequest):
         f"DETERMINISTIC COMPARISON CHECKS (must not be contradicted):\n"
         f"{fact_check_block}\n\n"
     )
-    if req.use_standard_structure:
-        user_prompt = (
-            common_prompt
-            + "TASK: Write the full report using Introduction, Overview, Key Details A, "
-            f"and Key Details B. Minimum {req.min_words or 150} words. "
-            "Do not add a separate conclusion, headings, or meta explanation. "
-            "Return only the raw essay text."
-        )
-    else:
-        user_prompt = (
-            common_prompt
-            + f"FLOWCHART STRUCTURE:\n{flow_summary}\n\n"
-            + "TASK: Write the full report following the current flowchart exactly. "
-            + f"Minimum {req.min_words or 150} words. "
-            + "Do not add functions absent from the flowchart. Do not add a separate "
-            + "conclusion, headings, or meta explanation. Return only the raw essay text."
-        )
+    user_prompt = (
+        common_prompt
+        + "TASK: Write the full report using Introduction, Overview, Key Details A, "
+        f"and Key Details B. Minimum {req.min_words or 150} words. "
+        "Do not add a separate conclusion, headings, or meta explanation. "
+        "Return only the raw essay text."
+    )
 
     client = get_deepseek_client()
     model = get_deepseek_model(req.model)
@@ -356,17 +248,6 @@ def generate_sample_essay(req: SampleEssayRequest):
             "model": model,
             "words": word_count,
             "fact_validation_attempts": fact_attempts,
-            "flowchart_used": bool(flow_summary),
-            "structure_check": {
-                **structure_presence,
-                "required_nodes": list(REQUIRED_OPTION_C_NODE_TYPES),
-                "optional_nodes": ["optional_commentary"],
-                "all_required_present": not missing_node_types,
-            },
-            "user_choice": {
-                "use_standard_structure": req.use_standard_structure,
-                "missing_structures": missing_structures,
-            },
-            "flowchart_node_types": flowchart_types,
+            "structure": "standard-ielts-task-1",
         },
     )
