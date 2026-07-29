@@ -126,6 +126,11 @@
   background: var(--vw-bg);
 }
 
+.workspace--drafting .workspace-left {
+  width: 100% !important;
+  flex-basis: 100% !important;
+}
+
 .workspace-left {
   min-width: 0;
   min-height: 0;
@@ -691,8 +696,7 @@
 }
 
 .revision-comparison-header,
-.revision-section-heading,
-.revision-structure-drawer > header {
+.revision-section-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -926,8 +930,7 @@
   margin-bottom: 10px;
 }
 
-.revision-section-heading h2,
-.revision-structure-drawer h2 {
+.revision-section-heading h2 {
   margin: 2px 0 0;
   color: var(--vw-text);
   font-size: 16px;
@@ -1019,11 +1022,6 @@
   border-bottom: 1px solid var(--vw-border);
 }
 
-.revision-secondary-body {
-  padding: 10px 2px 12px;
-}
-
-.revision-secondary-body p,
 .revision-empty-copy {
   margin: 0 0 9px;
   color: var(--vw-text-secondary);
@@ -1132,71 +1130,6 @@
   border-radius: 5px;
   font-size: 9px;
   text-transform: capitalize;
-}
-
-.revision-drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 2500;
-  display: flex;
-  justify-content: flex-end;
-  background: rgba(20, 20, 22, 0.34);
-  backdrop-filter: blur(3px);
-}
-
-.revision-structure-drawer {
-  width: min(720px, 92vw);
-  height: 100%;
-  padding: 18px 20px;
-  display: flex;
-  flex-direction: column;
-  color: var(--vw-text);
-  background: #fff;
-  border-left: 1px solid var(--vw-border);
-  box-shadow: -12px 0 35px rgba(0, 0, 0, 0.12);
-}
-
-.revision-structure-drawer > header {
-  min-height: 46px;
-  flex: 0 0 auto;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--vw-border);
-}
-
-.revision-structure-toolbar {
-  padding: 10px 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--vw-text-secondary);
-  font-size: 11px;
-}
-
-.revision-structure-summary {
-  margin-bottom: 10px;
-  padding: 9px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  color: var(--vw-text-secondary);
-  background: var(--vw-surface-muted);
-  border-left: 3px solid var(--vw-accent);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.revision-structure-summary strong {
-  color: var(--vw-text);
-}
-
-.revision-structure-map {
-  min-height: 0;
-  flex: 1 1 auto;
-}
-
-.revision-structure-map .flowchart-root {
-  height: 100%;
 }
 
 .is-spinning {
@@ -1353,11 +1286,6 @@
 
   .revision-comparison-view {
     height: 280px;
-  }
-
-  .revision-structure-toolbar {
-    align-items: stretch;
-    flex-direction: column;
   }
 }
 

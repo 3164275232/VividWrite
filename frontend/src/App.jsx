@@ -214,7 +214,7 @@ export default function App() {
   // 初始文本为空，使用占位符在聚焦时自动消失
   const [text, setText] = useState("");
   // Stages handling
-  const stages = ["planning", "drafting", "revision"];
+  const stages = ["drafting", "revision"];
   const [stageIndex, setStageIndex] = useState(0);
   const currentStage = stages[stageIndex];
   const [showStageConfirm, setShowStageConfirm] = useState(false);
@@ -573,7 +573,7 @@ export default function App() {
     }).filter(Boolean);
   };
 
-  const runStructureAnalyze = useCallback(() => {
+  const _runStructureAnalyze = useCallback(() => {
     setMappingStatus('loading');
     if (!uploadedImage || !text.trim() || !flowchartData?.nodes?.length) {
       setMappingStatus('idle');
@@ -699,7 +699,7 @@ export default function App() {
 
     // Keep DePlot extraction in the background. Stage changes should not be blocked by
     // first-time model loading or a slow chart parse.
-    if (currentStage === 'planning' && isStatisticalTask) {
+    if (currentStage === 'drafting' && isStatisticalTask) {
       setIsExtractingDeplot(false);
       if (!deplotText.trim() && !deplotTaskRef.current?.promise) {
         runDeplotExtraction(uploadedImage, { showOverlay: false }).catch(() => {
@@ -714,10 +714,10 @@ export default function App() {
   const confirmStageAdvance = async () => {
     setShowStageConfirm(false);
     
-    // Save final image when leaving planning (non-blocking)
+    // Save the task image when moving into revision (non-blocking)
     setDeplotError("");
-    const movingFromPlanning = stages[stageIndex] === 'planning' && stageIndex < stages.length - 1;
-    if (movingFromPlanning && username && uploadedImage) {
+    const movingToRevision = stages[stageIndex] === 'drafting' && stageIndex < stages.length - 1;
+    if (movingToRevision && username && uploadedImage) {
       saveFinalImage(username, uploadedImage).catch(e => console.warn('Failed to save final image', e));
     }
 
@@ -738,15 +738,11 @@ export default function App() {
     setShowSaveReminder(false);
   };
 
-  // Keep rightContent consistent with stage rules (now allow Flowchart also in revision)
   useEffect(() => {
-    if (currentStage === 'planning' || currentStage === 'drafting') {
-      if (rightContent !== 'Flowchart') setRightContent('Flowchart');
-    } else if (currentStage === 'revision') {
-      // In revision we now allow Flowchart to stay; just close candidate panel
+    if (currentStage === 'revision') {
       setShowCandidatePanel(false);
     }
-  }, [currentStage, rightContent]);
+  }, [currentStage]);
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
@@ -1249,9 +1245,9 @@ export default function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
                   <div><strong>Quick Start:</strong></div>
                   <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                    <li>Upload the task chart image in the top-left and choose the chart type.</li>
-                    <li>Use the Flowchart on the right to plan structure; drag nodes or add Body paragraphs.</li>
-                    <li>Click the top "Next Stage" button to drafting stage when you finish.</li>
+                    <li>Upload the IELTS task image and choose the task type.</li>
+                    <li>Write your report while keeping the task image visible.</li>
+                    <li>Move to Revision to compare the original image with what your text communicates.</li>
                   </ul>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'center', marginTop: '0.25rem' }}>
@@ -1363,34 +1359,17 @@ export default function App() {
                     You will move from <strong style={{ color: '#007bff' }}>{currentStage}</strong> to <strong style={{ color: '#28a745' }}>{stages[stageIndex + 1]}</strong> stage.
                   </div>  
                   <div style={{ marginBottom: '0.75rem' }}>
-                    {currentStage === 'planning' && (
-                      <>
-                        Functions of AI generating would be included in drafting stage:
-                      </>
-                    )}
                     {currentStage === 'drafting' && (
                       <>
-                        <div>
-                          Functions of AI generating would be disabled in revision stage (except for "Analyze Structure").
-                        </div>
-                        <div>
-                          Functions of Visual Feedback and Revision Suggestions would be included:
-                        </div>
+                        Revision keeps your report editable and adds the visual comparison workspace.
                       </>
                     )}
                   </div>
                   <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.85rem', color: '#6c757d' }}>
-                    {currentStage === 'planning' && (
-                      <>
-                        <li>Next Sentence: AI would suggest the next sentence based on the original image and your flowchart</li>
-                        <li>Sample Essay: AI would generate a sample essay based on the original image and your flowchart.</li>
-                        <li>Analyze Structure: AI would build the relationship between your essay and flowchart.</li>
-                      </>
-                    )}
                     {currentStage === 'drafting' && (
                       <>
-                        <li>Visual Feedback: AI would generate a graph based on your essay, with similar style of layout and design.</li>
-                        <li>Revision Suggestions: AI would provide suggestions for improving your essay based from from different aspects.</li>
+                        <li>Compare the original task with the image generated from your report.</li>
+                        <li>Revise your report beside explicit data differences and optional language notes.</li>
                       </>
                     )}
                   </ul>
@@ -1467,7 +1446,7 @@ export default function App() {
           )}
 
           {/* Stage transition toast removed */}
-          {(isExtractingDeplot || isPreparingTaskImage) && currentStage !== 'planning' && (
+          {(isExtractingDeplot || isPreparingTaskImage) && (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2500 }}>
               <div style={{ background: '#fff', padding: '1.5rem 1.25rem 1.25rem', borderRadius: 8, width: 320, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', gap: '0.9rem', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, fontSize: '1.05rem' }}>
@@ -1529,30 +1508,9 @@ export default function App() {
               activeSuggestionId={activeSuggestionId}
               setActiveSuggestionId={setActiveSuggestionId}
               applySuggestion={applySuggestion}
-              mappingStatus={mappingStatus}
-              missingNodes={missingNodes}
-              structureFeedback={structureFeedback}
-              onAnalyzeStructure={runStructureAnalyze}
-              structureAnalyzeDisabled={
-                mappingStatus === 'loading'
-                || !uploadedImage
-                || !flowchartData?.nodes?.length
-              }
-              structureMap={(
-                <Flowchart
-                  imageReady={!!imagePreview}
-                  onFlowchartChange={setFlowchartData}
-                  onNodeClick={handleNodeClickHighlight}
-                  missingNodeIds={new Set(missingNodes.map((node) => node.id))}
-                  nodeSentenceCounts={nodeToSentenceIndices}
-                  nodeParagraphCounts={nodeToParagraphIndices}
-                  readOnly
-                  currentStage={currentStage}
-                />
-              )}
             />
           ) : (
-          <div className="workspace" style={{ display: "flex", flexGrow: 1, width: "100%" }}>
+          <div className="workspace workspace--drafting" style={{ display: "flex", flexGrow: 1, width: "100%" }}>
             <div
               className="workspace-left"
               style={{
@@ -1566,8 +1524,7 @@ export default function App() {
               <div
                 className="workspace-panel source-panel"
                 style={{
-                  // If in planning stage, occupy full height to hide writing area
-                  flexBasis: currentStage === 'planning' ? '100%' : `${upperHeight}%`,
+                  flexBasis: `${upperHeight}%`,
                   borderBottom: "1px solid #ccc",
                   padding: "1rem",
                   boxSizing: "border-box",
@@ -1585,12 +1542,11 @@ export default function App() {
                   </div>
                   {imagePreview && <span className="status-pill">Ready</span>}
                 </div>
-                {deplotError && currentStage === 'planning' && (
+                {deplotError && currentStage === 'drafting' && (
                   <div style={{ fontSize: '0.7rem', color: '#c00', marginBottom: '0.4rem' }}>{deplotError}</div>
                 )}
                 
-                {/* Chart type selector: only visible during planning stage */}
-                {currentStage === 'planning' && (
+                {currentStage === 'drafting' && (
                   <div className="chart-type-field" style={{ marginBottom: "1rem" }}>
                     <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold" }}>
                       Chart Type:
@@ -1753,7 +1709,7 @@ export default function App() {
                             lineHeight: 1,
                             padding: 0
                           }}
-                          title="Delete image (removable only in planning stage)"
+                          title="Remove task image"
                         >
                           <X size={16} />
                           ×
@@ -1763,7 +1719,7 @@ export default function App() {
                   </div>
                 )}
               </div>
-              {currentStage !== 'planning' && (
+              {currentStage === 'drafting' && (
                 <>
                   <div
                     className="panel-resizer panel-resizer--horizontal"
@@ -1813,7 +1769,7 @@ export default function App() {
                         ref={editorRef}
                         value={text}
                         onChange={setText}
-                        placeholder="Start writing or click the Flowchart on the right to plan structure..."
+                        placeholder="Start writing your IELTS Task 1 report..."
                         style={{ height: '100%' }}
                       />
                     </div>
@@ -1899,23 +1855,6 @@ export default function App() {
                           </button>
                         </>
                       )}
-                      <button
-                        onClick={runStructureAnalyze}
-                        disabled={mappingStatus === 'loading' || !uploadedImage || !flowchartData?.nodes?.length}
-                        style={{
-                          padding: '0.5rem 0.9rem',
-                          background: mappingStatus === 'loading' || !uploadedImage || !flowchartData?.nodes?.length ? '#888' : '#17a2b8',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: 4,
-                          cursor: mappingStatus === 'loading' || !uploadedImage || !flowchartData?.nodes?.length ? 'not-allowed' : 'pointer',
-                          fontSize: '0.85rem'
-                        }}
-                        title="Analyze structure & map sentences"
-                      >
-                        <GitBranch size={14} />
-                        {mappingStatus === 'loading' ? 'Analyzing structure...' : 'Structure Analyze'}
-                      </button>
                       {currentStage === 'revision' && (
                         <button
                           onClick={handleAnalyzeText}
@@ -1950,16 +1889,18 @@ export default function App() {
                 </>
               )}
             </div>
-            <div
-              className="panel-resizer panel-resizer--vertical"
-              style={{
-                width: "5px",
-                cursor: "col-resize",
-                backgroundColor: "#ccc",
-              }}
-              onMouseDown={handleMouseDownVertical}
-            ></div>
-            <div
+            {currentStage !== 'drafting' && (
+              <>
+                <div
+                  className="panel-resizer panel-resizer--vertical"
+                  style={{
+                    width: "5px",
+                    cursor: "col-resize",
+                    backgroundColor: "#ccc",
+                  }}
+                  onMouseDown={handleMouseDownVertical}
+                ></div>
+                <div
               className={`workspace-right ${rightContent === 'Flowchart' ? 'is-flowchart' : ''}`}
               style={{
                 flexBasis: `${100 - leftWidth}%`,
@@ -2238,7 +2179,9 @@ export default function App() {
                   })()}
                 </div>
               )}
-            </div>
+                </div>
+              </>
+            )}
           </div>
           )}
         </>

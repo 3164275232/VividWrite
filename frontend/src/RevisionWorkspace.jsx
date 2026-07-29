@@ -4,11 +4,9 @@ import {
   BarChart3,
   CheckCircle2,
   FileText,
-  GitBranch,
   Minus,
   Plus,
   RefreshCw,
-  X,
 } from 'lucide-react';
 import CmEditor from './CmEditor.jsx';
 
@@ -181,15 +179,8 @@ export default function RevisionWorkspace({
   activeSuggestionId,
   setActiveSuggestionId,
   applySuggestion,
-  mappingStatus,
-  missingNodes,
-  structureFeedback,
-  onAnalyzeStructure,
-  structureAnalyzeDisabled,
-  structureMap,
 }) {
   const [zoom, setZoom] = useState(100);
-  const [showStructure, setShowStructure] = useState(false);
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
   const suggestionCount = reviewSuggestions.length;
 
@@ -344,31 +335,6 @@ export default function RevisionWorkspace({
           <details className="revision-secondary-feedback">
             <summary>
               <span>
-                <GitBranch size={15} />
-                Structure review
-              </span>
-              <small>
-                {mappingStatus === 'ok'
-                  ? 'Mapped'
-                  : mappingStatus === 'missing'
-                  ? `${missingNodes.length} missing`
-                  : 'Optional'}
-              </small>
-            </summary>
-            <div className="revision-secondary-body">
-              {structureFeedback?.summary && <p>{structureFeedback.summary}</p>}
-              {!structureFeedback?.summary && (
-                <p>Open the structure map when you want to check paragraph organization.</p>
-              )}
-              <button type="button" onClick={() => setShowStructure(true)}>
-                Open structure map
-              </button>
-            </div>
-          </details>
-
-          <details className="revision-secondary-feedback">
-            <summary>
-              <span>
                 <FileText size={15} />
                 Language notes
               </span>
@@ -385,63 +351,6 @@ export default function RevisionWorkspace({
           </details>
         </aside>
       </section>
-
-      {showStructure && (
-        <div
-          className="revision-drawer-backdrop"
-          role="presentation"
-          onMouseDown={() => setShowStructure(false)}
-        >
-          <section
-            className="revision-structure-drawer"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="revision-structure-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header>
-              <div>
-                <span className="panel-eyebrow">Secondary review</span>
-                <h2 id="revision-structure-title">Essay structure</h2>
-              </div>
-              <button
-                className="icon-button"
-                type="button"
-                onClick={() => setShowStructure(false)}
-                aria-label="Close structure review"
-                title="Close"
-              >
-                <X size={16} />
-              </button>
-            </header>
-            <div className="revision-structure-toolbar">
-              <div>
-                {mappingStatus === 'loading' && 'Analyzing structure...'}
-                {mappingStatus === 'ok' && 'Paragraph and sentence mapping established.'}
-                {mappingStatus === 'missing' && `${missingNodes.length} structural node(s) need content.`}
-                {(mappingStatus === 'idle' || mappingStatus === 'error') && 'Structure has not been analyzed yet.'}
-              </div>
-              <button
-                type="button"
-                onClick={onAnalyzeStructure}
-                disabled={structureAnalyzeDisabled}
-              >
-                <GitBranch size={14} />
-                {mappingStatus === 'loading' ? 'Analyzing...' : 'Analyze structure'}
-              </button>
-            </div>
-            {structureFeedback && (
-              <div className="revision-structure-summary">
-                <strong>{structureFeedback.summary}</strong>
-                {structureFeedback.suggestions?.length > 0 && (
-                  <span>{structureFeedback.suggestions.join(' ')}</span>
-                )}
-              </div>
-            )}
-            <div className="revision-structure-map">{structureMap}</div>
-          </section>
-        </div>
-      )}
     </div>
   );
 }
