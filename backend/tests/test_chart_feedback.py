@@ -171,18 +171,18 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
             chart_type="bar",
         )
 
-        self.assertEqual(prepared["config"]["font"], "DejaVu Sans")
+        self.assertEqual(prepared["config"]["font"], "sans-serif")
         self.assertEqual(prepared["config"]["title"]["color"], "#111827")
         for channel in ("x", "y"):
             axis = prepared["encoding"][channel]["axis"]
             self.assertTrue(axis["labels"])
             self.assertEqual(axis["labelColor"], "#374151")
             self.assertEqual(axis["titleColor"], "#111827")
-            self.assertEqual(axis["labelFont"], "DejaVu Sans")
+        self.assertEqual(axis["labelFont"], "sans-serif")
         legend = prepared["encoding"]["color"]["legend"]
         self.assertEqual(legend["labelColor"], "#374151")
         self.assertEqual(legend["titleColor"], "#111827")
-        self.assertEqual(legend["labelFont"], "DejaVu Sans")
+        self.assertEqual(legend["labelFont"], "sans-serif")
 
     def test_bar_accuracy_is_compared_with_official_cells_locally(self):
         result = {
@@ -318,6 +318,105 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(result["comparison"]["accepted_value_tolerance"], 0.1)
         self.assertEqual(result["comparison"]["official_value_precision"], 1)
 
+    def test_explicit_wrong_line_value_overrides_model_copy_of_official_value(self):
+        periods = ["2010", "2012", "2014", "2016", "2018", "2020"]
+        series_values = {
+            "Bus": [1.8, 1.9, 1.7, 1.6, 1.5, 1.3],
+            "Rail": [1.1, 1.3, 1.5, 1.8, 2.0, 2.2],
+            "Metro": [0.8, 1.0, 1.2, 1.5, 1.7, 1.9],
+        }
+        payload = _model_payload("line")
+        payload["title"] = "Average daily passengers using public transport, 2010-2020"
+        payload["axes"] = {
+            "x_label": "Year",
+            "y_label": "Average daily passengers",
+            "unit": "millions",
+        }
+        payload["records"] = [
+            {
+                "period": period,
+                "category": period,
+                "series": series,
+                "value": value,
+                "missing": False,
+                "estimated": False,
+                "confidence": 1,
+            }
+            for series, values in series_values.items()
+            for period, value in zip(periods, values)
+        ]
+        payload["vega_lite_spec"] = {
+            "mark": "line",
+            "encoding": {
+                "x": {"field": "period", "type": "ordinal"},
+                "y": {"field": "value", "type": "quantitative"},
+                "color": {"field": "series", "type": "nominal"},
+            },
+        }
+        deplot = (
+            "Year | Bus | Rail | Metro<0x0A>2010 | 1.8 | 1.1 | 0.8<0x0A>"
+            "2012 | 1.9 | 1.3 | 1.0<0x0A>2014 | 1.7 | 1.5 | 1.2<0x0A>"
+            "2016 | 1.6 | 1.8 | 1.5<0x0A>2018 | 1.5 | 2.0 | 1.7<0x0A>"
+            "2020 | 1.3 | 2.2 | 1.9"
+        )
+        answer = (
+            "In 2010, Bus was the clear leader with 1.8 million daily passengers, "
+            "significantly ahead of Rail at 4.1 million and Metro at 0.8 million. "
+            "Rail passenger numbers climbed steadily from 4.1 million in 2010 to "
+            "1.5 million in 2014, before reaching 1.8 million in 2016, 2.0 million "
+            "in 2018 and 2.2 million in 2020. Similarly, Metro usage rose at every "
+            "interval, starting at 0.8 million and reaching 1.9 million by 2020."
+        )
+
+        with tempfile.TemporaryDirectory() as folder:
+            result, _ = ChartFeedbackService(
+                folder,
+                client=FakeClient(payload),
+            ).generate(
+                chart_type="line",
+                requirement="Summarise the graph.",
+                student_answer=answer,
+                deplot_text=deplot,
+            )
+
+        rail_2010 = next(
+            record
+            for record in result["records"]
+            if record["period"] == "2010" and record["series"] == "Rail"
+        )
+        rendered_rail_2010 = next(
+            record
+            for record in result["vega_lite_spec"]["data"]["values"]
+            if record["period"] == "2010" and record["series"] == "Rail"
+        )
+        metro_2020 = next(
+            record
+            for record in result["records"]
+            if record["period"] == "2020" and record["series"] == "Metro"
+        )
+        rail_2012 = next(
+            record
+            for record in result["records"]
+            if record["period"] == "2012" and record["series"] == "Rail"
+        )
+        self.assertEqual(rail_2010["value"], 4.1)
+        self.assertEqual(rail_2010["official_value"], 1.1)
+        self.assertEqual(rail_2010["feedback_status"], "incorrect")
+        self.assertTrue(rail_2010["explicit_student_value"])
+        self.assertEqual(rendered_rail_2010["_line_error_value"], 4.1)
+        self.assertEqual(
+            rendered_rail_2010["_line_feedback_label"],
+            "YOU: 4.1\nCORRECT: 1.1",
+        )
+        self.assertEqual(metro_2020["value"], 1.9)
+        self.assertNotEqual(metro_2020["feedback_status"], "conflicting")
+        self.assertEqual(rail_2012["value"], 2.8)
+        self.assertEqual(rail_2012["feedback_status"], "estimated")
+        self.assertIn(
+            "2010 - Rail: student 4.1, official 1.1",
+            result["comparison"]["incorrect_official_items"],
+        )
+
     def test_estimated_line_points_are_not_treated_as_explicit_errors(self):
         result = {
             "chart_type": "line",
@@ -448,8 +547,9 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
             chart_type="line",
         )
 
-        self.assertEqual(len(prepared["layer"]), 2)
+        self.assertEqual(len(prepared["layer"]), 3)
         overlay = prepared["layer"][1]
+        label = prepared["layer"][2]
         self.assertEqual(overlay["mark"]["type"], "point")
         self.assertEqual(overlay["mark"]["color"], "#f9a8d4")
         self.assertEqual(overlay["mark"]["stroke"], "#be185d")
@@ -458,6 +558,12 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(overlay["encoding"]["y"]["field"], "_line_error_value")
         self.assertEqual(overlay["encoding"]["y"]["title"], "value")
         self.assertEqual(prepared["data"]["values"][0]["_line_error_value"], 2.2)
+        self.assertEqual(
+            prepared["data"]["values"][0]["_line_feedback_label"],
+            "YOU: 2.2\nCORRECT: 1.8",
+        )
+        self.assertEqual(label["mark"]["type"], "text")
+        self.assertEqual(label["mark"]["color"], "#701a3d")
         self.assertIsNone(prepared["data"]["values"][1]["_line_error_value"])
 
     def test_pie_renderer_adds_category_and_percentage_labels(self):
@@ -1070,10 +1176,10 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
                 deplot_text=deplot,
             )
 
-        self.assertEqual(client.completions.call_count, 2)
+        self.assertEqual(client.completions.call_count, 1)
         first_period = [record for record in result["records"] if record["period"] == "2010"]
         self.assertTrue(all(record["value"] is not None for record in first_period))
-        self.assertIn("explicitly states values", client.completions.kwargs["messages"][1]["content"])
+        self.assertTrue(all(record["explicit_student_value"] for record in first_period))
 
     def test_continuous_trend_interpolates_internal_line_gaps(self):
         periods = ["2010", "2012", "2014", "2016", "2018", "2020"]

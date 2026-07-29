@@ -243,6 +243,61 @@ class SampleEssayTests(unittest.TestCase):
         self.assertIn("overall decline", response.essay or "")
         self.assertNotIn("consistent decline", response.essay or "")
 
+    @patch("sample_essay.get_deepseek_api_key", return_value="test-key")
+    def test_horizontal_year_table_rejects_and_repairs_a_false_gap_claim(self, _key):
+        bad_draft = (
+            "Overall, the gap between the highest and lowest cities narrowed slightly. "
+            "This reduced the difference from 14 points in 2015 to 16 points in 2020."
+        )
+
+        class Completions:
+            def __init__(self):
+                self.call_count = 0
+                self.calls = []
+
+            def create(self, **kwargs):
+                self.calls.append(kwargs)
+                self.call_count += 1
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(content=bad_draft)
+                        )
+                    ]
+                )
+
+        completions = Completions()
+        client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+        request = SampleEssayRequest(
+            chart_type="bar",
+            min_words=1,
+            deplot_text=(
+                "TITLE | Household recycling rates<0x0A>CHART TYPE | Bar chart<0x0A>"
+                "City | 2015 | 2020<0x0A>Bristol | 42 | 55<0x0A>"
+                "Leeds | 35 | 48<0x0A>Liverpool | 28 | 39<0x0A>"
+                "Manchester | 31 | 46<0x0A>Sheffield | 38 | 51"
+            ),
+        )
+
+        with patch("sample_essay.get_deepseek_client", return_value=client):
+            response = generate_sample_essay(request)
+
+        self.assertTrue(response.success, response.error)
+        self.assertEqual(completions.call_count, 2)
+        first_prompt = completions.calls[0]["messages"][1]["content"]
+        self.assertIn(
+            "2015 ranking: Bristol (42) > Sheffield (38) > Leeds (35)",
+            first_prompt,
+        )
+        self.assertIn(
+            "Spread trend from 2015 to 2020: widens from 14 to 16",
+            first_prompt,
+        )
+        self.assertIn("gap between the highest and lowest cities widened", response.essay or "")
+        self.assertIn("increased the difference from 14", response.essay or "")
+        self.assertNotIn("narrowed", response.essay or "")
+        self.assertNotIn("reduced the difference", response.essay or "")
+
 
 if __name__ == "__main__":
     unittest.main()

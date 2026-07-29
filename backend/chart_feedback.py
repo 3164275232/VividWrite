@@ -308,6 +308,392 @@ def _merge_explicit_pie_percentages(result: dict, deplot_text: str, student_answ
     result["records"] = records
 
 
+_CARTESIAN_NUMBER_RE = re.compile(r"(?<![\w.])[-+]?\d+(?:,\d{3})*(?:\.\d+)?(?![\w.])")
+_CHANGE_VALUE_PREFIX_RE = re.compile(
+    r"(?:\bby|\b(?:increase|rise|growth|gain|change|decrease|decline|drop|fall|difference|gap)"
+    r"\s+of)\s*$",
+    flags=re.IGNORECASE,
+)
+_FROM_TO_VALUE_RE = re.compile(
+    r"\bfrom\s+(?P<start>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)"
+    r"\s*(?:%|percent(?:age\s+points?)?|million|billion|thousand)?\s+"
+    r"to\s+(?P<end>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)",
+    flags=re.IGNORECASE,
+)
+
+
+def _match_distance(span: tuple[int, int], value_span: tuple[int, int]) -> int:
+    start, end = span
+    value_start, value_end = value_span
+    if end <= value_start:
+        return value_start - end
+    if start >= value_end:
+        return start - value_end
+    return 0
+
+
+def _label_occurrences(sentence: str, labels: list[str]) -> list[tuple[str, tuple[int, int]]]:
+    occurrences: list[tuple[str, tuple[int, int]]] = []
+    for label in labels:
+        pattern = _label_pattern(label)
+        if pattern is None:
+            continue
+        occurrences.extend((label, match.span()) for match in pattern.finditer(sentence))
+    return occurrences
+
+
+def _series_occurrences(
+    sentence: str,
+    series_names: list[str],
+) -> list[tuple[str, tuple[int, int]]]:
+    occurrences: list[tuple[str, tuple[int, int]]] = []
+    seen: set[tuple[str, tuple[int, int]]] = set()
+    for series in series_names:
+        for alias in _series_aliases(series):
+            pattern = _label_pattern(alias)
+            if pattern is None:
+                continue
+            for match in pattern.finditer(sentence):
+                occurrence = (series, match.span())
+                if occurrence not in seen:
+                    seen.add(occurrence)
+                    occurrences.append(occurrence)
+    return occurrences
+
+
+def _nearest_label(
+    occurrences: list[tuple[str, tuple[int, int]]],
+    value_span: tuple[int, int],
+) -> tuple[str, tuple[int, int]] | None:
+    if not occurrences:
+        return None
+    return min(
+        occurrences,
+        key=lambda item: (
+            _match_distance(item[1], value_span),
+            0 if item[1][0] <= value_span[0] else 1,
+        ),
+    )
+
+
+_VALUE_TO_CATEGORY_RE = re.compile(
+    r"^\s*(?:%|percent|percentage\s+points?|million|billion|thousand)?"
+    r"\s*(?:in|by|during|for|at)\s+(?:(?:the\s+)?(?:year|period)\s+)?$",
+    flags=re.IGNORECASE,
+)
+_VALUE_TO_SERIES_RE = re.compile(
+    r"^\s*(?:%|percent|percentage\s+points?|million|billion|thousand)?"
+    r"(?:\s+(?:daily\s+)?(?:passengers?|people|users?|units?|tonnes?|tons?|minutes?))?"
+    r"\s*(?:for|on|by|in)\s+$",
+    flags=re.IGNORECASE,
+)
+
+
+def _nearest_category(
+    sentence: str,
+    occurrences: list[tuple[str, tuple[int, int]]],
+    value_span: tuple[int, int],
+) -> tuple[str, tuple[int, int]] | None:
+    following = sorted(
+        (
+            occurrence
+            for occurrence in occurrences
+            if occurrence[1][0] >= value_span[1]
+        ),
+        key=lambda item: item[1][0],
+    )
+    if following:
+        between = sentence[value_span[1] : following[0][1][0]]
+        if _VALUE_TO_CATEGORY_RE.fullmatch(between):
+            return following[0]
+    return _nearest_label(occurrences, value_span)
+
+
+def _nearest_series(
+    sentence: str,
+    occurrences: list[tuple[str, tuple[int, int]]],
+    value_span: tuple[int, int],
+) -> tuple[str, tuple[int, int]] | None:
+    following = sorted(
+        (
+            occurrence
+            for occurrence in occurrences
+            if occurrence[1][0] >= value_span[1]
+        ),
+        key=lambda item: item[1][0],
+    )
+    if following:
+        between = sentence[value_span[1] : following[0][1][0]]
+        if _VALUE_TO_SERIES_RE.fullmatch(between):
+            return following[0]
+    return _nearest_label(occurrences, value_span)
+
+
+def _collect_explicit_cartesian_values(
+    student_answer: str,
+    official_records: list[dict],
+) -> dict[tuple[str, str], list[float]]:
+    """Collect explicit category/series/value claims without trusting model output."""
+    categories = list(dict.fromkeys(str(record["category"]) for record in official_records))
+    series_names = list(dict.fromkeys(str(record["series"]) for record in official_records))
+    official_cells = {(_key(category), _key(series)) for category, series in (
+        (str(record["category"]), str(record["series"])) for record in official_records
+    )}
+    claims: dict[tuple[str, str], list[float]] = {}
+    temporal_series = len(series_names) >= 2 and all(
+        re.fullmatch(r"\d{4}", series) for series in series_names
+    )
+    active_series: str | None = None
+
+    def add_claim(category: str, series: str, value: float) -> None:
+        if (_key(category), _key(series)) in official_cells:
+            claims.setdefault((category, series), []).append(value)
+
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?;])\s+|[\r\n]+", student_answer)
+        if sentence.strip()
+    ]
+    for sentence in sentences:
+        category_occurrences = _label_occurrences(sentence, categories)
+        series_occurrences = _series_occurrences(sentence, series_names)
+        mentioned_series = list(dict.fromkeys(series for series, _ in series_occurrences))
+        if temporal_series and len(mentioned_series) == 1:
+            active_series = mentioned_series[0]
+        elif temporal_series and len(mentioned_series) > 1:
+            active_series = None
+        if not category_occurrences:
+            continue
+        occupied_spans = [
+            span
+            for _, span in category_occurrences + series_occurrences
+        ]
+        numeric_occurrences: list[tuple[float, tuple[int, int]]] = []
+        for match in _CARTESIAN_NUMBER_RE.finditer(sentence):
+            value_span = match.span()
+            if any(
+                start < value_span[1] and value_span[0] < end
+                for start, end in occupied_spans
+            ):
+                continue
+            prefix = sentence[max(0, value_span[0] - 35) : value_span[0]]
+            if _CHANGE_VALUE_PREFIX_RE.search(prefix):
+                continue
+            numeric_occurrences.append(
+                (float(match.group().replace(",", "")), value_span)
+            )
+
+        consumed_spans: set[tuple[int, int]] = set()
+        if temporal_series:
+            for match in _FROM_TO_VALUE_RE.finditer(sentence):
+                value_spans = [match.span("start"), match.span("end")]
+                if any(
+                    start < value_span[1] and value_span[0] < end
+                    for value_span in value_spans
+                    for start, end in occupied_spans
+                ):
+                    continue
+                preceding = sentence[max(0, match.start() - 55) : match.start()]
+                if re.search(r"\b(?:gap|difference|spread|range)\b", preceding, re.IGNORECASE):
+                    continue
+                category_match = _nearest_category(
+                    sentence,
+                    category_occurrences,
+                    match.span(),
+                )
+                if category_match is None:
+                    continue
+                category, category_span = category_match
+                if _match_distance(category_span, match.span()) > 220:
+                    continue
+                add_claim(
+                    category,
+                    series_names[0],
+                    float(match.group("start").replace(",", "")),
+                )
+                add_claim(
+                    category,
+                    series_names[-1],
+                    float(match.group("end").replace(",", "")),
+                )
+                consumed_spans.update(value_spans)
+
+        target_series = (
+            mentioned_series[0]
+            if len(mentioned_series) == 1
+            else active_series
+            if not mentioned_series
+            else None
+        )
+        available_numbers = [
+            occurrence
+            for occurrence in numeric_occurrences
+            if occurrence[1] not in consumed_spans
+        ]
+        ordered_categories = sorted(category_occurrences, key=lambda item: item[1][0])
+        if target_series and len(ordered_categories) == len(available_numbers):
+            for (category, _), (value, value_span) in zip(
+                ordered_categories,
+                sorted(available_numbers, key=lambda item: item[1][0]),
+            ):
+                add_claim(category, target_series, value)
+                consumed_spans.add(value_span)
+
+        if not series_occurrences:
+            continue
+        sentence_claims: dict[
+            tuple[str, str],
+            list[tuple[int, int, float]],
+        ] = {}
+        for value, value_span in numeric_occurrences:
+            if value_span in consumed_spans:
+                continue
+            category_match = _nearest_category(sentence, category_occurrences, value_span)
+            series_match = _nearest_series(sentence, series_occurrences, value_span)
+            if category_match is None or series_match is None:
+                continue
+            category, category_span = category_match
+            series, series_span = series_match
+            if (
+                _match_distance(category_span, value_span) > 240
+                or _match_distance(series_span, value_span) > 160
+            ):
+                continue
+            cell_key = (_key(category), _key(series))
+            if cell_key not in official_cells:
+                continue
+            score = (
+                3 * _match_distance(category_span, value_span)
+                + _match_distance(series_span, value_span)
+            )
+            sentence_claims.setdefault((category, series), []).append(
+                (score, value_span[0], value)
+            )
+        for cell, candidates in sentence_claims.items():
+            _, _, value = min(candidates)
+            claims.setdefault(cell, []).append(value)
+    return claims
+
+
+def _merge_explicit_cartesian_values(
+    result: dict,
+    deplot_text: str,
+    student_answer: str,
+) -> None:
+    """Make explicit essay values authoritative for bar and line chart records."""
+    chart_type = result.get("chart_type")
+    if chart_type not in {"bar", "line"}:
+        return
+    official_records = parse_numeric_chart_table(deplot_text)
+    if not official_records:
+        return
+    explicit_claims = _collect_explicit_cartesian_values(student_answer, official_records)
+    if not explicit_claims:
+        return
+
+    value_precision = infer_deplot_value_precision(deplot_text, chart_type)
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    comparison = result.get("comparison")
+    if not isinstance(comparison, dict):
+        comparison = {}
+        result["comparison"] = comparison
+    alignment_notes = comparison.setdefault("alignment_notes", [])
+
+    for (category, series), values in explicit_claims.items():
+        unique_values = list(dict.fromkeys(values))
+        explicit_value = quantize_chart_value(values[-1], value_precision)
+        record = _matching_record(records, category, series)
+        if record is None:
+            axis_label = next(
+                (
+                    str(item.get("axis_label") or "")
+                    for item in official_records
+                    if _key(item["category"]) == _key(category)
+                    and _key(item["series"]) == _key(series)
+                ),
+                "",
+            )
+            record = _clean_record(
+                {
+                    "category": category,
+                    "series": series,
+                    "period": category if _key(axis_label) in {"year", "date", "period", "time"} else None,
+                    "value": explicit_value,
+                    "confidence": 1.0,
+                }
+            )
+            records.append(record)
+
+        previous_value = record.get("value")
+        record["value"] = explicit_value
+        record["missing"] = False
+        record["estimated"] = False
+        record["confidence"] = 1.0
+        record["explicit_student_value"] = True
+        record["conflicting_values"] = (
+            [quantize_chart_value(value, value_precision) for value in unique_values]
+            if len(unique_values) > 1
+            else []
+        )
+        if previous_value != explicit_value:
+            alignment_notes.append(
+                f"{series} at {category} was read as {explicit_value:g} directly from the student's essay."
+            )
+        if len(unique_values) > 1:
+            value_list = ", ".join(f"{value:g}" for value in unique_values)
+            alignment_notes.append(
+                f"{series} at {category} has conflicting student values: {value_list}. "
+                f"The latest value ({explicit_value:g}) is used for the chart."
+            )
+
+    result["records"] = records
+
+
+def _remove_unsupported_cartesian_values(
+    result: dict,
+    deplot_text: str,
+    student_answer: str,
+) -> None:
+    """Remove model values that cannot be traced to an explicit essay claim."""
+    if result.get("chart_type") not in {"bar", "line"}:
+        return
+    official_records = parse_numeric_chart_table(deplot_text)
+    if not official_records:
+        return
+    explicit_claims = _collect_explicit_cartesian_values(student_answer, official_records)
+    explicit_cells = {
+        (_key(category), _key(series))
+        for category, series in explicit_claims
+    }
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    removed_count = 0
+    for official in official_records:
+        category = str(official["category"])
+        series = str(official["series"])
+        if (_key(category), _key(series)) in explicit_cells:
+            continue
+        record = _matching_record(records, category, series)
+        if record is None or record.get("value") is None:
+            continue
+        record["value"] = None
+        record["missing"] = True
+        record["estimated"] = False
+        record["confidence"] = 0.0
+        record["explicit_student_value"] = False
+        removed_count += 1
+
+    if removed_count:
+        comparison = result.get("comparison")
+        if not isinstance(comparison, dict):
+            comparison = {}
+            result["comparison"] = comparison
+        notes = comparison.setdefault("alignment_notes", [])
+        notes.append(
+            f"Removed {removed_count} model-proposed value(s) that were not explicitly "
+            "supported by the student's essay."
+        )
+
+
 def _annotate_pie_accuracy(result: dict, deplot_text: str, tolerance: float = 0.0) -> None:
     """Compare student pie values with the validated official percentages."""
     if result.get("chart_type") != "pie":
@@ -455,6 +841,16 @@ def _find_bar_record(
     for index, record in indexed_records:
         if index in used_indices:
             continue
+        record_category = record.get("period") or record.get("category")
+        if (
+            _key(record_category) == category_key
+            and _key(record.get("series")) in series_aliases
+        ):
+            return index, record
+
+    for index, record in indexed_records:
+        if index in used_indices:
+            continue
         record_keys = {
             _key(record.get(field))
             for field in ("category", "series", "period", "region")
@@ -556,6 +952,13 @@ def _annotate_cartesian_accuracy(
             index, record = matched
             used_indices.add(index)
 
+        record["category"] = category
+        record["series"] = series
+        record["period"] = (
+            category
+            if _key(official.get("axis_label")) in {"year", "date", "period", "time"}
+            else None
+        )
         record["official_value"] = official_value
         record["feedback_label"] = item_label
         student_value = record.get("value")
@@ -565,12 +968,24 @@ def _annotate_cartesian_accuracy(
             record["error_delta"] = round(delta, 6)
             is_estimated_line_point = chart_type == "line" and bool(record.get("estimated"))
             exceeds_tolerance = abs(delta) > accepted_tolerance + 1e-9
-            record["incorrect"] = not is_estimated_line_point and exceeds_tolerance
+            conflicting_values = record.get("conflicting_values")
+            has_conflict = isinstance(conflicting_values, list) and len(conflicting_values) > 1
+            record["incorrect"] = not is_estimated_line_point and (
+                has_conflict or exceeds_tolerance
+            )
             if is_estimated_line_point:
                 record["feedback_status"] = "estimated"
+            elif has_conflict:
+                record["feedback_status"] = "conflicting"
             else:
                 record["feedback_status"] = "incorrect" if record["incorrect"] else "correct"
-            if record["incorrect"]:
+            if has_conflict:
+                value_list = " and ".join(f"{float(value):g}" for value in conflicting_values)
+                accuracy_issues.append(
+                    f"{item_label}: conflicting student values {value_list}; "
+                    f"official {official_value:g}"
+                )
+            elif record["incorrect"]:
                 accuracy_issues.append(
                     f"{item_label}: student {student_value:g}, official {official_value:g}"
                 )
@@ -582,16 +997,9 @@ def _annotate_cartesian_accuracy(
             omitted_items.append(item_label)
         ordered_records.append(record)
 
-    for index, record in indexed_records:
-        if index in used_indices:
-            continue
-        label = record.get("feedback_label") or _bar_record_axis(record) or "Unrecognised item"
-        record["official_value"] = None
-        record["incorrect"] = True
-        record["feedback_status"] = "unexpected"
-        record["feedback_label"] = str(label)
-        accuracy_issues.append(f"{label}: not present in the official bar chart")
-        ordered_records.append(record)
+    ignored_nonofficial_records = sum(
+        1 for index, _ in indexed_records if index not in used_indices
+    )
 
     comparison = result.get("comparison")
     if not isinstance(comparison, dict):
@@ -605,6 +1013,15 @@ def _annotate_cartesian_accuracy(
     comparison["accepted_value_tolerance"] = accepted_tolerance
     comparison["accepted_value_tolerance_unit"] = tolerance_unit
     comparison["official_value_precision"] = value_precision
+    if ignored_nonofficial_records:
+        alignment_notes = comparison.get("alignment_notes")
+        if not isinstance(alignment_notes, list):
+            alignment_notes = []
+            comparison["alignment_notes"] = alignment_notes
+        alignment_notes.append(
+            f"Ignored {ignored_nonofficial_records} model record(s) outside the official "
+            "category-and-series framework."
+        )
     result["records"] = ordered_records
 
 
@@ -884,6 +1301,8 @@ class ChartFeedbackService:
                 raw = _extract_json_object(response.choices[0].message.content or "")
                 result = _normalise_result(raw, effective_type)
                 _merge_explicit_pie_percentages(result, deplot_text, student_answer)
+                _merge_explicit_cartesian_values(result, deplot_text, student_answer)
+                _remove_unsupported_cartesian_values(result, deplot_text, student_answer)
                 _annotate_pie_accuracy(result, deplot_text)
                 _annotate_bar_accuracy(result, deplot_text)
                 _validate_temporal_record_coverage(result, deplot_text, student_answer)

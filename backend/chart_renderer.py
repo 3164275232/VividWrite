@@ -29,7 +29,7 @@ TEXT_OUTLINE_KEYS = {
     "strokeJoin",
     "strokeMiterLimit",
 }
-CHART_FONT = "DejaVu Sans"
+CHART_FONT = "sans-serif"
 GUIDE_LABEL_COLOR = "#374151"
 GUIDE_TITLE_COLOR = "#111827"
 PIE_ALERT_COLOR = "#dc2626"
@@ -42,6 +42,7 @@ BAR_ERROR_STROKE = "#be185d"
 BAR_ERROR_TEXT = "#701a3d"
 LINE_ERROR_FILL = "#f9a8d4"
 LINE_ERROR_STROKE = "#be185d"
+LINE_ERROR_TEXT = "#701a3d"
 PIE_PLOT_WIDTH = 600
 PIE_PLOT_HEIGHT = 420
 PIE_FALLBACK_PALETTE = [
@@ -888,6 +889,12 @@ def _prepare_line_feedback(spec: dict, records: list[dict]) -> tuple[dict, list[
     for record in render_records:
         is_error = record.get("feedback_status") in issue_statuses
         record["_line_error_value"] = record.get("value") if is_error else None
+        if is_error:
+            student = _number_label(record.get("value"))
+            official = _number_label(record.get("official_value"))
+            record["_line_feedback_label"] = f"YOU: {student}\nCORRECT: {official}"
+        else:
+            record["_line_feedback_label"] = None
 
     overlay_encoding = copy.deepcopy(encoding)
     value_definition = copy.deepcopy(overlay_encoding[value_channel])
@@ -910,17 +917,36 @@ def _prepare_line_feedback(spec: dict, records: list[dict]) -> tuple[dict, list[
         },
         "encoding": overlay_encoding,
     }
+    text_encoding = {
+        channel: copy.deepcopy(definition)
+        for channel, definition in overlay_encoding.items()
+        if channel in {"x", "y", "column", "row"}
+    }
+    text_encoding["text"] = {"field": "_line_feedback_label", "type": "nominal"}
+    label_layer = {
+        "mark": {
+            "type": "text",
+            "color": LINE_ERROR_TEXT,
+            "fontSize": 11,
+            "fontWeight": "bold",
+            "lineBreak": "\n",
+            "lineHeight": 13,
+            "dy": 14,
+            "baseline": "top",
+        },
+        "encoding": text_encoding,
+    }
 
     prepared = copy.deepcopy(spec)
     if isinstance(prepared.get("layer"), list):
-        prepared["layer"].append(overlay_layer)
+        prepared["layer"].extend([overlay_layer, label_layer])
     else:
         base_layer = {
             key: value
             for key, value in prepared.items()
             if key not in {"data", "title", "width", "height", "autosize", "config", "$schema"}
         }
-        prepared = {"layer": [base_layer, overlay_layer]}
+        prepared = {"layer": [base_layer, overlay_layer, label_layer]}
     return prepared, render_records
 
 

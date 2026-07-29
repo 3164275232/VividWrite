@@ -7,6 +7,7 @@ from chart_text import (
     CHART_TYPE_LABELS,
     InvalidExtractedChartData,
     build_table_fact_checks,
+    correct_false_spread_direction_claims,
     find_table_fact_contradictions,
     infer_deplot_value_precision,
     parse_validated_pie_table,
@@ -181,6 +182,7 @@ def generate_sample_essay(req: SampleEssayRequest):
                 + (
                     "\nRewrite the complete report and correct every issue above. "
                     "Do not reuse any rejected equality or monotonic wording. "
+                    "Check whether the highest-to-lowest gap widens or narrows. "
                     "Distinguish an overall change from a steady, consistent, continuous, "
                     "or sustained change: those modifiers are allowed only when every "
                     "recorded interval moves in the same direction. "
@@ -202,6 +204,10 @@ def generate_sample_essay(req: SampleEssayRequest):
             contradictions = find_table_fact_contradictions(normalized_deplot, essay)
             if contradictions:
                 repaired_essay = soften_false_monotonic_claims(normalized_deplot, essay)
+                repaired_essay = correct_false_spread_direction_claims(
+                    normalized_deplot,
+                    repaired_essay,
+                )
                 repaired_contradictions = find_table_fact_contradictions(
                     normalized_deplot,
                     repaired_essay,
