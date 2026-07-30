@@ -114,6 +114,32 @@ class ChartTextTests(unittest.TestCase):
         self.assertIn("rail increased continuously", repaired)
         self.assertEqual(find_table_fact_contradictions(table, repaired), [])
 
+    def test_bar_fact_checks_reject_the_wrong_largest_gain_city(self):
+        table = (
+            "City | 2015 | 2020<0x0A>Bristol | 42 | 55<0x0A>"
+            "Leeds | 35 | 48<0x0A>Liverpool | 28 | 39<0x0A>"
+            "Manchester | 31 | 46<0x0A>Sheffield | 38 | 51"
+        )
+
+        facts = build_table_fact_checks(table)
+        contradictions = find_table_fact_contradictions(
+            table,
+            "Liverpool recorded the largest relative gain of 11 percentage points.",
+        )
+
+        self.assertIn("Largest absolute increase: Manchester", facts)
+        self.assertIn(
+            "Largest relative increase compared with the starting value: Manchester",
+            facts,
+        )
+        self.assertEqual(
+            contradictions,
+            [
+                "The largest relative increase claim is false: "
+                "Manchester has the largest increase."
+            ],
+        )
+
     def test_pie_normalization_uses_full_metadata_and_isolated_values(self):
         normalized = normalize_pie_deplot_text(FULL_DEPLOT_TEXT, ISOLATED_PLOT_TEXT)
 

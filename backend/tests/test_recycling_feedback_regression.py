@@ -28,6 +28,27 @@ STUDENT_ESSAY = (
     "moved from 31% to 46%. Liverpool grew from 28% to 39%."
 )
 
+SCREENSHOT_SAMPLE_ESSAY = (
+    "The bar chart illustrates the percentage of household waste recycled in five "
+    "UK cities in the years 2015 and 2020. "
+    "Overall, recycling rates increased in all five cities over the five-year period, "
+    "with Bristol consistently recording the highest figures and Liverpool the lowest. "
+    "The ranking of the cities remained unchanged between the two years, and the gap "
+    "between the highest and lowest performers widened slightly. "
+    "In 2015, Bristol led the group with a recycling rate of 42%, followed by Sheffield "
+    "at 38%. Leeds and Manchester recorded somewhat lower rates of 35% and 31% "
+    "respectively, while Liverpool had the smallest proportion at 28%. By 2020, all "
+    "cities had achieved notable growth. Bristol's rate rose by 13 percentage points "
+    "to reach 55%, maintaining its top position. Sheffield similarly saw a substantial "
+    "increase of 13 percentage points, climbing to 51%. "
+    "The remaining three cities also experienced clear upward trends, though their "
+    "rates remained below 50%. Leeds improved from 35% to 48%, and Manchester advanced "
+    "from 31% to 46%. Liverpool, despite remaining in last place, recorded the largest "
+    "relative gain of 11 percentage points, rising from 28% to 39%. Consequently, the "
+    "overall spread between the highest and lowest figures grew from 14 percentage "
+    "points in 2015 to 16 percentage points in 2020."
+)
+
 
 class RecyclingFeedbackRegressionTests(unittest.TestCase):
     def test_recycling_values_are_aligned_to_the_official_city_year_framework(self):
@@ -68,6 +89,29 @@ class RecyclingFeedbackRegressionTests(unittest.TestCase):
         self.assertTrue(
             all(record["feedback_status"] == "correct" for record in result["records"])
         )
+        self.assertEqual(result["comparison"]["incorrect_official_items"], [])
+
+    def test_screenshot_sample_essay_does_not_cross_assign_adjacent_city_ranges(self):
+        result = {
+            "chart_type": "bar",
+            "axes": {"unit": "%", "y_label": "Households recycling (%)"},
+            "records": [],
+            "comparison": {},
+        }
+
+        _merge_explicit_cartesian_values(result, DEPLOT_TABLE, SCREENSHOT_SAMPLE_ESSAY)
+        _remove_unsupported_cartesian_values(result, DEPLOT_TABLE, SCREENSHOT_SAMPLE_ESSAY)
+        _annotate_cartesian_accuracy(result, DEPLOT_TABLE)
+
+        manchester = {
+            record["series"]: record
+            for record in result["records"]
+            if record["category"] == "Manchester"
+        }
+        self.assertEqual(manchester["2015"]["value"], 31)
+        self.assertEqual(manchester["2020"]["value"], 46)
+        self.assertEqual(manchester["2015"].get("conflicting_values"), [])
+        self.assertEqual(manchester["2020"].get("conflicting_values"), [])
         self.assertEqual(result["comparison"]["incorrect_official_items"], [])
 
     def test_exported_png_contains_visible_title_text(self):

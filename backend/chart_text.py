@@ -343,6 +343,42 @@ def build_table_fact_checks(text: str) -> str:
             f"from {_format_number(first_spread)} to {_format_number(last_spread)}."
         )
 
+        first_values = periods[0][1]
+        last_values = periods[-1][1]
+        changes = [
+            (name, last - first)
+            for name, first, last in zip(series, first_values, last_values)
+        ]
+        change_text = ", ".join(
+            f"{name} {'+' if change > 0 else ''}{_format_number(change)}"
+            for name, change in sorted(changes, key=lambda item: item[1], reverse=True)
+        )
+        largest_change = max(change for _, change in changes)
+        largest_names = [
+            name for name, change in changes if abs(change - largest_change) <= 1e-9
+        ]
+        facts.append(
+            f"Changes from {first_period} to {last_period}: {change_text}. "
+            f"Largest absolute increase: {', '.join(largest_names)}."
+        )
+
+        relative_changes = [
+            (name, (last - first) / abs(first))
+            for name, first, last in zip(series, first_values, last_values)
+            if abs(first) > 1e-9
+        ]
+        if relative_changes:
+            largest_relative = max(change for _, change in relative_changes)
+            largest_relative_names = [
+                name
+                for name, change in relative_changes
+                if abs(change - largest_relative) <= 1e-9
+            ]
+            facts.append(
+                "Largest relative increase compared with the starting value: "
+                f"{', '.join(largest_relative_names)}."
+            )
+
     for left_index in range(len(series)):
         for right_index in range(left_index + 1, len(series)):
             left_name, right_name = series[left_index], series[right_index]
@@ -362,6 +398,11 @@ def build_table_fact_checks(text: str) -> str:
 
 _EQUALITY_RE = re.compile(
     r"\b(?:equal(?:s|ed|led|ing)?|same as|identical to|drew level|level(?:led)? with|matched)\b",
+    flags=re.IGNORECASE,
+)
+_LARGEST_INCREASE_RE = re.compile(
+    r"\b(?:largest|greatest|biggest|highest|sharpest|strongest|most\s+significant)\b"
+    r".{0,60}\b(?:increase|gain|growth|rise|improvement|change)\b",
     flags=re.IGNORECASE,
 )
 _STEADY_UP_RE = re.compile(
@@ -558,6 +599,48 @@ def find_table_fact_contradictions(table_text: str, prose: str) -> list[str]:
                     f"from {_format_number(first_spread)} in {periods[0][0]} to "
                     f"{_format_number(last_spread)} in {periods[-1][0]}."
                 )
+
+            for clause in re.split(
+                r"[,;]|\b(?:while|whereas|although|but)\b",
+                sentence,
+                flags=re.IGNORECASE,
+            ):
+                if not _LARGEST_INCREASE_RE.search(clause):
+                    continue
+                mentioned_series = [
+                    name for name in series if _contains_series(clause, name)
+                ]
+                if len(mentioned_series) != 1:
+                    continue
+                relative_claim = bool(re.search(r"\brelative(?:ly)?\b", clause, re.IGNORECASE))
+                first_values = periods[0][1]
+                last_values = periods[-1][1]
+                if relative_claim:
+                    changes = [
+                        (name, (last - first) / abs(first))
+                        for name, first, last in zip(series, first_values, last_values)
+                        if abs(first) > 1e-9
+                    ]
+                    change_kind = "relative increase"
+                else:
+                    changes = [
+                        (name, last - first)
+                        for name, first, last in zip(series, first_values, last_values)
+                    ]
+                    change_kind = "absolute increase"
+                if not changes:
+                    continue
+                largest_change = max(change for _, change in changes)
+                expected = [
+                    name
+                    for name, change in changes
+                    if abs(change - largest_change) <= 1e-9
+                ]
+                if mentioned_series[0] not in expected:
+                    contradictions.append(
+                        f"The largest {change_kind} claim is false: "
+                        f"{', '.join(expected)} has the largest increase."
+                    )
 
         for clause in re.split(r"[,;]|\b(?:while|whereas|although|but)\b", sentence, flags=re.IGNORECASE):
             if any(re.search(rf"(?<!\d){re.escape(period)}(?!\d)", clause) for period, _ in periods):

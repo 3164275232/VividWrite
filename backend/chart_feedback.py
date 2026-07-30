@@ -409,6 +409,35 @@ def _nearest_category(
     return _nearest_label(occurrences, value_span)
 
 
+def _range_subject_category(
+    sentence: str,
+    occurrences: list[tuple[str, tuple[int, int]]],
+    value_span: tuple[int, int],
+) -> tuple[str, tuple[int, int]] | None:
+    """Bind a from-to range to its grammatical category instead of the next clause."""
+    following = sorted(
+        (
+            occurrence
+            for occurrence in occurrences
+            if occurrence[1][0] >= value_span[1]
+        ),
+        key=lambda item: item[1][0],
+    )
+    if following:
+        between = sentence[value_span[1] : following[0][1][0]]
+        if _VALUE_TO_CATEGORY_RE.fullmatch(between):
+            return following[0]
+
+    preceding = [
+        occurrence
+        for occurrence in occurrences
+        if occurrence[1][1] <= value_span[0]
+    ]
+    if preceding:
+        return max(preceding, key=lambda item: item[1][1])
+    return _nearest_category(sentence, occurrences, value_span)
+
+
 def _nearest_series(
     sentence: str,
     occurrences: list[tuple[str, tuple[int, int]]],
@@ -496,7 +525,7 @@ def _collect_explicit_cartesian_values(
                 preceding = sentence[max(0, match.start() - 55) : match.start()]
                 if re.search(r"\b(?:gap|difference|spread|range)\b", preceding, re.IGNORECASE):
                     continue
-                category_match = _nearest_category(
+                category_match = _range_subject_category(
                     sentence,
                     category_occurrences,
                     match.span(),
