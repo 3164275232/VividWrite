@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from auth import authentication_middleware, router as auth_router
 from deplot_extractor import extract_table_from_image_deplot
+from error_taxonomy import taxonomy_catalog
 from hybrid_feedback import HybridFeedbackService
 from next_sentence import NextSentenceRequest, NextSentenceResponse, generate_next_sentence
 from paths import CHARTS_DIR, UPLOADS_DIR, ensure_runtime_directories
@@ -89,13 +90,29 @@ def generate_revision_suggestions(chart_data: dict, student_answer: str) -> list
     records = chart_data.get("records") if isinstance(chart_data.get("records"), list) else []
     suggestions = []
 
-    missing_count = sum(1 for record in records if record.get("missing"))
-    if missing_count:
-        suggestions.append({
-            "type": "data_completeness",
-            "message": f"Your answer leaves {missing_count} item(s) from the original chart unspecified.",
-            "severity": "medium",
-        })
+    taxonomy = chart_data.get("error_taxonomy")
+    taxonomy_issues = taxonomy.get("issues") if isinstance(taxonomy, dict) else None
+    if isinstance(taxonomy_issues, list):
+        for definition in taxonomy.get("definitions") or []:
+            if not isinstance(definition, dict) or not definition.get("issue_count"):
+                continue
+            count = int(definition["issue_count"])
+            suggestions.append({
+                "type": definition.get("code", "content_fidelity"),
+                "message": (
+                    f'{count} verified {definition.get("label", "content").lower()} '
+                    f'issue(s) need review.'
+                ),
+                "severity": "high" if definition.get("code") != "key_feature_omission" else "medium",
+            })
+    else:
+        missing_count = sum(1 for record in records if record.get("missing"))
+        if missing_count:
+            suggestions.append({
+                "type": "data_completeness",
+                "message": f"Your answer leaves {missing_count} item(s) from the original chart unspecified.",
+                "severity": "medium",
+            })
 
     estimated_count = sum(1 for record in records if record.get("estimated"))
     if estimated_count:
@@ -106,7 +123,7 @@ def generate_revision_suggestions(chart_data: dict, student_answer: str) -> list
         })
 
     incorrect_count = sum(1 for record in records if record.get("incorrect"))
-    if incorrect_count:
+    if incorrect_count and not isinstance(taxonomy_issues, list):
         suggestions.append({
             "type": "data_accuracy",
             "message": f"Your answer contains {incorrect_count} pie-chart value(s) that differ from the original chart.",
@@ -137,6 +154,11 @@ def _normalize_deplot_response_text(raw_text: str) -> str:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/error-taxonomy")
+def error_taxonomy() -> dict:
+    return taxonomy_catalog()
 
 
 @app.post("/api/next-sentence", response_model=NextSentenceResponse)

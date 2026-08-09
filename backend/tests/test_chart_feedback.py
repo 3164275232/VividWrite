@@ -12,6 +12,7 @@ from chart_feedback import (
     _annotate_bar_accuracy,
     _annotate_line_accuracy,
     _annotate_pie_accuracy,
+    _collect_explicit_cartesian_values,
     _normalise_result,
 )
 from chart_renderer import InvalidChartSpec, extract_image_palette, prepare_vega_lite_spec
@@ -103,6 +104,20 @@ class SequenceClient:
 
 
 class UnifiedChartFeedbackTests(unittest.TestCase):
+    def test_aligns_started_and_reached_values_without_treating_change_as_endpoint(self):
+        official_records = [
+            {"category": "Manchester", "series": "2015"},
+            {"category": "Manchester", "series": "2020"},
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "Manchester started at 31% and reached 46% by 2020, giving it "
+            "the largest increase among the cities discussed, at 15 percentage points.",
+            official_records,
+        )
+
+        self.assertEqual(claims, {("Manchester", "2015"): [31.0], ("Manchester", "2020"): [46.0]})
+
     def test_normalises_long_form_records(self):
         result = _normalise_result(_model_payload(), "auto")
         self.assertEqual(result["records"][0]["value"], 72.0)
@@ -122,6 +137,9 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
             self.assertTrue(output.exists())
             self.assertGreater(output.stat().st_size, 1000)
             self.assertEqual(result["chart_type"], "bar")
+            self.assertEqual(result["schema_version"], "1.1")
+            self.assertEqual(len(result["error_taxonomy"]["definitions"]), 5)
+            self.assertIn("issues", result["error_taxonomy"])
             self.assertEqual(client.completions.kwargs["response_format"], {"type": "json_object"})
 
     def test_rejects_external_chart_data(self):

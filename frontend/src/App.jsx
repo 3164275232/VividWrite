@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import ErrorBoundary from './ErrorBoundary.jsx';
 import CmEditor from './CmEditor.jsx';
 import RevisionWorkspace from './RevisionWorkspace.jsx';
+import TaxonomyFeedback from './TaxonomyFeedback.jsx';
 import {
   analyzeChartWithImage,
   extractDeplot,
@@ -48,6 +49,9 @@ function formatFeedbackNumber(value) {
 
 function ChartFeedbackDetails({ chartData }) {
   if (!['pie', 'bar', 'line'].includes(chartData?.chart_type)) return null;
+  if (Array.isArray(chartData?.error_taxonomy?.issues)) {
+    return <TaxonomyFeedback chartData={chartData} />;
+  }
   const isPie = chartData.chart_type === 'pie';
   const comparison = chartData.comparison || {};
   const issues = Array.isArray(comparison.incorrect_official_items)

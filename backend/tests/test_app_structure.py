@@ -15,6 +15,7 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn("/api/prepare-task-image", paths)
         self.assertIn("/api/deplot-extract", paths)
         self.assertIn("/api/analyze-chart-with-image", paths)
+        self.assertIn("/api/error-taxonomy", paths)
         self.assertIn("/api/generate-spatial-sample-essay", paths)
         self.assertNotIn("/api/analyze-structure", paths)
         self.assertNotIn("/api/map-sentences", paths)

@@ -22,6 +22,7 @@ from chart_text import (
     round_deplot_table_values,
 )
 from deepseek_config import get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
+from error_taxonomy import attach_error_taxonomy
 
 
 SUPPORTED_CHART_TYPES = {"auto", "bar", "line", "area", "pie"}
@@ -311,13 +312,22 @@ def _merge_explicit_pie_percentages(result: dict, deplot_text: str, student_answ
 _CARTESIAN_NUMBER_RE = re.compile(r"(?<![\w.])[-+]?\d+(?:,\d{3})*(?:\.\d+)?(?![\w.])")
 _CHANGE_VALUE_PREFIX_RE = re.compile(
     r"(?:\bby|\b(?:increase|rise|growth|gain|change|decrease|decline|drop|fall|difference|gap)"
-    r"\s+of)\s*$",
+    r"\b[^.!?;]{0,80}\b(?:of|at|by))\s*$",
     flags=re.IGNORECASE,
 )
 _FROM_TO_VALUE_RE = re.compile(
     r"\bfrom\s+(?P<start>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)"
     r"\s*(?:%|percent(?:age\s+points?)?|million|billion|thousand)?\s+"
     r"to\s+(?P<end>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)",
+    flags=re.IGNORECASE,
+)
+_START_END_VALUE_RE = re.compile(
+    r"\b(?:start(?:ed|ing)?|began)\s+(?:at|with)\s+"
+    r"(?P<start>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)"
+    r"\s*(?:%|percent(?:age\s+points?)?|million|billion|thousand)?"
+    r"[^.!?;]{0,80}?\b(?:end(?:ed|ing)?|finish(?:ed|ing)?|reach(?:ed|ing)?|"
+    r"rose|increased|grew|climbed|fell|declined|dropped)\s+(?:at|to)?\s*"
+    r"(?P<end>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)",
     flags=re.IGNORECASE,
 )
 
@@ -505,7 +515,7 @@ def _collect_explicit_cartesian_values(
                 for start, end in occupied_spans
             ):
                 continue
-            prefix = sentence[max(0, value_span[0] - 35) : value_span[0]]
+            prefix = sentence[max(0, value_span[0] - 100) : value_span[0]]
             if _CHANGE_VALUE_PREFIX_RE.search(prefix):
                 continue
             numeric_occurrences.append(
@@ -514,7 +524,12 @@ def _collect_explicit_cartesian_values(
 
         consumed_spans: set[tuple[int, int]] = set()
         if temporal_series:
-            for match in _FROM_TO_VALUE_RE.finditer(sentence):
+            range_matches = [
+                match
+                for pattern in (_FROM_TO_VALUE_RE, _START_END_VALUE_RE)
+                for match in pattern.finditer(sentence)
+            ]
+            for match in range_matches:
                 value_spans = [match.span("start"), match.span("end")]
                 if any(
                     start < value_span[1] and value_span[0] < end
@@ -1337,6 +1352,7 @@ class ChartFeedbackService:
                 _validate_temporal_record_coverage(result, deplot_text, student_answer)
                 _interpolate_supported_temporal_gaps(result, deplot_text, student_answer)
                 _annotate_line_accuracy(result, deplot_text)
+                attach_error_taxonomy(result, student_answer)
                 result["style"] = {"color_palette": palette, "renderer": "vega-lite"}
                 result["vega_lite_spec"] = render_vega_lite_png(
                     result["vega_lite_spec"],

@@ -13,6 +13,8 @@ import CmEditor from './CmEditor.jsx';
 const ISSUE_STATUSES = new Set(['incorrect', 'conflicting', 'missing', 'unexpected']);
 
 function getIssueCount(chartData) {
+  const taxonomyCount = Number(chartData?.error_taxonomy?.summary?.total_issues);
+  if (Number.isFinite(taxonomyCount)) return taxonomyCount;
   const recordCount = Array.isArray(chartData?.records)
     ? chartData.records.filter((record) => ISSUE_STATUSES.has(record?.feedback_status)).length
     : 0;
