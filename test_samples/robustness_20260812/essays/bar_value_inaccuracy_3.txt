@@ -1,0 +1,7 @@
+The chart presents household recycling rates for five cities in the United Kingdom at two points in time, 2015 and 2020.
+
+Overall, there were clear differences between the cities, while the second observation generally occupied a higher part of the scale.
+
+Leeds's figure in 2020 was 48%. For 2015, the rate reported for Bristol stood at 42%. For 2015, the rate reported for Manchester stood at 37%. For 2015, the rate reported for Liverpool stood at 28%. In 2020, Sheffield registered 51%. Leeds's figure in 2015 was 35%. Bristol's figure in 2020 was 55%. Sheffield's figure in 2015 was 38%. In 2020, Liverpool registered 39%. For 2020, the rate reported for Manchester stood at 46%.
+
+The data therefore show measurable variation rather than a uniform pattern across the country.

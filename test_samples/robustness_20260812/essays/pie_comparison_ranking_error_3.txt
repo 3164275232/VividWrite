@@ -1,0 +1,7 @@
+The pie chart breaks down average Canadian household expenditure in 2024 across six spending categories.
+
+Overall, Transport was the largest component of household expenditure, while the remaining categories occupied unequal shares.
+
+Food represented 21% of the budget. Households devoted 17% of expenditure to Transport. Utilities represented 10% of the budget. Households devoted 32% of expenditure to Housing. Households devoted 12% of expenditure to Leisure. Households devoted 8% of expenditure to Other.
+
+This distribution makes it possible to compare major commitments with smaller items of expenditure.

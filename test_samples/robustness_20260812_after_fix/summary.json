@@ -1,0 +1,26 @@
+{
+  "manifest_sha256": "c0c54a8b862270189e9a965bbf668a3e765d80fc8ae4224b7c0caed3eb24a161",
+  "case_count": 45,
+  "taxonomy_passes": 36,
+  "image_passes": 36,
+  "fully_passed": 36,
+  "api_errors": 0,
+  "duration_seconds": 194.14,
+  "by_chart": {
+    "bar": {
+      "cases": 15,
+      "taxonomy_passes": 15,
+      "image_passes": 15
+    },
+    "line": {
+      "cases": 15,
+      "taxonomy_passes": 6,
+      "image_passes": 6
+    },
+    "pie": {
+      "cases": 15,
+      "taxonomy_passes": 15,
+      "image_passes": 15
+    }
+  }
+}

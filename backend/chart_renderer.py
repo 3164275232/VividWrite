@@ -43,6 +43,7 @@ BAR_ERROR_TEXT = "#701a3d"
 LINE_ERROR_FILL = "#f9a8d4"
 LINE_ERROR_STROKE = "#be185d"
 LINE_ERROR_TEXT = "#701a3d"
+SEMANTIC_ALERT_COLOR = "#991b1b"
 PIE_PLOT_WIDTH = 600
 PIE_PLOT_HEIGHT = 420
 PIE_FALLBACK_PALETTE = [
@@ -958,6 +959,7 @@ def prepare_vega_lite_spec(
     *,
     chart_type: str | None = None,
     unit: str = "",
+    semantic_alerts: list[str] | None = None,
 ) -> dict:
     if not records:
         raise InvalidChartSpec("No chart records were produced from the student answer.")
@@ -984,7 +986,20 @@ def prepare_vega_lite_spec(
         _apply_encoding_order(prepared, render_records, palette)
     prepared["$schema"] = "https://vega.github.io/schema/vega-lite/v6.json"
     prepared["data"] = {"values": render_records}
-    prepared["title"] = title or "Student answer visualisation"
+    chart_title = title or "Student answer visualisation"
+    visible_alerts = [str(alert).strip() for alert in (semantic_alerts or []) if str(alert).strip()]
+    if visible_alerts:
+        prepared["title"] = {
+            "text": chart_title,
+            "subtitle": visible_alerts[:3],
+            "subtitleColor": SEMANTIC_ALERT_COLOR,
+            "subtitleFont": CHART_FONT,
+            "subtitleFontSize": 11,
+            "subtitleFontWeight": "bold",
+            "subtitlePadding": 8,
+        }
+    else:
+        prepared["title"] = chart_title
     if chart_type == "pie":
         prepared["width"] = PIE_PLOT_WIDTH
         prepared["height"] = PIE_PLOT_HEIGHT
@@ -1046,6 +1061,7 @@ def render_vega_lite_png(
     *,
     chart_type: str | None = None,
     unit: str = "",
+    semantic_alerts: list[str] | None = None,
 ) -> dict:
     prepared = prepare_vega_lite_spec(
         spec,
@@ -1054,6 +1070,7 @@ def render_vega_lite_png(
         palette,
         chart_type=chart_type,
         unit=unit,
+        semantic_alerts=semantic_alerts,
     )
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)

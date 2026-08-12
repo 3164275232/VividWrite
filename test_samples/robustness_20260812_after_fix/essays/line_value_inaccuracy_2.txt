@@ -1,0 +1,7 @@
+The line chart presents changes in the millions of passengers using bus, rail and metro services on an average day.
+
+Overall, use of the three services was distributed differently across the period.
+
+At the outset, Bus carried 1.8 million passengers and ultimately reached 1.3 million. Metro began with 0.8 million passengers and ended at 1.5 million. In 2010, Rail served 1.1 million passengers, compared with 2.2 million in 2020. At the 2014 observation, Bus stood at 1.7 million. The Metro figure in 2014 was 1.2 million. The Rail figure in 2014 was 1.5 million.
+
+The intermediate observation adds detail to the comparison rather than limiting it to the two endpoints.

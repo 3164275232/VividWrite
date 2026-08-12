@@ -69,6 +69,10 @@ export default function TaxonomyFeedback({ chartData }) {
   const verifiedValue = Number(taxonomy.summary?.verified_issues);
   const total = Number.isFinite(totalValue) ? totalValue : issues.length;
   const verified = Number.isFinite(verifiedValue) ? verifiedValue : issues.length;
+  const applicableValue = Number(taxonomy.summary?.applicable_checks);
+  const applicableChecks = Number.isFinite(applicableValue)
+    ? applicableValue
+    : definitions.filter((definition) => definition.applicable !== false).length;
   const unitText = String(chartData?.axes?.unit || '').trim();
   const isPercentage = chartData?.chart_type === 'pie'
     || /%|percent/i.test(`${unitText} ${chartData?.axes?.y_label || ''}`);
@@ -81,16 +85,23 @@ export default function TaxonomyFeedback({ chartData }) {
           <strong>{total}</strong>
           <span>{total === 1 ? 'verified issue' : 'verified issues'}</span>
         </div>
-        <small>Five content-fidelity checks / taxonomy v{taxonomy.version || '1.0'}</small>
+        <small>
+          Five-class taxonomy / {applicableChecks} applicable / v{taxonomy.version || '1.0'}
+        </small>
       </div>
 
       <div className="taxonomy-check-list" aria-label="Five error checks">
         {definitions.map((definition) => {
           const count = Number(definition.issue_count ?? counts[definition.code]) || 0;
+          const isApplicable = definition.applicable !== false;
           return (
-            <div className={count ? 'has-issues' : ''} key={definition.code}>
+            <div
+              className={!isApplicable ? 'not-applicable' : count ? 'has-issues' : ''}
+              key={definition.code}
+              title={!isApplicable ? definition.reason : undefined}
+            >
               <span>{definition.label}</span>
-              <strong>{count}</strong>
+              <strong>{isApplicable ? count : 'N/A'}</strong>
             </div>
           );
         })}
@@ -98,7 +109,7 @@ export default function TaxonomyFeedback({ chartData }) {
 
       {total === 0 ? (
         <div className="taxonomy-clear-result">
-          No locally verifiable content-fidelity issues were found.
+          No locally verifiable issues were found among the applicable checks.
         </div>
       ) : (
         <div className="taxonomy-groups">

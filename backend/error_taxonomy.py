@@ -11,7 +11,7 @@ from collections import defaultdict
 from typing import Any, Iterable
 
 
-TAXONOMY_VERSION = "1.0"
+TAXONOMY_VERSION = "1.1"
 TAXONOMY_SCOPE = "statistical-chart-content-fidelity"
 
 ERROR_TYPE_DEFINITIONS = (
@@ -50,7 +50,6 @@ ERROR_TYPE_DEFINITIONS = (
 ERROR_CODES = tuple(item["code"] for item in ERROR_TYPE_DEFINITIONS)
 _DEFINITION_BY_CODE = {item["code"]: item for item in ERROR_TYPE_DEFINITIONS}
 
-_SENTENCE_RE = re.compile(r"[^.!?;\r\n]+(?:[.!?;]+|$)")
 _NUMBER_RE = re.compile(r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?")
 _TEMPORAL_RE = re.compile(
     r"(?:\b(?:19|20)\d{2}(?:\s*/\s*\d{2,4})?\b|\bq[1-4]\b|"
@@ -142,7 +141,26 @@ def _record_key(record: dict) -> dict:
 
 
 def _sentence_parts(student_answer: str) -> list[str]:
-    return [match.group().strip() for match in _SENTENCE_RE.finditer(student_answer or "") if match.group().strip()]
+    text = student_answer or ""
+    parts = []
+    start = 0
+    for index, character in enumerate(text):
+        previous = text[index - 1] if index else ""
+        following = text[index + 1] if index + 1 < len(text) else ""
+        decimal_point = character == "." and previous.isdigit() and following.isdigit()
+        sentence_end = character in "!?;" or (character == "." and not decimal_point)
+        line_end = character in "\r\n"
+        if not sentence_end and not line_end:
+            continue
+        end = index + 1 if sentence_end else index
+        sentence = text[start:end].strip()
+        if sentence:
+            parts.append(sentence)
+        start = index + 1
+    remainder = text[start:].strip()
+    if remainder:
+        parts.append(remainder)
+    return parts
 
 
 def _contains_label(sentence: str, label: Any) -> bool:
@@ -494,7 +512,21 @@ def _find_trend_errors(chart_data: dict, records: list[dict], student_answer: st
 
 def _ranking_contexts(chart_data: dict, records: list[dict]) -> list[tuple[str, list[tuple[int, dict]]]]:
     if chart_data.get("chart_type") == "pie":
-        return [("Whole chart", list(enumerate(records)))]
+        categories = [record.get("category") for record in records]
+        series = [record.get("series") for record in records]
+        if _all_temporal(series) and not _all_temporal(categories):
+            group_field = "series"
+        elif _all_temporal(categories) and not _all_temporal(series):
+            group_field = "category"
+        else:
+            return [("Whole chart", list(enumerate(records)))]
+
+        grouped: dict[str, list[tuple[int, dict]]] = defaultdict(list)
+        for index, record in enumerate(records):
+            context = record.get(group_field)
+            if context not in (None, ""):
+                grouped[str(context)].append((index, record))
+        return [item for item in grouped.items() if len(item[1]) >= 2]
 
     categories = [record.get("category") for record in records]
     series = [record.get("series") for record in records]
@@ -528,15 +560,24 @@ def _rank_claim_for_entity(sentence: str, entity: str) -> str | None:
         flags=re.IGNORECASE,
     ):
         return None
-    entity_key = re.escape(str(entity))
+    entity_pattern = re.compile(rf"\b{re.escape(str(entity))}\b", flags=re.IGNORECASE)
+    entity_matches = list(entity_pattern.finditer(sentence))
+    clause_boundary = re.compile(r"[,;:]|\b(?:while|whereas|but|although)\b", flags=re.IGNORECASE)
     for rank, pattern in _RANK_PATTERNS.items():
-        keyword = pattern.pattern
-        combined = re.compile(
-            rf"(?:\b{entity_key}\b.{{0,60}}{keyword}|{keyword}.{{0,60}}\b{entity_key}\b)",
-            flags=re.IGNORECASE,
-        )
-        if combined.search(sentence):
-            return rank
+        for rank_match in pattern.finditer(sentence):
+            qualifier = sentence[max(0, rank_match.start() - 16) : rank_match.start()]
+            if re.search(
+                r"\b(?:second|third|fourth|fifth|next)\s*[- ]?\s*$",
+                qualifier,
+                flags=re.IGNORECASE,
+            ):
+                continue
+            for entity_match in entity_matches:
+                between_start = min(entity_match.end(), rank_match.end())
+                between_end = max(entity_match.start(), rank_match.start())
+                between = sentence[between_start:between_end]
+                if len(between) <= 60 and not clause_boundary.search(between):
+                    return rank
     return None
 
 
@@ -768,6 +809,50 @@ def _deduplicate(issues: list[dict]) -> list[dict]:
     return unique
 
 
+def _taxonomy_applicability(chart_data: dict, records: list[dict]) -> dict[str, dict]:
+    official_records = [record for record in records if _official_value(record) is not None]
+    trend_available = any(
+        sum(1 for _, record in indexed_records if _official_value(record) is not None) >= 2
+        for _, indexed_records in _trend_entities(chart_data, records)
+    )
+    ranking_available = any(
+        sum(1 for _, record in indexed_records if _official_value(record) is not None) >= 2
+        for _, indexed_records in _ranking_contexts(chart_data, records)
+    )
+    chart_type = str(chart_data.get("chart_type") or "chart")
+
+    applicable = {
+        "value_inaccuracy": bool(official_records),
+        "entity_misalignment": bool(official_records),
+        "trend_direction_error": trend_available,
+        "comparison_ranking_error": ranking_available,
+        "key_feature_omission": bool(official_records),
+    }
+    reasons = {
+        "value_inaccuracy": "Official values are available for aligned numeric comparison.",
+        "entity_misalignment": "The official category and series framework is available.",
+        "trend_direction_error": (
+            "At least two ordered official values are available for the same entity."
+            if trend_available
+            else (
+                "A single-period pie chart has no temporal endpoints, so trend direction cannot be verified."
+                if chart_type == "pie"
+                else "No entity has two ordered official values for a direction check."
+            )
+        ),
+        "comparison_ranking_error": (
+            "At least two official values are available in the same comparison context."
+            if ranking_available
+            else "The chart has no comparison context containing at least two official values."
+        ),
+        "key_feature_omission": "The official chart framework is available for coverage checks.",
+    }
+    return {
+        code: {"applicable": is_applicable, "reason": reasons[code]}
+        for code, is_applicable in applicable.items()
+    }
+
+
 def build_error_taxonomy(chart_data: dict, student_answer: str) -> dict:
     """Build the five-class taxonomy and attach evidence to every issue."""
     records = chart_data.get("records") if isinstance(chart_data.get("records"), list) else []
@@ -784,6 +869,7 @@ def build_error_taxonomy(chart_data: dict, student_answer: str) -> dict:
         *_find_omissions(chart_data, records),
     ]
     issues = _deduplicate(issues)
+    applicability = _taxonomy_applicability(chart_data, records)
 
     counts = {code: 0 for code in ERROR_CODES}
     for index, issue in enumerate(issues, start=1):
@@ -797,6 +883,7 @@ def build_error_taxonomy(chart_data: dict, student_answer: str) -> dict:
     for definition in ERROR_TYPE_DEFINITIONS:
         item = dict(definition)
         item["issue_count"] = counts[item["code"]]
+        item.update(applicability[item["code"]])
         definitions.append(item)
 
     return {
@@ -804,6 +891,7 @@ def build_error_taxonomy(chart_data: dict, student_answer: str) -> dict:
         "scope": TAXONOMY_SCOPE,
         "chart_type": chart_data.get("chart_type"),
         "definitions": definitions,
+        "applicability": applicability,
         "issues": issues,
         "summary": {
             "total_issues": len(issues),
@@ -811,6 +899,12 @@ def build_error_taxonomy(chart_data: dict, student_answer: str) -> dict:
                 1 for issue in issues if issue["verification"]["status"] == "verified"
             ),
             "affected_error_types": sum(1 for count in counts.values() if count),
+            "applicable_checks": sum(
+                1 for item in applicability.values() if item["applicable"]
+            ),
+            "not_applicable_checks": sum(
+                1 for item in applicability.values() if not item["applicable"]
+            ),
             "counts": counts,
         },
         "limitations": [

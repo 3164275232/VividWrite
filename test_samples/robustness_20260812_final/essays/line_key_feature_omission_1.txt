@@ -1,0 +1,7 @@
+The graph traces daily passenger numbers for three public transport modes over the decade from 2010 to 2020.
+
+Overall, use of the three services was distributed differently across the period.
+
+In 2010, Metro served 0.8 million passengers, compared with 1.9 million in 2020. Bus began with 1.8 million passengers and ended at 1.3 million. At the 2018 observation, Metro stood at 1.7 million. At the 2018 observation, Bus stood at 1.5 million.
+
+The selected middle year helps indicate the position of each service between the first and final observations.

@@ -13,7 +13,9 @@ from chart_feedback import (
     _annotate_line_accuracy,
     _annotate_pie_accuracy,
     _collect_explicit_cartesian_values,
+    _collect_explicit_pie_percentages,
     _normalise_result,
+    _remove_unsupported_pie_values,
 )
 from chart_renderer import InvalidChartSpec, extract_image_palette, prepare_vega_lite_spec
 
@@ -104,6 +106,39 @@ class SequenceClient:
 
 
 class UnifiedChartFeedbackTests(unittest.TestCase):
+    def test_line_respectively_values_map_to_series_in_order(self):
+        official_records = [
+            {"category": "2020", "series": "Bus"},
+            {"category": "2020", "series": "Rail"},
+            {"category": "2020", "series": "Metro"},
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "In 2020, the respective figures for bus, rail and metro were 1.3, 2.2 and 1.9 million.",
+            official_records,
+        )
+
+        self.assertEqual(
+            claims,
+            {
+                ("2020", "Bus"): [1.3],
+                ("2020", "Rail"): [2.2],
+                ("2020", "Metro"): [1.9],
+            },
+        )
+
+    def test_pie_respectively_values_map_to_categories_and_ignore_point_difference(self):
+        claims = _collect_explicit_pie_percentages(
+            "Leisure and utilities accounted for 12% and 10% respectively. "
+            "Transport made up 17%, placing it 4 percentage points below food.",
+            ["Food", "Transport", "Leisure", "Utilities"],
+        )
+
+        self.assertEqual(
+            claims,
+            {"Transport": [17.0], "Leisure": [12.0], "Utilities": [10.0]},
+        )
+
     def test_aligns_started_and_reached_values_without_treating_change_as_endpoint(self):
         official_records = [
             {"category": "Manchester", "series": "2015"},
@@ -1284,6 +1319,112 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         )
         self.assertIsNone(missing["value"])
         self.assertTrue(missing["missing"])
+
+    def test_beginning_and_end_values_map_to_first_and_last_line_periods(self):
+        deplot = (
+            "Year | Bus | Rail<0x0A>2010 | 1.8 | 1.1<0x0A>"
+            "2016 | 1.6 | 1.8<0x0A>2020 | 1.3 | 2.2"
+        )
+        records = [
+            {"category": row[0], "series": row[1]}
+            for row in (
+                ("2010", "Bus"), ("2010", "Rail"),
+                ("2016", "Bus"), ("2016", "Rail"),
+                ("2020", "Bus"), ("2020", "Rail"),
+            )
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "The figures for Bus were 1.8 million at the beginning and 1.3 million at the end. "
+            "Rail stood at 1.1 million at the outset and 2.2 million at the finish.",
+            records,
+        )
+
+        self.assertEqual(claims[("2010", "Bus")], [1.8])
+        self.assertEqual(claims[("2020", "Bus")], [1.3])
+        self.assertEqual(claims[("2010", "Rail")], [1.1])
+        self.assertEqual(claims[("2020", "Rail")], [2.2])
+
+    def test_opened_and_closed_values_map_to_first_and_last_line_periods(self):
+        records = [
+            {"category": row[0], "series": row[1]}
+            for row in (
+                ("2010", "Bus"), ("2010", "Rail"),
+                ("2016", "Bus"), ("2016", "Rail"),
+                ("2020", "Bus"), ("2020", "Rail"),
+            )
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "Bus opened the period at 1.8 million and closed it at 1.3 million. "
+            "Rail began the decade with 1.1 million and finished at 2.2 million.",
+            records,
+        )
+
+        self.assertEqual(claims[("2010", "Bus")], [1.8])
+        self.assertEqual(claims[("2020", "Bus")], [1.3])
+        self.assertEqual(claims[("2010", "Rail")], [1.1])
+        self.assertEqual(claims[("2020", "Rail")], [2.2])
+
+    def test_overlapping_endpoint_patterns_are_deduplicated(self):
+        records = [
+            {"category": period, "series": "Metro"}
+            for period in ("2010", "2014", "2020")
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "Metro began with 0.8 million passengers and ended at 1.9 million.",
+            records,
+        )
+
+        self.assertEqual(claims[("2010", "Metro")], [0.8])
+        self.assertEqual(claims[("2020", "Metro")], [1.9])
+
+    def test_unstated_pie_value_copied_by_model_is_removed(self):
+        result = {
+            "chart_type": "pie",
+            "comparison": {},
+            "records": [
+                {"category": "Housing", "value": 60.0},
+                {"category": "Other", "value": 40.0},
+            ],
+        }
+        deplot = "Category | Percentage<0x0A>Housing | 60%<0x0A>Other | 40%"
+
+        _remove_unsupported_pie_values(
+            result,
+            deplot,
+            "Housing represented 60% of expenditure.",
+        )
+        _annotate_pie_accuracy(result, deplot)
+
+        housing, other = result["records"]
+        self.assertEqual(housing["value"], 60.0)
+        self.assertEqual(housing["feedback_status"], "correct")
+        self.assertIsNone(other["value"])
+        self.assertEqual(other["feedback_status"], "missing")
+
+    def test_semantic_alert_is_visible_in_chart_title(self):
+        prepared = prepare_vega_lite_spec(
+            {
+                "mark": "bar",
+                "encoding": {
+                    "x": {"field": "category", "type": "ordinal"},
+                    "y": {"field": "value", "type": "quantitative"},
+                },
+            },
+            [{"category": "A", "value": 10.0}],
+            "Student chart",
+            chart_type="bar",
+            semantic_alerts=["TEXT CONFLICT: A is not the highest item."],
+        )
+
+        self.assertEqual(prepared["title"]["text"], "Student chart")
+        self.assertEqual(
+            prepared["title"]["subtitle"],
+            ["TEXT CONFLICT: A is not the highest item."],
+        )
+        self.assertEqual(prepared["title"]["subtitleColor"], "#991b1b")
 
 
 if __name__ == "__main__":

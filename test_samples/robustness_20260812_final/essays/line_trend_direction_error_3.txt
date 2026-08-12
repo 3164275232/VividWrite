@@ -1,0 +1,7 @@
+The line chart presents changes in the millions of passengers using bus, rail and metro services on an average day.
+
+Overall, Metro fell over the decade, while the relative positions of all three modes changed during the period.
+
+At the outset, Rail carried 1.1 million passengers and ultimately reached 2.2 million. Bus began with 1.8 million passengers and ended at 1.3 million. Metro opened the period at 0.8 million and closed it at 1.9 million. In 2014, Metro carried 1.2 million daily passengers. The Rail figure in 2014 was 1.5 million. The Bus figure in 2014 was 1.7 million.
+
+The intermediate observation adds detail to the comparison rather than limiting it to the two endpoints.

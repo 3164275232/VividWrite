@@ -1,0 +1,7 @@
+The line graph compares average daily passenger numbers for bus, rail and metro services between 2010 and 2020, measured in millions.
+
+Overall, the lines did not remain in their initial order, and the gap between services changed over time.
+
+In 2010, Bus served 1.8 million passengers per day, compared with 1.3 million in 2020. Rail carried 1.1 million passengers in 2010 and 2.2 million in 2020. In 2010, Metro served 0.8 million passengers per day, compared with 1.9 million in 2020. At 2018, Bus stood at 2.0 million passengers. Rail recorded 1.5 million daily users in 2018. In 2018, the figure for Metro was 1.7 million.
+
+These figures make the changing balance among the transport services visible across the decade.

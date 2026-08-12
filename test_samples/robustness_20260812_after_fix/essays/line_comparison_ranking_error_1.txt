@@ -1,0 +1,7 @@
+The graph traces daily passenger numbers for three public transport modes over the decade from 2010 to 2020.
+
+Overall, Rail was the lowest transport mode in 2020, while the ordering differed at other observations.
+
+Metro opened the period at 0.8 million and closed it at 1.9 million. Bus opened the period at 1.8 million and closed it at 1.3 million. Rail opened the period at 1.1 million and closed it at 2.2 million. In 2018, Metro carried 1.7 million daily passengers. In 2018, Rail carried 2.0 million daily passengers. The Bus figure in 2018 was 1.5 million.
+
+The selected middle year helps indicate the position of each service between the first and final observations.
