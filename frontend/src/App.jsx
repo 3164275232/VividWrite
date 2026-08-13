@@ -21,6 +21,10 @@ import {
 } from "./api";
 import Login from "./Login";
 import {
+  loadPracticeSample,
+  PRACTICE_SAMPLES,
+} from './practiceSamples';
+import {
   ArrowRight,
   BarChart3,
   FileText,
@@ -286,6 +290,9 @@ export default function App() {
   const [taskDetection, setTaskDetection] = useState(null);
   const [isPreparingTaskImage, setIsPreparingTaskImage] = useState(false);
   const [taskPreparationPhase, setTaskPreparationPhase] = useState("");
+  const [selectedPracticeSampleId, setSelectedPracticeSampleId] = useState("");
+  const [isLoadingPracticeSample, setIsLoadingPracticeSample] = useState(false);
+  const [practiceSampleError, setPracticeSampleError] = useState("");
   const effectiveChartType = selectedChartType === "auto"
     ? (resolvedChartType || "auto")
     : selectedChartType;
@@ -305,6 +312,7 @@ export default function App() {
   const [isExtractingDeplot, setIsExtractingDeplot] = useState(false);
   const [deplotError, setDeplotError] = useState("");
   const taskImagePreparationRef = useRef({ seq: 0, promise: null, key: null });
+  const practiceSampleLoadRef = useRef(0);
   // Track background DePlot extraction task without showing UI
   const deplotTaskRef = useRef({ seq: 0, promise: null, key: null });
   // Helper to run DePlot extraction; if showOverlay=true, show analyzing modal while waiting
@@ -620,6 +628,10 @@ export default function App() {
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
+      practiceSampleLoadRef.current += 1;
+      setSelectedPracticeSampleId("");
+      setIsLoadingPracticeSample(false);
+      setPracticeSampleError("");
       setUploadedImage(file);
       setChartUrl(null);
       setChartData(null);
@@ -641,6 +653,10 @@ export default function App() {
   };
 
   const handleRemoveImage = () => {
+    practiceSampleLoadRef.current += 1;
+    setSelectedPracticeSampleId("");
+    setIsLoadingPracticeSample(false);
+    setPracticeSampleError("");
     setUploadedImage(null);
     setImagePreview(null);
     setChartUrl(null);
@@ -662,6 +678,68 @@ export default function App() {
     setResolvedChartType(null);
     setIsPreparingTaskImage(false);
     setTaskPreparationPhase("");
+  };
+
+  const handlePracticeSampleChange = async (event) => {
+    const sampleId = event.target.value;
+    if (!sampleId) {
+      handleRemoveImage();
+      setSelectedChartType("auto");
+      return;
+    }
+
+    const loadSeq = practiceSampleLoadRef.current + 1;
+    practiceSampleLoadRef.current = loadSeq;
+    setSelectedPracticeSampleId(sampleId);
+    setIsLoadingPracticeSample(true);
+    setPracticeSampleError("");
+    setDeplotError("");
+    setChartUrl(null);
+    setChartData(null);
+    setIsPreparingTaskImage(false);
+    setTaskPreparationPhase("");
+    taskImagePreparationRef.current = {
+      seq: taskImagePreparationRef.current.seq + 1,
+      promise: null,
+      key: null,
+    };
+    deplotTaskRef.current = {
+      seq: deplotTaskRef.current.seq + 1,
+      promise: null,
+      key: null,
+    };
+    setIsExtractingDeplot(false);
+
+    try {
+      const { sample, file } = await loadPracticeSample(sampleId);
+      if (practiceSampleLoadRef.current !== loadSeq) return;
+
+      setUploadedImage(file);
+      setImagePreview(sample.imageUrl);
+      setSelectedChartType(sample.chartType);
+      setResolvedChartType(null);
+      setTaskDetection({
+        task_type: sample.chartType,
+        confidence: 1,
+        detection_source: 'preprocessed-sample',
+        needs_confirmation: false,
+        deplot_text: sample.deplotText,
+      });
+      setDeplotText(sample.deplotText);
+    } catch (error) {
+      if (practiceSampleLoadRef.current !== loadSeq) return;
+      setSelectedPracticeSampleId("");
+      setUploadedImage(null);
+      setImagePreview(null);
+      setDeplotText("");
+      setTaskDetection(null);
+      setResolvedChartType(null);
+      setPracticeSampleError(error.message || 'Could not load the practice sample.');
+    } finally {
+      if (practiceSampleLoadRef.current === loadSeq) {
+        setIsLoadingPracticeSample(false);
+      }
+    }
   };
 //修改2
     // 默认显示Visual Feedback
@@ -1297,12 +1375,27 @@ export default function App() {
                 )}
                 
                 {currentStage === 'drafting' && (
-                  <div className="chart-type-field" style={{ marginBottom: "1rem" }}>
-                    <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold" }}>
-                      Chart Type:
+                  <div className="task-source-section">
+                  <div className="task-source-controls">
+                    <label className="task-source-field task-source-field--sample">
+                      <span>Practice sample</span>
+                      <select
+                        value={selectedPracticeSampleId}
+                        onChange={handlePracticeSampleChange}
+                        disabled={isLoadingPracticeSample}
+                      >
+                        <option value="">Use your own image</option>
+                        {PRACTICE_SAMPLES.map((sample) => (
+                          <option key={sample.id} value={sample.id}>{sample.label}</option>
+                        ))}
+                      </select>
                     </label>
+                    <label className="task-source-field">
+                      <span>Chart type</span>
                     <select
                       value={selectedChartType}
+                      disabled={Boolean(selectedPracticeSampleId)}
+                      title={selectedPracticeSampleId ? 'The chart type is set by the selected practice sample.' : undefined}
                       onChange={(e) => {
                         const nextType = e.target.value;
                         setSelectedChartType(nextType);
@@ -1329,14 +1422,6 @@ export default function App() {
                           prepareUploadedTaskImage(uploadedImage, nextType).catch(() => {});
                         }
                       }}
-                      style={{
-                        padding: "0.5rem",
-                        borderRadius: "4px",
-                        border: "1px solid #ccc",
-                        fontSize: "1rem",
-                        width: "100%",
-                        maxWidth: "200px"
-                      }}
                     >
                       <option value="auto">Auto Detect</option>
                       <option value="bar">Bar Chart</option>
@@ -1346,8 +1431,21 @@ export default function App() {
                       <option value="map">Map Task</option>
                       <option value="process">Process Diagram</option>
                     </select>
+                    </label>
+                  </div>
+                    {isLoadingPracticeSample && (
+                      <div className="task-source-status">Loading practice sample...</div>
+                    )}
+                    {selectedPracticeSampleId && !isLoadingPracticeSample && deplotText.trim() && (
+                      <div className="task-source-status task-source-status--ready">
+                        Preprocessed DePlot data ready. No chart extraction is required.
+                      </div>
+                    )}
+                    {practiceSampleError && (
+                      <div className="task-source-status task-source-status--error">{practiceSampleError}</div>
+                    )}
                     {isPreparingTaskImage && (
-                      <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: '#444' }}>
+                      <div className="task-source-status">
                         {taskPreparationPhase === 'detecting'
                           ? 'Detecting IELTS task type...'
                           : taskPreparationPhase === 'deplot'
@@ -1356,7 +1454,7 @@ export default function App() {
                       </div>
                     )}
                     {selectedChartType === 'auto' && taskDetection && !taskDetection.needs_confirmation && KNOWN_TASK_TYPES.has(taskDetection.task_type) && (
-                      <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: '#166534' }}>
+                      <div className="task-source-status task-source-status--ready">
                         Auto Detect: {taskTypeLabel(taskDetection.task_type)} ({Math.round(Number(taskDetection.confidence || 0) * 100)}% confidence)
                       </div>
                     )}

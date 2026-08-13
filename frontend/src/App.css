@@ -849,6 +849,67 @@
   margin-top: 0 !important;
 }
 
+.task-source-section {
+  margin-bottom: 12px;
+}
+
+.task-source-controls {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 16px;
+}
+
+.task-source-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-source-field > span {
+  color: var(--vw-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.task-source-field select {
+  width: 190px;
+  padding: 6px 30px 6px 10px !important;
+  font-size: 12px !important;
+}
+
+.task-source-field--sample {
+  flex: 0 1 340px;
+}
+
+.task-source-field--sample select {
+  width: 340px;
+  max-width: 100%;
+}
+
+.task-source-field select:disabled {
+  color: var(--vw-text-secondary);
+  background: var(--vw-surface-muted) !important;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.task-source-status {
+  margin-top: 7px;
+  color: var(--vw-text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.task-source-status--ready {
+  color: var(--vw-success);
+}
+
+.task-source-status--error {
+  color: var(--vw-danger);
+}
+
 .taxonomy-feedback {
   color: var(--vw-text);
   font-size: 11px;
@@ -1367,6 +1428,22 @@
   .chart-type-field select {
     max-width: none !important;
     width: 100% !important;
+  }
+
+  .task-source-controls {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .task-source-field,
+  .task-source-field--sample {
+    flex: 0 1 auto;
+  }
+
+  .task-source-field select,
+  .task-source-field--sample select {
+    width: 100%;
   }
 
   .writing-toolbar {
