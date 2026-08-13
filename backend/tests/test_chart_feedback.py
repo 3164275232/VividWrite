@@ -1448,11 +1448,50 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         )
 
         self.assertEqual(prepared["mark"]["type"], "line")
+        self.assertEqual(prepared["mark"]["invalid"], "filter")
         self.assertEqual(prepared["mark"]["point"], {"filled": True, "size": 60})
         self.assertEqual(prepared["encoding"]["x"]["field"], "period")
         self.assertEqual(prepared["encoding"]["y"]["field"], "value")
         self.assertEqual(prepared["encoding"]["color"]["field"], "series")
         self.assertEqual(prepared["encoding"]["color"]["scale"]["domain"], ["Bus", "Rail"])
+
+    def test_line_chart_connects_known_points_across_unmentioned_periods(self):
+        periods = ["2010", "2012", "2014", "2016", "2018", "2020"]
+        endpoint_values = {
+            "Bus": {"2010": 1.8, "2020": 1.3},
+            "Rail": {"2010": 1.1, "2020": 2.2},
+            "Metro": {"2010": 0.8, "2020": 1.9},
+        }
+        records = [
+            {
+                "period": period,
+                "category": period,
+                "series": series,
+                "value": endpoint_values[series].get(period),
+                "missing": period not in endpoint_values[series],
+            }
+            for period in periods
+            for series in ("Bus", "Rail", "Metro")
+        ]
+
+        prepared = prepare_vega_lite_spec(
+            {
+                "mark": "point",
+                "encoding": {
+                    "x": {"field": "period", "type": "ordinal", "title": "Year"},
+                    "y": {"field": "value", "type": "quantitative"},
+                    "color": {"field": "series", "type": "nominal"},
+                },
+            },
+            records,
+            "Daily passengers",
+            chart_type="line",
+        )
+
+        self.assertEqual(prepared["mark"]["type"], "line")
+        self.assertEqual(prepared["mark"]["invalid"], "filter")
+        self.assertEqual(prepared["encoding"]["x"]["sort"], periods)
+        self.assertEqual(sum(record["value"] is not None for record in records), 6)
 
     def test_line_chart_restores_series_grouping_when_model_uses_wrong_mark(self):
         records = [

@@ -487,6 +487,7 @@ def _prepare_line_chart(spec: dict, records: list[dict]) -> dict:
     return {
         "mark": {
             "type": "line",
+            "invalid": "filter",
             "strokeWidth": 2.5,
             "point": {"filled": True, "size": 60},
         },
