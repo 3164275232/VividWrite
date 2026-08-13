@@ -410,6 +410,90 @@ def _number_label(value: Any) -> str:
     return f"{value:g}" if isinstance(value, (int, float)) else ""
 
 
+def _first_encoding(spec: dict) -> dict:
+    """Return the first usable encoding, regardless of the model's mark type."""
+    shared = spec.get("encoding") if isinstance(spec.get("encoding"), dict) else {}
+    layers = spec.get("layer")
+    if isinstance(layers, list):
+        for layer in layers:
+            if not isinstance(layer, dict) or not isinstance(layer.get("encoding"), dict):
+                continue
+            encoding = copy.deepcopy(shared)
+            encoding.update(copy.deepcopy(layer["encoding"]))
+            return encoding
+    return copy.deepcopy(shared)
+
+
+def _line_field(records: list[dict], candidates: tuple[str, ...]) -> str | None:
+    for field in candidates:
+        if len(_unique_field_values(records, field)) >= 2:
+            return field
+    return None
+
+
+def _prepare_line_chart(spec: dict, records: list[dict]) -> dict:
+    """Build a canonical line chart instead of trusting a model-provided mark."""
+    source_encoding = _first_encoding(spec)
+    x_field = _line_field(records, ("period", "category", "x"))
+    value_field = next(
+        (
+            field
+            for field in ("value", "y")
+            if any(isinstance(record.get(field), (int, float)) for record in records)
+        ),
+        None,
+    )
+    if x_field is None or value_field is None:
+        raise InvalidChartSpec("Line chart records need an ordered x field and numeric values.")
+
+    source_x = source_encoding.get("x") if isinstance(source_encoding.get("x"), dict) else {}
+    source_y = source_encoding.get("y") if isinstance(source_encoding.get("y"), dict) else {}
+    x_definition = {
+        "field": x_field,
+        "type": "quantitative" if x_field == "x" else "ordinal",
+        "title": source_x.get("title") or ("Year" if x_field in {"period", "category"} else "Period"),
+    }
+    if isinstance(source_x.get("axis"), dict):
+        x_definition["axis"] = copy.deepcopy(source_x["axis"])
+
+    y_definition = {
+        "field": value_field,
+        "type": "quantitative",
+        "title": source_y.get("title") or value_field,
+        "scale": {"zero": False},
+    }
+    if isinstance(source_y.get("axis"), dict):
+        y_definition["axis"] = copy.deepcopy(source_y["axis"])
+    if isinstance(source_y.get("scale"), dict):
+        y_definition["scale"].update(copy.deepcopy(source_y["scale"]))
+        y_definition["scale"]["zero"] = False
+
+    encoding: dict[str, Any] = {"x": x_definition, "y": y_definition}
+    series_field = _line_field(records, ("series", "region"))
+    if series_field:
+        source_color = (
+            source_encoding.get("color")
+            if isinstance(source_encoding.get("color"), dict)
+            else {}
+        )
+        encoding["color"] = {
+            "field": series_field,
+            "type": "nominal",
+            "title": source_color.get("title") or "Series",
+        }
+        if isinstance(source_color.get("legend"), dict):
+            encoding["color"]["legend"] = copy.deepcopy(source_color["legend"])
+
+    return {
+        "mark": {
+            "type": "line",
+            "strokeWidth": 2.5,
+            "point": {"filled": True, "size": 60},
+        },
+        "encoding": encoding,
+    }
+
+
 def _pie_hatch_segments(
     records: list[dict],
     angle_total: float,
@@ -977,6 +1061,7 @@ def prepare_vega_lite_spec(
         if chart_type == "bar":
             prepared, render_records = _prepare_bar_feedback(prepared, records)
         elif chart_type == "line":
+            prepared = _prepare_line_chart(prepared, records)
             prepared, render_records = _prepare_line_feedback(prepared, records)
     _validate_tree(prepared)
     _remove_text_outlines(prepared)

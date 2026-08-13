@@ -1426,6 +1426,58 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         )
         self.assertEqual(prepared["title"]["subtitleColor"], "#991b1b")
 
+    def test_line_chart_replaces_model_point_mark_with_connected_lines(self):
+        records = [
+            {"period": "2010", "category": "2010", "series": "Bus", "value": 1.8},
+            {"period": "2020", "category": "2020", "series": "Bus", "value": 1.3},
+            {"period": "2010", "category": "2010", "series": "Rail", "value": 1.1},
+            {"period": "2020", "category": "2020", "series": "Rail", "value": 2.2},
+        ]
+        prepared = prepare_vega_lite_spec(
+            {
+                "mark": "point",
+                "encoding": {
+                    "x": {"field": "period", "type": "ordinal", "title": "Year"},
+                    "y": {"field": "value", "type": "quantitative", "title": "Passengers"},
+                    "color": {"field": "series", "type": "nominal", "title": "Transport mode"},
+                },
+            },
+            records,
+            "Daily passengers",
+            chart_type="line",
+        )
+
+        self.assertEqual(prepared["mark"]["type"], "line")
+        self.assertEqual(prepared["mark"]["point"], {"filled": True, "size": 60})
+        self.assertEqual(prepared["encoding"]["x"]["field"], "period")
+        self.assertEqual(prepared["encoding"]["y"]["field"], "value")
+        self.assertEqual(prepared["encoding"]["color"]["field"], "series")
+        self.assertEqual(prepared["encoding"]["color"]["scale"]["domain"], ["Bus", "Rail"])
+
+    def test_line_chart_restores_series_grouping_when_model_uses_wrong_mark(self):
+        records = [
+            {"category": "2010", "series": "Bus", "value": 1.8},
+            {"category": "2020", "series": "Bus", "value": 1.3},
+            {"category": "2010", "series": "Metro", "value": 0.8},
+            {"category": "2020", "series": "Metro", "value": 1.9},
+        ]
+        prepared = prepare_vega_lite_spec(
+            {
+                "mark": "bar",
+                "encoding": {
+                    "x": {"field": "category", "type": "ordinal"},
+                    "y": {"field": "value", "type": "quantitative"},
+                },
+            },
+            records,
+            "Daily passengers",
+            chart_type="line",
+        )
+
+        self.assertEqual(prepared["mark"]["type"], "line")
+        self.assertEqual(prepared["encoding"]["x"]["field"], "category")
+        self.assertEqual(prepared["encoding"]["color"]["field"], "series")
+
 
 if __name__ == "__main__":
     unittest.main()
