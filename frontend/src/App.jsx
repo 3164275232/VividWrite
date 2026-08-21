@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import ErrorBoundary from './ErrorBoundary.jsx';
 import CmEditor from './CmEditor.jsx';
 import RevisionWorkspace from './RevisionWorkspace.jsx';
-import TaxonomyFeedback from './TaxonomyFeedback.jsx';
+import MoveFeedback from './MoveFeedback.jsx';
 import {
   analyzeChartWithImage,
   extractDeplot,
@@ -44,6 +44,11 @@ import {
   STATISTICAL_TASK_TYPES,
   taskTypeLabel,
 } from './utils/taskTypes';
+import {
+  findMoveAssessment,
+  locateMoveRange,
+  withResolvedMoveVisualUrls,
+} from './moveFeedbackUtils.js';
 
 function formatFeedbackNumber(value) {
   const number = Number(value);
@@ -51,11 +56,17 @@ function formatFeedbackNumber(value) {
   return Number.isInteger(number) ? String(number) : number.toFixed(1).replace(/\.0$/, '');
 }
 
-function ChartFeedbackDetails({ chartData }) {
-  if (!['pie', 'bar', 'line'].includes(chartData?.chart_type)) return null;
-  if (Array.isArray(chartData?.error_taxonomy?.issues)) {
-    return <TaxonomyFeedback chartData={chartData} />;
+function ChartFeedbackDetails({ chartData, activeMoveId, onSelectMove }) {
+  if (Array.isArray(chartData?.move_feedback?.assessments)) {
+    return (
+      <MoveFeedback
+        chartData={chartData}
+        activeMoveId={activeMoveId}
+        onSelectMove={onSelectMove}
+      />
+    );
   }
+  if (!['pie', 'bar', 'line', 'area'].includes(chartData?.chart_type)) return null;
   const isPie = chartData.chart_type === 'pie';
   const comparison = chartData.comparison || {};
   const issues = Array.isArray(comparison.incorrect_official_items)
@@ -280,6 +291,7 @@ export default function App() {
   const [revisionReview, setRevisionReview] = useState(null); // {overall:{...}, suggestions:[...]}
   const [reviewSuggestions, setReviewSuggestions] = useState([]); // normalized list with id, category, message, severity, ranges
   const [activeSuggestionId, setActiveSuggestionId] = useState(null);
+  const [activeMoveId, setActiveMoveId] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
   //添加图片上传功能
@@ -771,6 +783,8 @@ export default function App() {
     setAnalysisError("");
     setChartUrl(null);
     setChartData(null);
+    setActiveMoveId(null);
+    setActiveSuggestionId(null);
 
     let deplotForAnalysis = analysisIsSpatial ? '(Not required for spatial tasks)' : deplotText;
     if (!analysisIsSpatial && !deplotForAnalysis.trim()) {
@@ -813,7 +827,10 @@ export default function App() {
         }
         if (chartRes.status === 'fulfilled' && chartRes.value.success) {
           setChartUrl(resolveBackendUrl(chartRes.value.chart_url));
-          setChartData(chartRes.value.chart_data || null);
+          setChartData(withResolvedMoveVisualUrls(
+            chartRes.value.chart_data || null,
+            resolveBackendUrl,
+          ));
         } else if (chartRes.status === 'fulfilled') {
           setAnalysisError(prev => prev ? prev + '; ' + (chartRes.value.error || 'Chart analysis failed') : (chartRes.value.error || 'Chart analysis failed'));
         } else {
@@ -833,7 +850,10 @@ export default function App() {
         const result = await analyzeChartWithImage(formData);
         if (result.success) {
           setChartUrl(resolveBackendUrl(result.chart_url));
-          setChartData(result.chart_data || null);
+          setChartData(withResolvedMoveVisualUrls(
+            result.chart_data || null,
+            resolveBackendUrl,
+          ));
         } else {
           setAnalysisError(result.error || "分析失败");
         }
@@ -848,6 +868,7 @@ export default function App() {
   // Apply a single suggestion: replace its excerpt with replacement and adjust subsequent suggestion ranges
   const applySuggestion = useCallback((sug) => {
     if (!sug || sug.applied) return;
+    setActiveMoveId(null);
     setText(prevText => {
       let working = prevText;
       // resolve current range (may be outdated after edits)
@@ -913,6 +934,20 @@ export default function App() {
       return newText;
     });
   }, [setText, setReviewSuggestions, editorRef]);
+
+  const handleSelectMove = useCallback((assessment) => {
+    if (!assessment) return;
+    const nextId = assessment.id === activeMoveId ? null : assessment.id;
+    setActiveMoveId(nextId);
+    setActiveSuggestionId(null);
+    if (!editorRef.current) return;
+    editorRef.current.clearHighlights();
+    if (!nextId) return;
+    const range = locateMoveRange(assessment, text);
+    if (range) {
+      editorRef.current.highlightRange(range.start, range.end, false);
+    }
+  }, [activeMoveId, editorRef, text]);
 
   const handleNextSentence = async (e) => {
     try {
@@ -1082,6 +1117,20 @@ export default function App() {
     // 使用持久高亮（false => persistent），避免 3.5s 自动清除
     editorRef.current.highlightRange(start, end, false);
   }, [activeSuggestionId, reviewSuggestions, text]);
+
+  useEffect(() => {
+    if (!activeMoveId || !editorRef.current) return;
+    const assessment = findMoveAssessment(chartData, activeMoveId);
+    if (!assessment) {
+      setActiveMoveId(null);
+      return;
+    }
+    const range = locateMoveRange(assessment, editorRef.current.getValue());
+    editorRef.current.clearHighlights();
+    if (range) {
+      editorRef.current.highlightRange(range.start, range.end, false);
+    }
+  }, [activeMoveId, chartData, editorRef, text]);
 
   const handleMouseDownHorizontal = (e) => {
     const startY = e.clientY;
@@ -1324,7 +1373,14 @@ export default function App() {
               imagePreview={imagePreview}
               chartUrl={chartUrl}
               chartData={chartData}
-              chartFeedbackDetails={<ChartFeedbackDetails chartData={chartData} />}
+              chartFeedbackDetails={(
+                <ChartFeedbackDetails
+                  chartData={chartData}
+                  activeMoveId={activeMoveId}
+                  onSelectMove={handleSelectMove}
+                />
+              )}
+              activeMoveAssessment={findMoveAssessment(chartData, activeMoveId)}
               text={text}
               onTextChange={setText}
               editorRef={editorRef}
@@ -1335,6 +1391,7 @@ export default function App() {
               revisionReview={revisionReview}
               activeSuggestionId={activeSuggestionId}
               setActiveSuggestionId={setActiveSuggestionId}
+              onLanguageSuggestionFocus={() => setActiveMoveId(null)}
               applySuggestion={applySuggestion}
             />
           ) : (

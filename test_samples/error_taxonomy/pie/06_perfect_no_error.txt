@@ -1,0 +1,9 @@
+The pie chart illustrates how average household expenditure in Canada was distributed across six categories in 2024.
+
+Overall, housing accounted for the largest share of household spending, while other expenditure represented the smallest proportion. Food and transport were the next two major categories.
+
+Housing made up 32% of the average household budget. Food was the second-largest expense at 21%, followed by transport at 17%. Together, these three categories represented 70% of total expenditure.
+
+The remaining categories each accounted for a considerably smaller share. Leisure represented 12% of spending, while utilities made up 10%. Other expenditure was the smallest category, at 8%.
+
+Housing exceeded food by 11 percentage points and transport by 15 points. Food was 4 points higher than transport, while leisure was 2 points above utilities. The difference between utilities and other expenditure was also 2 percentage points. As the chart reports a single year, it presents a distribution rather than a change over time.

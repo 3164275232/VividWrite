@@ -1,0 +1,766 @@
+"""Seven-move feedback contract for IELTS Academic Writing Task 1.
+
+The framework follows Matsuzono's move-based analysis of Task 1 model
+responses. Moves are treated as rhetorical options to review, not as errors or
+mandatory boxes that every report must tick.
+"""
+
+from __future__ import annotations
+
+import re
+from collections import defaultdict
+from difflib import SequenceMatcher
+from typing import Any
+
+
+MOVE_FEEDBACK_VERSION = "1.0"
+MOVE_FEEDBACK_SCOPE = "ielts-task-1-rhetorical-moves"
+
+MOVE_DEFINITIONS = (
+    {
+        "code": "move_1_introducing_topic",
+        "number": 1,
+        "short_code": "IT",
+        "label": "Introducing the topic",
+        "purpose": "Identify what the visual presents, including its subject and scope.",
+        "feedback_mode": "textual",
+    },
+    {
+        "code": "move_2_stating_overview",
+        "number": 2,
+        "short_code": "SO",
+        "label": "Stating the overview",
+        "purpose": "Give a broad synthesis of the most notable patterns without listing details.",
+        "feedback_mode": "textual_visual",
+    },
+    {
+        "code": "move_3_highlighting_key_trends",
+        "number": 3,
+        "short_code": "HKT",
+        "label": "Highlighting key trends",
+        "purpose": "Prioritise the trends or features that carry the main message of the visual.",
+        "feedback_mode": "textual_visual",
+    },
+    {
+        "code": "move_4_elaborating_key_trends",
+        "number": 4,
+        "short_code": "EKT",
+        "label": "Elaborating on the key trends",
+        "purpose": "Support an identified trend with relevant and accurate detail.",
+        "feedback_mode": "textual",
+    },
+    {
+        "code": "move_5_integrating_trend_and_detail",
+        "number": 5,
+        "short_code": "KTE",
+        "label": "Including key trends and their elaboration",
+        "purpose": "Combine a meaningful trend and its supporting evidence coherently.",
+        "feedback_mode": "textual_visual",
+    },
+    {
+        "code": "move_6_comparing_contrasting",
+        "number": 6,
+        "short_code": "MCS",
+        "label": "Making comparative or contrastive statements",
+        "purpose": "Make relevant relationships across categories, groups, or time periods explicit.",
+        "feedback_mode": "textual",
+    },
+    {
+        "code": "move_7_closing_summary",
+        "number": 7,
+        "short_code": "SC",
+        "label": "Stating the conclusion",
+        "purpose": "If a closing statement is used, synthesise rather than repeat individual details.",
+        "feedback_mode": "textual",
+    },
+)
+
+MOVE_CODES = tuple(item["code"] for item in MOVE_DEFINITIONS)
+VISUAL_MOVE_CODES = {
+    "move_2_stating_overview",
+    "move_3_highlighting_key_trends",
+    "move_5_integrating_trend_and_detail",
+}
+VALID_STATUSES = {"effective", "developing", "not_detected", "not_applicable"}
+
+_DEFAULT_HINTS = {
+    "move_1_introducing_topic": "Clarify what the visual shows and the scope of the comparison.",
+    "move_2_stating_overview": "Step back from individual values and state the broad pattern a reader should notice first.",
+    "move_3_highlighting_key_trends": "Prioritise the most consequential trend or feature rather than a smaller local change.",
+    "move_4_elaborating_key_trends": "Support the selected trend with a small amount of relevant, accurate evidence.",
+    "move_5_integrating_trend_and_detail": "Connect each supporting figure to the trend it demonstrates instead of listing it separately.",
+    "move_6_comparing_contrasting": "Make one meaningful relationship between categories, groups, or periods explicit.",
+    "move_7_closing_summary": "A separate conclusion is optional; if you use one, synthesise the main message without repeating details.",
+}
+
+_VISUAL_NOUN_RE = re.compile(
+    r"\b(?:chart|graph|graphic|image|table|diagram|map|figure|illustration|visual|data|percentage|proportion)\b",
+    flags=re.IGNORECASE,
+)
+_TREND_RE = re.compile(
+    r"\b(?:increase|increased|increasing|rose|rise|grew|growth|climbed|decrease|"
+    r"decreased|decline|declined|fell|fall|dropped|stable|unchanged|fluctuat(?:e|ed|ion)|"
+    r"highest|lowest|largest|smallest|dominan(?:t|ce)|leading|gain|improvement|expansion|"
+    r"first\s+place|main|notable|overall)\b",
+    flags=re.IGNORECASE,
+)
+_COMPARISON_RE = re.compile(
+    r"\b(?:while|whereas|compared with|in contrast|by contrast|higher than|lower than|"
+    r"more than|less than|respectively|overtook|exceeded|followed by|similar(?:ly)?)\b",
+    flags=re.IGNORECASE,
+)
+_OVERVIEW_RE = re.compile(r"\b(?:overall|in general|generally|it is clear|clearly)\b", re.IGNORECASE)
+_CLOSING_RE = re.compile(r"^(?:overall|in summary|to sum up|in conclusion|despite)\b", re.IGNORECASE)
+_NUMBER_RE = re.compile(r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?")
+_TEMPORAL_RE = re.compile(r"^(?:19|20)\d{2}(?:\s*/\s*\d{2,4})?$|^q[1-4]$", re.IGNORECASE)
+_PRIORITY_RE = re.compile(
+    r"\b(?:key|main|central|principal|defining|clearest|most\s+(?:notable|prominent|important)|"
+    r"strongest|dominant)\b",
+    re.IGNORECASE,
+)
+_SUPPORT_LINK_RE = re.compile(
+    r"\b(?:supported\s+by|demonstrated\s+by|shown\s+by|as\s+shown\s+by|"
+    r"as\s+demonstrated\s+by|as\s+evidenced\s+by|evidenced\s+by)\b",
+    re.IGNORECASE,
+)
+_VAGUE_COMPARISON_RE = re.compile(
+    r"\b(?:some(?:\s+\w+){0,2}\s+(?:figures?|values?|results?|lines?|portions?|shares?)|"
+    r"some\s+were\s+(?:higher|lower|larger|smaller)|"
+    r"differences?\s+(?:between|among)|compared\s+with\s+one\s+another|"
+    r"(?:categories|items|modes|cities|services)\s+can\s+be\s+compared|"
+    r"higher\s+than\s+others?|lower\s+than\s+others?|"
+    r"several\s+values?\s+were\s+relatively\s+close)\b",
+    re.IGNORECASE,
+)
+_WEAK_CLOSING_RE = re.compile(
+    r"\b(?:described\s+above|presented\s+above|(?:already|also)\s+(?:listed|presented|described)|"
+    r"as\s+(?:listed|presented|described)|"
+    r"contains?\s+\w*\s*(?:figures?|percentages?|lines?|observations?)|"
+    r"as\s+(?:is\s+)?expected|add(?:s)?\s+(?:up\s+)?to\s+100|"
+    r"producing\s+the\s+values|all\s+of\s+the\s+(?:numbers|figures))\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_CLOSING_RE = re.compile(
+    r"^(?:in\s+summary|to\s+sum\s+up|in\s+conclusion|to\s+conclude)\b",
+    re.IGNORECASE,
+)
+_VAGUE_INTRO_RE = re.compile(
+    r"\b(?:collection|set|number|several|different|series)\s+(?:of\s+)?"
+    r"(?:figures?|numbers?|items?|places?|lines?|shares?|percentages?|parts?|values?)\b|"
+    r"\b(?:figures?|numbers?|items?|lines?|shares?|percentages?|values?)\s+"
+    r"(?:for\s+consideration|that\s+changed\s+over\s+time)\b",
+    re.IGNORECASE,
+)
+_OVERVIEW_SYNTHESIS_RE = re.compile(
+    r"\b(?:highest|lowest|largest|smallest|dominan(?:t|ce)|majority|over\s+half|"
+    r"increase|increased|rise|rose|grew|growth|upward|decrease|decreased|fell|"
+    r"decline|declined|downward|stable|unchanged|remained|overtook|concentrat(?:e|ed|ion)|"
+    r"upper\s+end|lower\s+end|leading|bottom|top)\b",
+    re.IGNORECASE,
+)
+
+
+def move_catalog() -> dict:
+    return {
+        "version": MOVE_FEEDBACK_VERSION,
+        "scope": MOVE_FEEDBACK_SCOPE,
+        "definitions": [dict(item) for item in MOVE_DEFINITIONS],
+    }
+
+
+def _normalise(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+
+
+def _sentence_spans(text: str) -> list[tuple[int, int, str]]:
+    spans: list[tuple[int, int, str]] = []
+    start = 0
+    for match in re.finditer(r"(?<=[!?;])\s+|\.(?!\d)(?:\s+|$)|[\r\n]+", text):
+        end = match.start() + (1 if text[match.start() : match.start() + 1] == "." else 0)
+        raw = text[start:end]
+        left = len(raw) - len(raw.lstrip())
+        right = len(raw.rstrip())
+        if right > left:
+            spans.append((start + left, start + right, raw[left:right]))
+        start = match.end()
+    raw = text[start:]
+    left = len(raw) - len(raw.lstrip())
+    right = len(raw.rstrip())
+    if right > left:
+        spans.append((start + left, start + right, raw[left:right]))
+    return spans
+
+
+def _find_excerpt_range(text: str, excerpt: str) -> tuple[dict | None, str | None]:
+    candidate = str(excerpt or "")[:1000]
+    if not candidate.strip():
+        return None, None
+    for value in (candidate, candidate.strip()):
+        index = text.find(value)
+        if index >= 0:
+            return {"start": index, "end": index + len(value)}, value
+
+    normalised_candidate = _normalise(candidate)
+    if not normalised_candidate:
+        return None, None
+    best: tuple[float, tuple[int, int, str] | None] = (0.0, None)
+    for span in _sentence_spans(text):
+        ratio = SequenceMatcher(None, normalised_candidate, _normalise(span[2])).ratio()
+        if ratio > best[0]:
+            best = (ratio, span)
+    if best[0] >= 0.72 and best[1] is not None:
+        start, end, sentence = best[1]
+        return {"start": start, "end": end}, sentence
+    return None, None
+
+
+def _fallback_excerpt(definition: dict, text: str) -> tuple[str, str]:
+    spans = _sentence_spans(text)
+    if not spans:
+        return "not_detected", ""
+
+    code = definition["code"]
+    candidates: list[tuple[int, int, str]] = []
+    if code == "move_1_introducing_topic":
+        candidates = [span for span in spans[:2] if _VISUAL_NOUN_RE.search(span[2])]
+    elif code == "move_2_stating_overview":
+        candidates = [span for span in spans if _OVERVIEW_RE.search(span[2])]
+    elif code == "move_3_highlighting_key_trends":
+        candidates = [span for span in spans if _TREND_RE.search(span[2])]
+    elif code == "move_4_elaborating_key_trends":
+        candidates = [span for span in spans if len(_NUMBER_RE.findall(span[2])) >= 1]
+    elif code == "move_5_integrating_trend_and_detail":
+        candidates = [
+            span for span in spans
+            if _TREND_RE.search(span[2]) and _NUMBER_RE.search(span[2])
+        ]
+    elif code == "move_6_comparing_contrasting":
+        candidates = [span for span in spans if _COMPARISON_RE.search(span[2])]
+    elif code == "move_7_closing_summary":
+        candidates = [span for span in spans[-2:] if _CLOSING_RE.search(span[2])]
+
+    return ("effective", candidates[0][2]) if candidates else ("not_detected", "")
+
+
+def _normalise_status(value: Any, has_excerpt: bool) -> str:
+    status = _normalise(value).replace(" ", "_")
+    aliases = {
+        "present": "effective",
+        "strong": "effective",
+        "met": "effective",
+        "needs_attention": "developing",
+        "weak": "developing",
+        "partial": "developing",
+        "missing": "not_detected",
+        "absent": "not_detected",
+        "na": "not_applicable",
+    }
+    status = aliases.get(status, status)
+    if status in VALID_STATUSES:
+        return status
+    return "developing" if has_excerpt else "not_detected"
+
+
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _official_value(record: dict) -> float | None:
+    value = _number(record.get("official_value"))
+    return value if value is not None else _number(record.get("value"))
+
+
+def _record_axis_value(record: dict) -> str:
+    return str(record.get("period") or record.get("category") or "").strip()
+
+
+def _record_entity(record: dict) -> str:
+    return str(record.get("series") or record.get("region") or record.get("category") or "").strip()
+
+
+def _extreme_indices(records: list[dict]) -> list[int]:
+    values = [(index, _official_value(record)) for index, record in enumerate(records)]
+    values = [(index, value) for index, value in values if value is not None]
+    if not values:
+        return []
+    highest = max(values, key=lambda item: item[1])[0]
+    lowest = min(values, key=lambda item: item[1])[0]
+    return list(dict.fromkeys([highest, lowest]))
+
+
+def _largest_change_indices(chart_data: dict, records: list[dict]) -> list[int]:
+    chart_type = str(chart_data.get("chart_type") or "")
+    groups: dict[str, list[tuple[int, dict]]] = defaultdict(list)
+
+    if chart_type in {"line", "area"}:
+        for index, record in enumerate(records):
+            groups[_record_entity(record)].append((index, record))
+    elif chart_type == "bar":
+        series_values = [str(record.get("series") or "") for record in records]
+        temporal_series = sum(bool(_TEMPORAL_RE.match(value.strip())) for value in series_values)
+        if temporal_series >= 2:
+            for index, record in enumerate(records):
+                groups[str(record.get("category") or "")].append((index, record))
+        else:
+            temporal_categories = sum(
+                bool(_TEMPORAL_RE.match(str(record.get("category") or "").strip()))
+                for record in records
+            )
+            if temporal_categories >= 2:
+                for index, record in enumerate(records):
+                    groups[str(record.get("series") or "")].append((index, record))
+
+    candidates: list[tuple[float, list[int]]] = []
+    for items in groups.values():
+        valid = [(index, record, _official_value(record)) for index, record in items]
+        valid = [(index, record, value) for index, record, value in valid if value is not None]
+        if len(valid) < 2:
+            continue
+        first, last = valid[0], valid[-1]
+        candidates.append((abs(last[2] - first[2]), [first[0], last[0]]))
+    return max(candidates, key=lambda item: item[0])[1] if candidates else []
+
+
+def _recommended_visual_indices(chart_data: dict, move_code: str) -> list[int]:
+    records = [record for record in chart_data.get("records", []) if isinstance(record, dict)]
+    if not records:
+        return []
+    change = _largest_change_indices(chart_data, records)
+    extremes = _extreme_indices(records)
+    if move_code == "move_2_stating_overview":
+        return list(dict.fromkeys(change + extremes))[:4]
+    if move_code == "move_3_highlighting_key_trends":
+        return (change or extremes)[:2]
+    if move_code == "move_5_integrating_trend_and_detail":
+        return list(dict.fromkeys(change + extremes))[:3]
+    return []
+
+
+def _mentioned_record_indices(records: list[dict], excerpt: str) -> list[int]:
+    excerpt_key = _normalise(excerpt)
+    excerpt_numbers = {
+        float(value.replace(",", "")) for value in _NUMBER_RE.findall(excerpt)
+    }
+    relationship_value = bool(re.search(
+        r"\b(?:gap|difference|spread|above|below|ahead|behind|exceed(?:ed|s)?|"
+        r"higher|lower|more|less)\b",
+        excerpt,
+        flags=re.IGNORECASE,
+    ))
+    temporal_context = any(
+        _TEMPORAL_RE.match(str(record.get(field) or "").strip())
+        and f" {_normalise(record.get(field))} " in f" {excerpt_key} "
+        for record in records
+        for field in ("period", "category", "series")
+    )
+    matched: list[int] = []
+    for index, record in enumerate(records):
+        entity_labels = []
+        temporal_labels = []
+        for field in ("category", "series", "period", "region"):
+            raw_label = str(record.get(field) or "").strip()
+            if not raw_label:
+                continue
+            if _TEMPORAL_RE.match(raw_label):
+                temporal_labels.append(_normalise(raw_label))
+            else:
+                entity_labels.append(_normalise(raw_label))
+        entity_match = any(label and f" {label} " in f" {excerpt_key} " for label in entity_labels)
+        temporal_match = any(label and f" {label} " in f" {excerpt_key} " for label in temporal_labels)
+        value = _number(record.get("value"))
+        value_match = value is not None and any(abs(value - item) <= 1e-9 for item in excerpt_numbers)
+        if entity_match and (
+            value_match
+            or temporal_match
+            or not excerpt_numbers
+            or (relationship_value and not temporal_context)
+        ):
+            matched.append(index)
+    return matched[:4]
+
+
+def _selector_record_indices(records: list[dict], selectors: Any) -> list[int]:
+    """Resolve model-provided visual selectors against validated chart records."""
+    if not isinstance(selectors, list):
+        return []
+    matched: list[int] = []
+    fields = ("category", "series", "period", "region")
+    for selector in selectors[:8]:
+        if isinstance(selector, int) and 0 <= selector < len(records):
+            matched.append(selector)
+            continue
+        if not isinstance(selector, dict):
+            continue
+        selector_fields = {
+            field: _normalise(selector.get(field))
+            for field in fields
+            if selector.get(field) not in (None, "")
+        }
+        selector_value = _number(selector.get("value"))
+        best_index: int | None = None
+        best_score = 0
+        for index, record in enumerate(records):
+            score = sum(
+                bool(value) and value == _normalise(record.get(field))
+                for field, value in selector_fields.items()
+            )
+            official = _official_value(record)
+            if selector_value is not None and official is not None:
+                score += 1 if abs(selector_value - official) <= 1e-6 else -1
+            required_score = max(1, len(selector_fields))
+            if score >= required_score and score > best_score:
+                best_index, best_score = index, score
+        if best_index is not None:
+            matched.append(best_index)
+    return list(dict.fromkeys(matched))[:4]
+
+
+def _visual_focus_from_model(records: list[dict], raw: dict) -> tuple[list[int], list[int]]:
+    focus = raw.get("visual_focus") if isinstance(raw.get("visual_focus"), dict) else {}
+    current = _selector_record_indices(
+        records,
+        focus.get("current") or focus.get("current_focus") or raw.get("current_focus"),
+    )
+    recommended = _selector_record_indices(
+        records,
+        focus.get("recommended")
+        or focus.get("recommended_focus")
+        or raw.get("recommended_focus"),
+    )
+    return current, recommended
+
+
+def _label_is_mentioned(text: str, label: str) -> bool:
+    key = _normalise(label)
+    if not key:
+        return False
+    text_key = f" {_normalise(text)} "
+    aliases = {key}
+    if " " not in key:
+        aliases.update({f"{key}s", f"{key}es"})
+        if key.endswith("y") and len(key) > 1:
+            aliases.add(f"{key[:-1]}ies")
+    return any(f" {alias} " in text_key for alias in aliases)
+
+
+def _chart_entity_labels(records: list[dict]) -> list[str]:
+    labels: list[str] = []
+    for record in records:
+        for field in ("series", "category", "region"):
+            label = str(record.get(field) or "").strip()
+            if not label or _TEMPORAL_RE.match(label):
+                continue
+            if _normalise(label) not in {_normalise(item) for item in labels}:
+                labels.append(label)
+    return labels
+
+
+def _mentioned_entities(text: str, labels: list[str]) -> list[str]:
+    return [label for label in labels if _label_is_mentioned(text, label)]
+
+
+def _meaningful_numbers(text: str, records: list[dict]) -> list[float]:
+    periods = {
+        _normalise(record.get(field))
+        for record in records
+        for field in ("period", "category", "series")
+        if _TEMPORAL_RE.match(str(record.get(field) or "").strip())
+    }
+    values: list[float] = []
+    for match in _NUMBER_RE.finditer(text):
+        raw = match.group().replace(",", "")
+        if _normalise(raw) in periods:
+            continue
+        try:
+            values.append(float(raw))
+        except ValueError:
+            continue
+    return values
+
+
+def _record_indices_for_entities(records: list[dict], entities: list[str]) -> list[int]:
+    indices: list[int] = []
+    for index, record in enumerate(records):
+        record_text = " ".join(
+            str(record.get(field) or "")
+            for field in ("category", "series", "region")
+        )
+        if any(_label_is_mentioned(record_text, entity) for entity in entities):
+            indices.append(index)
+    return indices[:4]
+
+
+def _record_indices_for_values(records: list[dict], text: str) -> list[int]:
+    numbers = {
+        float(value.replace(",", ""))
+        for value in _NUMBER_RE.findall(text)
+    }
+    return [
+        index for index, record in enumerate(records)
+        if (value := _number(record.get("value"))) is not None
+        and any(abs(value - number) <= 1e-9 for number in numbers)
+    ][:4]
+
+
+def _replace_assessment_excerpt(assessment: dict, student_answer: str, excerpt: str) -> None:
+    excerpt_range, matched_excerpt = _find_excerpt_range(student_answer, excerpt)
+    assessment["excerpt"] = matched_excerpt or ""
+    assessment["range"] = excerpt_range
+
+
+def _apply_local_quality_guards(
+    chart_data: dict,
+    student_answer: str,
+    assessments: list[dict],
+    records: list[dict],
+) -> None:
+    """Correct recurring semantic false positives using chart-grounded evidence."""
+    by_code = {assessment["code"]: assessment for assessment in assessments}
+    spans = _sentence_spans(student_answer)
+    entity_labels = _chart_entity_labels(records)
+
+    # Move 1: merely naming generic visual contents does not identify the topic
+    # and scope that the reader needs.
+    for _, _, sentence in spans[:2]:
+        if not _VISUAL_NOUN_RE.search(sentence) or not _VAGUE_INTRO_RE.search(sentence):
+            continue
+        assessment = by_code["move_1_introducing_topic"]
+        assessment["status"] = "developing"
+        assessment["rationale"] = "The opening identifies a visual generically but does not establish its subject and scope."
+        assessment["hint"] = "Name the subject shown and the relevant scope, such as the groups, place, or time period."
+        _replace_assessment_excerpt(assessment, student_answer, sentence)
+        break
+
+    # Move 2: an Overall sentence made up of individual values is detail, not a
+    # synthesis of the pattern those values create.
+    for _, _, sentence in spans:
+        if not _OVERVIEW_RE.search(sentence):
+            continue
+        if len(_meaningful_numbers(sentence, records)) < 2:
+            continue
+        if _OVERVIEW_SYNTHESIS_RE.search(sentence):
+            continue
+        assessment = by_code["move_2_stating_overview"]
+        assessment["status"] = "developing"
+        assessment["rationale"] = "The overview lists individual values without synthesising the broad pattern they form."
+        assessment["hint"] = "Step back from the individual values and identify the broad pattern a reader should notice first."
+        _replace_assessment_excerpt(assessment, student_answer, sentence)
+        current = _mentioned_record_indices(records, sentence) or _record_indices_for_values(records, sentence)
+        recommended = _recommended_visual_indices(chart_data, "move_2_stating_overview")
+        assessment["visual_targets"] = {
+            "current_focus_record_indices": current,
+            "recommended_record_indices": recommended,
+        }
+        assessment["visual_available"] = bool(recommended)
+        break
+
+    # Move 4: naming a priority trend is not elaboration unless that same chart
+    # entity is supported somewhere with a concrete, non-period value.
+    priority_candidates: list[tuple[str, list[str]]] = []
+    for _, _, sentence in spans:
+        entities = _mentioned_entities(sentence, entity_labels)
+        if entities and _PRIORITY_RE.search(sentence) and _TREND_RE.search(sentence):
+            priority_candidates.append((sentence, entities))
+    unsupported = []
+    for sentence, entities in priority_candidates:
+        for entity in entities:
+            has_evidence = any(
+                _label_is_mentioned(other_sentence, entity)
+                and bool(_meaningful_numbers(other_sentence, records))
+                for _, _, other_sentence in spans
+            )
+            if not has_evidence:
+                unsupported.append((sentence, entity))
+    if unsupported:
+        sentence, entity = unsupported[0]
+        assessment = by_code["move_4_elaborating_key_trends"]
+        assessment["status"] = "developing"
+        assessment["rationale"] = (
+            f"The draft identifies {entity} as a key feature but does not support that "
+            "feature with concrete chart evidence."
+        )
+        assessment["hint"] = "Add a small amount of relevant evidence for the key feature already identified."
+        _replace_assessment_excerpt(assessment, student_answer, sentence)
+
+    # Move 5: evidence after an explicit support link must belong to the trend
+    # subject before the link. Different chart entities indicate a broken link.
+    for _, _, sentence in spans:
+        link = _SUPPORT_LINK_RE.search(sentence)
+        if not link:
+            continue
+        current_entities = _mentioned_entities(sentence[link.end():], entity_labels)
+        trend_entities = _mentioned_entities(sentence[:link.start()], entity_labels)
+        if not current_entities or not trend_entities:
+            continue
+        if {_normalise(item) for item in current_entities}.intersection(
+            {_normalise(item) for item in trend_entities}
+        ):
+            continue
+        assessment = by_code["move_5_integrating_trend_and_detail"]
+        assessment["status"] = "developing"
+        assessment["rationale"] = (
+            "The supporting evidence refers to a different chart entity from the trend it is meant to explain."
+        )
+        assessment["hint"] = "Link the selected trend to evidence from the same chart entity."
+        _replace_assessment_excerpt(assessment, student_answer, sentence)
+        current = _record_indices_for_entities(records, current_entities)
+        recommended = _record_indices_for_entities(records, trend_entities)
+        assessment["visual_targets"] = {
+            "current_focus_record_indices": current,
+            "recommended_record_indices": recommended,
+        }
+        assessment["visual_available"] = bool(recommended)
+        break
+
+    # Move 6: a sentence that only says unspecified items differ does not make a
+    # useful relationship available to the reader.
+    for _, _, sentence in spans:
+        if not _VAGUE_COMPARISON_RE.search(sentence):
+            continue
+        if len(_mentioned_entities(sentence, entity_labels)) >= 2:
+            continue
+        if _meaningful_numbers(sentence, records):
+            continue
+        assessment = by_code["move_6_comparing_contrasting"]
+        assessment["status"] = "developing"
+        assessment["rationale"] = "The comparison is present, but the items and relationship remain unspecified."
+        assessment["hint"] = "Name the items being compared and make their relevant relationship explicit."
+        _replace_assessment_excerpt(assessment, student_answer, sentence)
+        break
+
+    # Move 7 remains optional. When a conclusion is actually present, however,
+    # metadata or references to previously listed values should be reviewed.
+    for _, _, sentence in spans[-3:]:
+        if not _EXPLICIT_CLOSING_RE.search(sentence) or not _WEAK_CLOSING_RE.search(sentence):
+            continue
+        assessment = by_code["move_7_closing_summary"]
+        assessment["status"] = "developing"
+        assessment["rationale"] = "The closing statement repeats chart metadata or listed details instead of synthesising the message."
+        assessment["hint"] = "If a conclusion is retained, use it to synthesise the main message rather than repeat metadata."
+        _replace_assessment_excerpt(assessment, student_answer, sentence)
+        break
+
+
+def build_move_feedback(
+    chart_data: dict,
+    student_answer: str,
+    raw_assessments: Any = None,
+) -> dict:
+    if isinstance(raw_assessments, dict):
+        raw_assessments = raw_assessments.get("assessments")
+    raw_items = raw_assessments if isinstance(raw_assessments, list) else []
+    by_code: dict[str, dict] = {}
+    aliases = {
+        definition["short_code"].casefold(): definition["code"]
+        for definition in MOVE_DEFINITIONS
+    }
+    aliases.update({str(definition["number"]): definition["code"] for definition in MOVE_DEFINITIONS})
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        raw_code = str(item.get("code") or item.get("short_code") or item.get("move") or "")
+        code = aliases.get(raw_code.casefold(), raw_code)
+        if code in MOVE_CODES and code not in by_code:
+            by_code[code] = item
+
+    records = [record for record in chart_data.get("records", []) if isinstance(record, dict)]
+    assessments: list[dict] = []
+    for definition in MOVE_DEFINITIONS:
+        code = definition["code"]
+        raw = by_code.get(code)
+        source = "model" if raw is not None else "local_fallback"
+        if raw is None:
+            fallback_status, fallback_excerpt = _fallback_excerpt(definition, student_answer)
+            raw = {
+                "status": fallback_status,
+                "excerpt": fallback_excerpt,
+                "rationale": "A local fallback identified rhetorical evidence in the draft."
+                if fallback_excerpt else "No clear evidence for this move was identified locally.",
+            }
+
+        excerpt_range, matched_excerpt = _find_excerpt_range(student_answer, raw.get("excerpt", ""))
+        status = _normalise_status(raw.get("status"), matched_excerpt is not None)
+        if status in {"effective", "developing"} and matched_excerpt is None:
+            status = "not_detected"
+
+        hint = str(raw.get("hint") or "").strip()[:500]
+        if status != "effective" and not hint:
+            hint = _DEFAULT_HINTS[code]
+        rationale = str(raw.get("rationale") or "").strip()[:500]
+        if not rationale:
+            rationale = (
+                "This rhetorical move is clearly represented in the highlighted text."
+                if status == "effective"
+                else "This move could be clearer or more purposeful in the current draft."
+            )
+
+        assessment = {
+            "id": code,
+            "code": code,
+            "number": definition["number"],
+            "short_code": definition["short_code"],
+            "label": definition["label"],
+            "purpose": definition["purpose"],
+            "feedback_mode": definition["feedback_mode"],
+            "status": status,
+            "rationale": rationale,
+            "hint": hint,
+            "excerpt": matched_excerpt or "",
+            "range": excerpt_range,
+            "analysis_source": source,
+            "visual_available": False,
+        }
+
+        if code in VISUAL_MOVE_CODES and status in {"developing", "not_detected"}:
+            model_current, model_recommended = _visual_focus_from_model(records, raw)
+            recommended = model_recommended or _recommended_visual_indices(chart_data, code)
+            current_focus = (
+                model_current
+                or _mentioned_record_indices(records, matched_excerpt or "")
+            )
+            assessment["visual_targets"] = {
+                "recommended_record_indices": recommended,
+                "current_focus_record_indices": current_focus,
+            }
+            assessment["visual_available"] = bool(recommended)
+        assessments.append(assessment)
+
+    _apply_local_quality_guards(chart_data, student_answer, assessments, records)
+
+    counts = {status: 0 for status in VALID_STATUSES}
+    for assessment in assessments:
+        counts[assessment["status"]] += 1
+    # Only an identified weakness is counted as requiring attention. An absent
+    # optional move is presented as an opportunity, not automatically as an error.
+    attention_count = counts["developing"]
+    return {
+        "version": MOVE_FEEDBACK_VERSION,
+        "scope": MOVE_FEEDBACK_SCOPE,
+        "definitions": [dict(item) for item in MOVE_DEFINITIONS],
+        "assessments": assessments,
+        "summary": {
+            "total_moves": len(MOVE_DEFINITIONS),
+            "attention_count": attention_count,
+            "counts": counts,
+        },
+        "principles": [
+            "Feedback provides evidence and hints rather than replacement sentences.",
+            "Moves are rhetorical options, so absence is not automatically an error.",
+            "Visual cues are complementary and are limited to Moves 2, 3, and 5.",
+        ],
+    }
+
+
+def attach_move_feedback(chart_data: dict, student_answer: str, raw_assessments: Any = None) -> dict:
+    chart_data["move_feedback"] = build_move_feedback(
+        chart_data,
+        student_answer,
+        raw_assessments,
+    )
+    chart_data["schema_version"] = "2.0"
+    return chart_data

@@ -9,34 +9,23 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import CmEditor from './CmEditor.jsx';
-
-const ISSUE_STATUSES = new Set(['incorrect', 'conflicting', 'missing', 'unexpected']);
-
-function getIssueCount(chartData) {
-  const taxonomyCount = Number(chartData?.error_taxonomy?.summary?.total_issues);
-  if (Number.isFinite(taxonomyCount)) return taxonomyCount;
-  const recordCount = Array.isArray(chartData?.records)
-    ? chartData.records.filter((record) => ISSUE_STATUSES.has(record?.feedback_status)).length
-    : 0;
-  const comparisonCount = Array.isArray(chartData?.comparison?.incorrect_official_items)
-    ? chartData.comparison.incorrect_official_items.filter(Boolean).length
-    : 0;
-  const balance = chartData?.comparison?.percentage_balance;
-  const balanceCount = balance === 'under' || balance === 'over' ? 1 : 0;
-  return Math.max(recordCount, comparisonCount) + balanceCount;
-}
+import { CriteriaAnalysisProgress } from './MoveFeedback.jsx';
 
 function FeedbackStatus({ chartUrl, chartData }) {
   if (!chartUrl) {
     return <span className="revision-status revision-status--idle">Not analyzed</span>;
   }
 
-  const issueCount = getIssueCount(chartData);
-  if (issueCount === 0) {
+  if (!Array.isArray(chartData?.move_feedback?.assessments)) {
+    return <span className="revision-status revision-status--idle">Visual ready</span>;
+  }
+
+  const attentionCount = Number(chartData?.move_feedback?.summary?.attention_count) || 0;
+  if (attentionCount === 0) {
     return (
       <span className="revision-status revision-status--success">
         <CheckCircle2 size={13} />
-        No data issues found
+        Seven criteria reviewed
       </span>
     );
   }
@@ -44,7 +33,7 @@ function FeedbackStatus({ chartUrl, chartData }) {
   return (
     <span className="revision-status revision-status--warning">
       <AlertCircle size={13} />
-      {issueCount} {issueCount === 1 ? 'difference' : 'differences'}
+      {attentionCount} {attentionCount === 1 ? 'criterion' : 'criteria'} to refine
     </span>
   );
 }
@@ -79,6 +68,7 @@ function LanguageSuggestions({
   setActiveSuggestionId,
   editorRef,
   applySuggestion,
+  onSuggestionFocus,
 }) {
   const groupedSuggestions = useMemo(() => {
     const groups = suggestions.reduce((result, suggestion) => {
@@ -99,6 +89,7 @@ function LanguageSuggestions({
     const range = suggestion.range || (Array.isArray(suggestion.ranges) && suggestion.ranges[0]);
     if (!range || !editorRef.current) return;
     const nextId = suggestion.id === activeSuggestionId ? null : suggestion.id;
+    onSuggestionFocus?.();
     setActiveSuggestionId(nextId);
     editorRef.current.clearHighlights();
     if (nextId) {
@@ -170,6 +161,7 @@ export default function RevisionWorkspace({
   chartUrl,
   chartData,
   chartFeedbackDetails,
+  activeMoveAssessment,
   text,
   onTextChange,
   editorRef,
@@ -180,11 +172,13 @@ export default function RevisionWorkspace({
   revisionReview,
   activeSuggestionId,
   setActiveSuggestionId,
+  onLanguageSuggestionFocus,
   applySuggestion,
 }) {
   const [zoom, setZoom] = useState(100);
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
   const suggestionCount = reviewSuggestions.length;
+  const activeMoveVisual = activeMoveAssessment?.visual?.image_url || null;
 
   const changeZoom = (delta) => {
     setZoom((current) => Math.min(180, Math.max(70, current + delta)));
@@ -246,13 +240,15 @@ export default function RevisionWorkspace({
             <figcaption>
               <span>
                 <small>Target</small>
-                Original task image
+                {activeMoveVisual ? `Original image · Criterion ${activeMoveAssessment.number} cue` : 'Original task image'}
               </span>
-              <span className="revision-view-label">Reference</span>
+              <span className={`revision-view-label${activeMoveVisual ? ' revision-view-label--visual' : ''}`}>
+                {activeMoveVisual ? 'Annotated cue' : 'Reference'}
+              </span>
             </figcaption>
             <ComparisonImage
-              src={imagePreview}
-              alt="Original IELTS task"
+              src={activeMoveVisual || imagePreview}
+              alt={activeMoveVisual ? 'Original IELTS task with writing-criteria feedback cues' : 'Original IELTS task'}
               zoom={zoom}
               emptyIcon={<FileText size={24} />}
               emptyTitle="No task image"
@@ -305,7 +301,7 @@ export default function RevisionWorkspace({
           <header className="revision-section-heading">
             <div>
               <span className="panel-eyebrow">What to review</span>
-              <h2>Detected differences</h2>
+              <h2>Writing criteria</h2>
             </div>
           </header>
 
@@ -320,16 +316,12 @@ export default function RevisionWorkspace({
             {!chartUrl && !isAnalyzing && (
               <div className="revision-review-empty">
                 <BarChart3 size={22} />
-                <strong>Start with the visual comparison</strong>
-                <p>Analyze your report, then use the differences here to guide each revision.</p>
+                <strong>Review your writing criteria</strong>
+                <p>Analyze your report to receive evidence-linked hints across seven writing criteria.</p>
               </div>
             )}
             {isAnalyzing && (
-              <div className="revision-review-empty" role="status">
-                <RefreshCw className="is-spinning" size={22} />
-                <strong>Reading your report</strong>
-                <p>Generating the comparison image and checking the described data.</p>
-              </div>
+              <CriteriaAnalysisProgress />
             )}
             {chartUrl && chartFeedbackDetails}
           </div>
@@ -349,6 +341,7 @@ export default function RevisionWorkspace({
               setActiveSuggestionId={setActiveSuggestionId}
               editorRef={editorRef}
               applySuggestion={applySuggestion}
+              onSuggestionFocus={onLanguageSuggestionFocus}
             />
           </details>
         </aside>

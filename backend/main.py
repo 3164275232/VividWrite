@@ -9,8 +9,8 @@ from pydantic import BaseModel
 
 from auth import authentication_middleware, router as auth_router
 from deplot_extractor import extract_table_from_image_deplot
-from error_taxonomy import taxonomy_catalog
 from hybrid_feedback import HybridFeedbackService
+from move_feedback import move_catalog
 from next_sentence import NextSentenceRequest, NextSentenceResponse, generate_next_sentence
 from paths import CHARTS_DIR, UPLOADS_DIR, ensure_runtime_directories
 from revision_review import router as revision_review_router
@@ -90,20 +90,20 @@ def generate_revision_suggestions(chart_data: dict, student_answer: str) -> list
     records = chart_data.get("records") if isinstance(chart_data.get("records"), list) else []
     suggestions = []
 
-    taxonomy = chart_data.get("error_taxonomy")
-    taxonomy_issues = taxonomy.get("issues") if isinstance(taxonomy, dict) else None
-    if isinstance(taxonomy_issues, list):
-        for definition in taxonomy.get("definitions") or []:
-            if not isinstance(definition, dict) or not definition.get("issue_count"):
+    move_feedback = chart_data.get("move_feedback")
+    assessments = (
+        move_feedback.get("assessments")
+        if isinstance(move_feedback, dict)
+        else None
+    )
+    if isinstance(assessments, list):
+        for assessment in assessments:
+            if not isinstance(assessment, dict) or assessment.get("status") != "developing":
                 continue
-            count = int(definition["issue_count"])
             suggestions.append({
-                "type": definition.get("code", "content_fidelity"),
-                "message": (
-                    f'{count} verified {definition.get("label", "content").lower()} '
-                    f'issue(s) need review.'
-                ),
-                "severity": "high" if definition.get("code") != "key_feature_omission" else "medium",
+                "type": assessment.get("code", "rhetorical_move"),
+                "message": assessment.get("hint") or "Review how this rhetorical move supports the report.",
+                "severity": "medium",
             })
     else:
         missing_count = sum(1 for record in records if record.get("missing"))
@@ -123,7 +123,7 @@ def generate_revision_suggestions(chart_data: dict, student_answer: str) -> list
         })
 
     incorrect_count = sum(1 for record in records if record.get("incorrect"))
-    if incorrect_count and not isinstance(taxonomy_issues, list):
+    if incorrect_count and not isinstance(assessments, list):
         suggestions.append({
             "type": "data_accuracy",
             "message": f"Your answer contains {incorrect_count} pie-chart value(s) that differ from the original chart.",
@@ -156,9 +156,21 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/api/error-taxonomy")
-def error_taxonomy() -> dict:
-    return taxonomy_catalog()
+@app.get("/api/move-framework")
+def move_framework() -> dict:
+    return move_catalog()
+
+
+def _attach_move_visual_urls(chart_data: dict) -> None:
+    feedback = chart_data.get("move_feedback")
+    assessments = feedback.get("assessments") if isinstance(feedback, dict) else None
+    if not isinstance(assessments, list):
+        return
+    for assessment in assessments:
+        visual = assessment.get("visual") if isinstance(assessment, dict) else None
+        filename = visual.get("image_filename") if isinstance(visual, dict) else None
+        if filename:
+            visual["image_url"] = f"/charts/{filename}"
 
 
 @app.post("/api/next-sentence", response_model=NextSentenceResponse)
@@ -292,6 +304,7 @@ async def analyze_chart_with_image(
             deplot_text=extracted_text,
             image_path=str(image_path),
         )
+        _attach_move_visual_urls(result)
         return ChartAnalysisResponse(
             success=True,
             chart_data=result,

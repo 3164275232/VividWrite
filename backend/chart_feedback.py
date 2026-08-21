@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import uuid
@@ -22,7 +23,9 @@ from chart_text import (
     round_deplot_table_values,
 )
 from deepseek_config import get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
-from error_taxonomy import attach_error_taxonomy
+from error_taxonomy import build_error_taxonomy
+from move_feedback import attach_move_feedback
+from move_visual_feedback import render_move_visuals
 
 
 SUPPORTED_CHART_TYPES = {"auto", "bar", "line", "area", "pie"}
@@ -31,8 +34,8 @@ SUPPORTED_CHART_TYPES = {"auto", "bar", "line", "area", "pie"}
 SYSTEM_PROMPT = """
 You are the data alignment engine for an IELTS Academic Task 1 visual-feedback system.
 You receive (1) DePlot text extracted from the official chart and (2) a student's essay.
-Create ONE unified, declarative chart representation. This task is about factual visual
-feedback, not about grading language.
+Create ONE unified, declarative chart representation and assess the seven rhetorical moves
+below. Do not grade grammar or supply rewritten prose.
 
 Data ownership rules:
 - The official DePlot text controls the framework: chart type, category order, series order,
@@ -68,8 +71,54 @@ Return exactly one JSON object with this shape:
     "uncertain_items": ["string"],
     "alignment_notes": ["string"]
   },
-  "vega_lite_spec": {"mark": "...", "encoding": {"...": "..."}}
+  "vega_lite_spec": {"mark": "...", "encoding": {"...": "..."}},
+  "move_feedback": {
+    "assessments": [
+      {
+        "code": "one of the seven exact move codes below",
+        "status": "effective|developing|not_detected|not_applicable",
+        "excerpt": "an exact verbatim excerpt from the student answer, or an empty string",
+        "rationale": "brief evidence-based explanation",
+        "hint": "brief revision hint, never a replacement sentence",
+        "visual_focus": {
+          "current": [{"category": "optional", "series": "optional", "period": "optional"}],
+          "recommended": [{"category": "optional", "series": "optional", "period": "optional"}]
+        }
+      }
+    ]
+  }
 }
+
+Move-feedback rules:
+- Return exactly one assessment for each code, in this order:
+  1. move_1_introducing_topic (Introducing the Topic)
+  2. move_2_stating_overview (Stating the Overview)
+  3. move_3_highlighting_key_trends (Highlighting Key Trends)
+  4. move_4_elaborating_key_trends (Elaborating on the Key Trends)
+  5. move_5_integrating_trend_and_detail (Including Key Trends and their Elaboration)
+  6. move_6_comparing_contrasting (Making Comparative or Contrastive Statements)
+  7. move_7_closing_summary (Stating the Conclusion)
+- Treat moves as rhetorical options, not seven mandatory boxes. A separate conclusion is
+  optional. Use not_applicable when an optional move is unnecessary or its function is
+  already achieved through another move.
+- Use effective when the move is purposeful and clear; developing when it is present but
+  could be better selected, clearer, or better connected; not_detected when it is absent
+  but could usefully improve this draft.
+- Feedback is a hint, not a replacement. Do not write a corrected sentence or rewrite the
+  essay. Keep rationale and hint concise and applicable to the submitted chart and draft.
+- The excerpt must be copied exactly from the student answer. For developing, identify the
+  precise text that can improve. For not_detected, highlight the closest existing sentence
+  that creates the revision opportunity when possible; otherwise use an empty string.
+- Assess the whole submitted essay without assuming a single planted mistake. Multiple
+  moves may be developing at once, and the essay may use unfamiliar wording.
+- visual_focus is allowed only for Moves 2, 3 and 5. Select records from the returned chart
+  framework using its exact labels. current identifies a less useful feature emphasised by
+  the draft; recommended identifies the more informative feature(s) that support the hint.
+  Leave current empty when no current focus can be located. Leave both empty for other moves.
+- For Move 3, prioritise genuinely salient features such as the largest change, a clear
+  reversal, an extreme, or a meaningful crossover rather than mechanically choosing the
+  first or last record. For Move 5, select evidence that directly supports the trend named
+  in the hint.
 
 Vega-Lite rules:
 - Use only inline fields from records: category, series, period, region, value, x, y,
@@ -200,7 +249,7 @@ _PIE_CLAUSE_BOUNDARY = re.compile(
 )
 _PIE_AGGREGATE_PATTERN = re.compile(
     r"\b(?:combined|cumulative|collectively|together|altogether|jointly|"
-    r"aggregate(?:d)?|sum(?:med)?|addition\s+of|in\s+combination)\b",
+    r"aggregate(?:d)?|sum(?:med)?|total(?:ed|ing|led|ling|s)|addition\s+of|in\s+combination)\b",
     flags=re.IGNORECASE,
 )
 
@@ -249,17 +298,23 @@ def _collect_explicit_pie_percentages(
                 continue
             value_match = percentage_matches[0]
             value_start, value_end = value_match.span()
-            nearest = min(
-                label_matches,
-                key=lambda item: (
-                    value_start - item[1]
-                    if item[1] <= value_start
-                    else item[0] - value_end
-                    if item[0] >= value_end
-                    else 0,
-                    0 if item[1] <= value_start else 1,
-                ),
-            )
+            preceding = [item for item in label_matches if item[1] <= value_start]
+            following = [item for item in label_matches if item[0] >= value_end]
+            grammatical_following = [
+                item for item in following
+                if re.fullmatch(
+                    r"\s*(?:of\s+(?:the\s+)?(?:budget|total|spending|expenditure)\s+)?"
+                    r"(?:for|on|to)\s+",
+                    clause[value_end:item[0]],
+                    flags=re.IGNORECASE,
+                )
+            ]
+            if grammatical_following:
+                nearest = min(grammatical_following, key=lambda item: item[0])
+            elif preceding:
+                nearest = max(preceding, key=lambda item: item[1])
+            else:
+                nearest = min(following, key=lambda item: item[0])
             candidates[nearest[2]].append(float(value_match.group("value")))
             continue
 
@@ -268,6 +323,30 @@ def _collect_explicit_pie_percentages(
             and len(mentioned_labels) == len(percentage_matches)
         ):
             for label, value_match in zip(mentioned_labels, percentage_matches):
+                candidates[label].append(float(value_match.group("value")))
+            continue
+
+        value_then_label: list[tuple[str, re.Match[str]]] = []
+        used_labels: set[str] = set()
+        for value_match in percentage_matches:
+            following = [item for item in label_matches if item[0] >= value_match.end()]
+            if not following:
+                break
+            label_match = min(following, key=lambda item: item[0])
+            between = clause[value_match.end():label_match[0]]
+            if not re.fullmatch(
+                r"\s*(?:of\s+(?:the\s+)?(?:budget|total|spending|expenditure)\s+)?"
+                r"(?:for|on|to)\s+",
+                between,
+                flags=re.IGNORECASE,
+            ):
+                break
+            if label_match[2] in used_labels:
+                break
+            used_labels.add(label_match[2])
+            value_then_label.append((label_match[2], value_match))
+        if len(value_then_label) == len(percentage_matches):
+            for label, value_match in value_then_label:
                 candidates[label].append(float(value_match.group("value")))
             continue
 
@@ -391,10 +470,61 @@ def _remove_unsupported_pie_values(
         )
 
 
+def _enforce_explicit_pie_values(
+    result: dict,
+    deplot_text: str,
+    student_answer: str,
+) -> None:
+    """Make locally traceable category percentages authoritative for pie charts."""
+    if result.get("chart_type") != "pie":
+        return
+    try:
+        official_values = parse_validated_pie_table(deplot_text)
+    except InvalidExtractedChartData:
+        return
+    explicit_claims = _collect_explicit_pie_percentages(student_answer, list(official_values))
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    records_by_key = {
+        _key(_pie_record_label(record)): record
+        for record in records
+        if isinstance(record, dict) and _key(_pie_record_label(record))
+    }
+    for label in official_values:
+        key = _key(label)
+        record = records_by_key.get(key)
+        if record is None:
+            record = _clean_record({"category": label, "value": None, "missing": True})
+            records.append(record)
+            records_by_key[key] = record
+        values = explicit_claims.get(label, [])
+        record["category"] = label
+        if values:
+            unique_values = list(dict.fromkeys(values))
+            record["value"] = float(values[-1])
+            record["missing"] = False
+            record["estimated"] = False
+            record["confidence"] = 1.0
+            record["explicit_student_value"] = True
+            record["conflicting_values"] = unique_values if len(unique_values) > 1 else []
+        else:
+            record["value"] = None
+            record["missing"] = True
+            record["estimated"] = False
+            record["confidence"] = 0.0
+            record["explicit_student_value"] = False
+            record["conflicting_values"] = []
+    result["records"] = records
+
+
 _CARTESIAN_NUMBER_RE = re.compile(r"(?<![\w.])[-+]?\d+(?:,\d{3})*(?:\.\d+)?(?![\w.])")
 _CHANGE_VALUE_PREFIX_RE = re.compile(
     r"(?:\bby|\b(?:increase|rise|growth|gain|change|decrease|decline|drop|fall|difference|gap)"
     r"\b[^.!?;]{0,80}\b(?:of|at|by))\s*$",
+    flags=re.IGNORECASE,
+)
+_RELATIVE_VALUE_SUFFIX_RE = re.compile(
+    r"^\s*(?:%|percentage\s+points?|percent(?:age\s+points?)?|million|billion|thousand)?"
+    r"\s*(?:above|below|ahead\s+of|behind|higher\s+than|lower\s+than|more\s+than|less\s+than)\b",
     flags=re.IGNORECASE,
 )
 _FROM_TO_VALUE_RE = re.compile(
@@ -439,6 +569,11 @@ _OPEN_CLOSE_VALUE_RE = re.compile(
     r"[^.!?;]{0,100}?\b(?:closed|finished|ended)"
     r"(?:\s+(?:it|the\s+(?:period|decade|series)))?\s+(?:at|with)\s+"
     r"(?P<end>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)",
+    flags=re.IGNORECASE,
+)
+_ORDERED_SERIES_VALUES_RE = re.compile(
+    r"\b(?:respectively|chronological\s+order|in\s+order|from\s+(?:19|20)\d{2}\s+"
+    r"(?:through|to|until)\s+(?:19|20)\d{2}|across\s+the\s+(?:six|\d+)\s+(?:years|periods))\b",
     flags=re.IGNORECASE,
 )
 
@@ -615,6 +750,24 @@ def _collect_explicit_cartesian_values(
             active_series = mentioned_series[0]
         elif temporal_series and len(mentioned_series) > 1:
             active_series = None
+        if temporal_categories and len(mentioned_series) == 1 and _ORDERED_SERIES_VALUES_RE.search(sentence):
+            occupied_spans = [span for _, span in category_occurrences + series_occurrences]
+            ordered_values = [
+                float(match.group().replace(",", ""))
+                for match in _CARTESIAN_NUMBER_RE.finditer(sentence)
+                if not any(
+                    start < match.end() and match.start() < end
+                    for start, end in occupied_spans
+                )
+                and not _CHANGE_VALUE_PREFIX_RE.search(
+                    sentence[max(0, match.start() - 100):match.start()]
+                )
+                and not _RELATIVE_VALUE_SUFFIX_RE.search(sentence[match.end():match.end() + 80])
+            ]
+            if len(ordered_values) == len(categories):
+                for category, value in zip(categories, ordered_values):
+                    add_claim(category, mentioned_series[0], value)
+                continue
         if temporal_categories and not category_occurrences and len(mentioned_series) == 1:
             endpoint_matches = {
                 (
@@ -651,6 +804,8 @@ def _collect_explicit_cartesian_values(
                 continue
             prefix = sentence[max(0, value_span[0] - 100) : value_span[0]]
             if _CHANGE_VALUE_PREFIX_RE.search(prefix):
+                continue
+            if _RELATIVE_VALUE_SUFFIX_RE.search(sentence[value_span[1]:value_span[1] + 80]):
                 continue
             numeric_occurrences.append(
                 (float(match.group().replace(",", "")), value_span)
@@ -896,6 +1051,60 @@ def _remove_unsupported_cartesian_values(
             f"Removed {removed_count} model-proposed value(s) that were not explicitly "
             "supported by the student's essay."
         )
+
+
+def _enforce_explicit_cartesian_values(
+    result: dict,
+    deplot_text: str,
+    student_answer: str,
+) -> None:
+    """Make the local text parser authoritative before chart annotation/rendering."""
+    chart_type = result.get("chart_type")
+    if chart_type not in {"bar", "line"}:
+        return
+    official_records = parse_numeric_chart_table(deplot_text)
+    if not official_records:
+        return
+    explicit_claims = _collect_explicit_cartesian_values(student_answer, official_records)
+    value_precision = infer_deplot_value_precision(deplot_text, chart_type)
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+
+    for official in official_records:
+        category = str(official["category"])
+        series = str(official["series"])
+        record = _matching_record(records, category, series)
+        if record is None:
+            record = _clean_record({
+                "category": category,
+                "series": series,
+                "period": category
+                if _key(official.get("axis_label")) in {"year", "date", "period", "time"}
+                else None,
+                "value": None,
+                "missing": True,
+            })
+            records.append(record)
+
+        values = explicit_claims.get((category, series), [])
+        if values:
+            unique_values = list(dict.fromkeys(values))
+            record["value"] = quantize_chart_value(values[-1], value_precision)
+            record["missing"] = False
+            record["estimated"] = False
+            record["confidence"] = 1.0
+            record["explicit_student_value"] = True
+            record["conflicting_values"] = [
+                quantize_chart_value(value, value_precision)
+                for value in unique_values
+            ] if len(unique_values) > 1 else []
+        else:
+            record["value"] = None
+            record["missing"] = True
+            record["estimated"] = False
+            record["confidence"] = 0.0
+            record["explicit_student_value"] = False
+            record["conflicting_values"] = []
+    result["records"] = records
 
 
 def _annotate_pie_accuracy(result: dict, deplot_text: str, tolerance: float = 0.0) -> None:
@@ -1494,7 +1703,7 @@ class ChartFeedbackService:
             response = self.client.chat.completions.create(
                 model=get_deepseek_model(),
                 temperature=0,
-                max_tokens=5000,
+                max_tokens=6500,
                 response_format={"type": "json_object"},
                 extra_body=get_deepseek_extra_body(),
                 messages=messages,
@@ -1506,21 +1715,25 @@ class ChartFeedbackService:
                 result = _normalise_result(raw, effective_type)
                 _merge_explicit_pie_percentages(result, deplot_text, student_answer)
                 _remove_unsupported_pie_values(result, deplot_text, student_answer)
+                _enforce_explicit_pie_values(result, deplot_text, student_answer)
                 _merge_explicit_cartesian_values(result, deplot_text, student_answer)
                 _remove_unsupported_cartesian_values(result, deplot_text, student_answer)
+                _enforce_explicit_cartesian_values(result, deplot_text, student_answer)
                 _annotate_pie_accuracy(result, deplot_text)
                 _annotate_bar_accuracy(result, deplot_text)
                 _validate_temporal_record_coverage(result, deplot_text, student_answer)
                 _interpolate_supported_temporal_gaps(result, deplot_text, student_answer)
                 _annotate_line_accuracy(result, deplot_text)
-                attach_error_taxonomy(result, student_answer)
+                # The former five-class checker remains an internal factual guard for
+                # chart rendering. The user-facing framework is the seven rhetorical moves.
+                content_checks = build_error_taxonomy(copy.deepcopy(result), student_answer)
                 semantic_alerts = [
                     (
                         f'TEXT CONFLICT: {str(issue.get("item") or "Written claim").strip()} '
                         f'{"trend direction" if issue.get("error_type") == "trend_direction_error" else "ranking"} '
                         "differs from the official chart."
                     )
-                    for issue in result["error_taxonomy"].get("issues", [])
+                    for issue in content_checks.get("issues", [])
                     if issue.get("error_type") in {
                         "trend_direction_error",
                         "comparison_ranking_error",
@@ -1541,6 +1754,8 @@ class ChartFeedbackService:
                     unit=f'{result["axes"]["unit"]} {result["axes"]["y_label"]}'.strip(),
                     semantic_alerts=semantic_alerts,
                 )
+                attach_move_feedback(result, student_answer, raw.get("move_feedback"))
+                render_move_visuals(image_path, self.output_dir, result)
                 result["style"]["alignment_attempts"] = attempt + 1
                 return result, filename
             except (InvalidChartSpec, UnifiedChartFeedbackError) as exc:

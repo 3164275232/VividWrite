@@ -14,6 +14,8 @@ from chart_feedback import (
     _annotate_pie_accuracy,
     _collect_explicit_cartesian_values,
     _collect_explicit_pie_percentages,
+    _enforce_explicit_cartesian_values,
+    _enforce_explicit_pie_values,
     _normalise_result,
     _remove_unsupported_pie_values,
 )
@@ -106,6 +108,78 @@ class SequenceClient:
 
 
 class UnifiedChartFeedbackTests(unittest.TestCase):
+    def test_line_ordered_series_values_map_to_all_official_periods(self):
+        official_records = [
+            {"category": period, "series": "Bus"}
+            for period in ("2010", "2012", "2014", "2016", "2018", "2020")
+        ]
+        variants = (
+            "Across the six years, the Bus figures were 1.8, 1.9, 1.7, 1.6, 1.5, 1.3 million respectively.",
+            "For Bus, daily use stood at 1.8, 1.9, 1.7, 1.6, 1.5, 1.3 million in chronological order.",
+            "Bus recorded 1.8, 1.9, 1.7, 1.6, 1.5, 1.3 million passengers from 2010 through 2020.",
+        )
+
+        for essay in variants:
+            with self.subTest(essay=essay):
+                claims = _collect_explicit_cartesian_values(essay, official_records)
+                self.assertEqual(
+                    [claims[(period, "Bus")][-1] for period in ("2010", "2012", "2014", "2016", "2018", "2020")],
+                    [1.8, 1.9, 1.7, 1.6, 1.5, 1.3],
+                )
+
+    def test_relative_line_gap_is_not_treated_as_a_series_value(self):
+        official_records = [
+            {"category": "2020", "series": "Bus"},
+            {"category": "2020", "series": "Metro"},
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "In 2020, metro stood 0.6 million above bus use.",
+            official_records,
+        )
+
+        self.assertEqual(claims, {})
+
+    def test_pie_parser_keeps_subject_value_and_ignores_aggregate_total(self):
+        claims = _collect_explicit_pie_percentages(
+            "Food was the second-largest item at 21%, four points above transport. "
+            "Utilities and other spending totalled 18%.",
+            ["Food", "Transport", "Utilities", "Other"],
+        )
+
+        self.assertEqual(claims, {"Food": [21.0]})
+
+    def test_local_enforcement_removes_model_values_without_essay_evidence(self):
+        bar_result = {
+            "chart_type": "bar",
+            "records": [
+                {"category": "North", "series": "2020", "value": 50},
+                {"category": "South", "series": "2020", "value": 40},
+            ],
+        }
+        _enforce_explicit_cartesian_values(
+            bar_result,
+            "Region | 2020<0x0A>North | 50<0x0A>South | 40",
+            "North recorded 50% in 2020.",
+        )
+        self.assertEqual(bar_result["records"][0]["value"], 50)
+        self.assertIsNone(bar_result["records"][1]["value"])
+
+        pie_result = {
+            "chart_type": "pie",
+            "records": [
+                {"category": "Housing", "value": 60},
+                {"category": "Other", "value": 40},
+            ],
+        }
+        _enforce_explicit_pie_values(
+            pie_result,
+            "Category | Percentage<0x0A>Housing | 60%<0x0A>Other | 40%",
+            "Housing represented 60% of spending.",
+        )
+        self.assertEqual(pie_result["records"][0]["value"], 60)
+        self.assertIsNone(pie_result["records"][1]["value"])
+
     def test_line_respectively_values_map_to_series_in_order(self):
         official_records = [
             {"category": "2020", "series": "Bus"},
@@ -172,9 +246,10 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
             self.assertTrue(output.exists())
             self.assertGreater(output.stat().st_size, 1000)
             self.assertEqual(result["chart_type"], "bar")
-            self.assertEqual(result["schema_version"], "1.1")
-            self.assertEqual(len(result["error_taxonomy"]["definitions"]), 5)
-            self.assertIn("issues", result["error_taxonomy"])
+            self.assertEqual(result["schema_version"], "2.0")
+            self.assertEqual(len(result["move_feedback"]["definitions"]), 7)
+            self.assertEqual(len(result["move_feedback"]["assessments"]), 7)
+            self.assertNotIn("error_taxonomy", result)
             self.assertEqual(client.completions.kwargs["response_format"], {"type": "json_object"})
 
     def test_rejects_external_chart_data(self):
