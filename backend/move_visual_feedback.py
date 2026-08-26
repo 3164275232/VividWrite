@@ -18,8 +18,9 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 CURRENT_COLOR = "#D92D20"
 RECOMMENDED_COLOR = "#1677CC"
+CURRENT_LABEL = "Your current focus"
+RECOMMENDED_LABEL = "Suggested focus"
 HEADER_BACKGROUND = "#FFFFFF"
-HEADER_TEXT = "#202124"
 
 
 def _number(value: Any) -> float | None:
@@ -173,6 +174,140 @@ def _bar_points(
     return points
 
 
+def _contiguous_runs(active: np.ndarray) -> list[tuple[int, int]]:
+    indices = np.flatnonzero(active)
+    if not len(indices):
+        return []
+    breaks = np.flatnonzero(np.diff(indices) > 1)
+    starts = np.concatenate(([indices[0]], indices[breaks + 1]))
+    ends = np.concatenate((indices[breaks], [indices[-1]]))
+    return [(int(start), int(end)) for start, end in zip(starts, ends)]
+
+
+def _box_iou(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> float:
+    x0 = max(first[0], second[0])
+    y0 = max(first[1], second[1])
+    x1 = min(first[2], second[2])
+    y1 = min(first[3], second[3])
+    intersection = max(0.0, x1 - x0) * max(0.0, y1 - y0)
+    if not intersection:
+        return 0.0
+    first_area = max(0.0, first[2] - first[0]) * max(0.0, first[3] - first[1])
+    second_area = max(0.0, second[2] - second[0]) * max(0.0, second[3] - second[1])
+    return intersection / max(1.0, first_area + second_area - intersection)
+
+
+def _detect_bar_boxes(
+    image: Image.Image,
+    expected_count: int,
+) -> list[tuple[float, float, float, float]]:
+    """Find solid bar bounds so annotations follow the pixels, not inferred axes."""
+    if expected_count <= 0:
+        return []
+    rgb = np.asarray(image.convert("RGB"))
+    height, width = rgb.shape[:2]
+    maximum = rgb.max(axis=2)
+    minimum = rgb.min(axis=2)
+    saturation = maximum - minimum
+    valid = (saturation >= 34) & (maximum <= 250) & (maximum >= 45)
+    crop = np.zeros(valid.shape, dtype=bool)
+    crop[
+        max(0, int(height * 0.07)) : min(height, int(height * 0.84)),
+        max(0, int(width * 0.03)) : min(width, int(width * 0.97)),
+    ] = True
+    valid &= crop
+    if not valid.any():
+        return []
+
+    quantized = rgb.astype(np.uint16) >> 4
+    colour_ids = (
+        (quantized[:, :, 0] << 8)
+        | (quantized[:, :, 1] << 4)
+        | quantized[:, :, 2]
+    )
+    counts = np.bincount(colour_ids[valid], minlength=4096)
+    minimum_pixels = max(180, int(width * height * 0.0008))
+    candidates: dict[str, list[tuple[tuple[float, float, float, float], int]]] = {
+        "vertical": [],
+        "horizontal": [],
+    }
+
+    for colour_id in np.argsort(counts)[::-1][:24]:
+        if counts[colour_id] < minimum_pixels:
+            break
+        mask = valid & (colour_ids == colour_id)
+
+        active_columns = mask.sum(axis=0) >= max(10, int(height * 0.035))
+        for start, end in _contiguous_runs(active_columns):
+            section = mask[:, start : end + 1]
+            y_values, x_values = np.nonzero(section)
+            if not len(y_values):
+                continue
+            box = (
+                float(start + x_values.min()),
+                float(y_values.min()),
+                float(start + x_values.max() + 1),
+                float(y_values.max() + 1),
+            )
+            box_width = box[2] - box[0]
+            box_height = box[3] - box[1]
+            density = len(y_values) / max(1.0, box_width * box_height)
+            if (
+                box_width >= width * 0.008
+                and box_height >= height * 0.06
+                and box_height >= box_width * 1.2
+                and density >= 0.55
+            ):
+                candidates["vertical"].append((box, len(y_values)))
+
+        active_rows = mask.sum(axis=1) >= max(10, int(width * 0.035))
+        for start, end in _contiguous_runs(active_rows):
+            section = mask[start : end + 1, :]
+            y_values, x_values = np.nonzero(section)
+            if not len(x_values):
+                continue
+            box = (
+                float(x_values.min()),
+                float(start + y_values.min()),
+                float(x_values.max() + 1),
+                float(start + y_values.max() + 1),
+            )
+            box_width = box[2] - box[0]
+            box_height = box[3] - box[1]
+            density = len(x_values) / max(1.0, box_width * box_height)
+            if (
+                box_width >= width * 0.06
+                and box_height >= height * 0.008
+                and box_width >= box_height * 1.2
+                and density >= 0.55
+            ):
+                candidates["horizontal"].append((box, len(x_values)))
+
+    choices: list[tuple[int, str, list[tuple[float, float, float, float]]]] = []
+    for orientation, entries in candidates.items():
+        selected: list[tuple[tuple[float, float, float, float], int]] = []
+        for box, score in sorted(entries, key=lambda item: item[1], reverse=True):
+            if any(_box_iou(box, existing[0]) >= 0.72 for existing in selected):
+                continue
+            selected.append((box, score))
+        if len(selected) < expected_count:
+            continue
+        selected = sorted(selected, key=lambda item: item[1], reverse=True)[:expected_count]
+        boxes = [box for box, _ in selected]
+        if orientation == "vertical":
+            boxes.sort(key=lambda box: ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2))
+        else:
+            boxes.sort(key=lambda box: ((box[1] + box[3]) / 2, (box[0] + box[2]) / 2))
+        choices.append((sum(score for _, score in selected), orientation, boxes))
+
+    if not choices:
+        return []
+    return max(choices, key=lambda item: item[0])[2]
+
+
 def _pie_points(
     records: list[dict],
     bbox: tuple[int, int, int, int],
@@ -196,56 +331,201 @@ def _pie_points(
     return points
 
 
-def _record_points(
+def _record_boxes(
     chart_type: str,
     records: list[dict],
     image: Image.Image,
-) -> dict[int, tuple[float, float, float]]:
+) -> dict[int, tuple[float, float, float, float]]:
     bbox = _colour_data_bbox(image) or _fallback_plot_bbox(image)
-    if chart_type in {"line", "area"}:
-        return _line_points(records, bbox)
     if chart_type == "bar":
-        return _bar_points(records, bbox)
-    if chart_type == "pie":
-        return _pie_points(records, bbox)
-    return {}
+        detected = _detect_bar_boxes(image, len(records))
+        if len(detected) == len(records):
+            return dict(enumerate(detected))
+        points = _bar_points(records, bbox)
+        baseline = bbox[3]
+        return {
+            index: (x - radius, y, x + radius, baseline)
+            for index, (x, y, radius) in points.items()
+        }
+    if chart_type in {"line", "area"}:
+        points = _line_points(records, bbox)
+    elif chart_type == "pie":
+        points = _pie_points(records, bbox)
+    else:
+        return {}
+    return {
+        index: (x - radius, y - radius, x + radius, y + radius)
+        for index, (x, y, radius) in points.items()
+    }
 
 
-def _draw_legend(draw: ImageDraw.ImageDraw, width: int, header_height: int, has_current: bool) -> None:
-    font = _load_font(max(13, min(24, width // 70)), bold=True)
-    y = header_height // 2
-    x = max(18, width // 40)
-    items = []
-    if has_current:
-        items.append((CURRENT_COLOR, "Current draft focus"))
-    items.append((RECOMMENDED_COLOR, "Suggested focus"))
-    for colour, label in items:
-        radius = max(6, header_height // 8)
-        draw.ellipse((x, y - radius, x + radius * 2, y + radius), outline=colour, width=max(3, radius // 2))
-        x += radius * 2 + 9
-        draw.text((x, y), label, fill=HEADER_TEXT, font=font, anchor="lm")
-        text_box = draw.textbbox((x, y), label, font=font, anchor="lm")
-        x = text_box[2] + max(24, width // 35)
+def _target_boxes(
+    chart_type: str,
+    records: list[dict],
+    boxes: dict[int, tuple[float, float, float, float]],
+    indices: list[int],
+    image_size: tuple[int, int],
+) -> list[tuple[float, float, float, float]]:
+    selected = [(index, boxes[index]) for index in indices if index in boxes]
+    if chart_type != "bar":
+        return [box for _, box in selected]
+
+    grouped: dict[str, list[tuple[float, float, float, float]]] = {}
+    for index, box in selected:
+        record = records[index]
+        group = str(record.get("category") or record.get("period") or index)
+        grouped.setdefault(group, []).append(box)
+
+    width, height = image_size
+    padded: list[tuple[float, float, float, float]] = []
+    for group_boxes in grouped.values():
+        x0 = min(box[0] for box in group_boxes)
+        y0 = min(box[1] for box in group_boxes)
+        x1 = max(box[2] for box in group_boxes)
+        y1 = max(box[3] for box in group_boxes)
+        box_width = x1 - x0
+        box_height = y1 - y0
+        pad_x = max(14.0, min(34.0, box_width * 0.14))
+        pad_y = max(14.0, min(28.0, box_height * 0.05))
+        padded.append((
+            max(1.0, x0 - pad_x),
+            max(1.0, y0 - pad_y),
+            min(width - 1.0, x1 + pad_x),
+            min(height - 1.0, y1 + pad_y),
+        ))
+    return padded
 
 
 def _draw_targets(
     overlay: Image.Image,
-    points: dict[int, tuple[float, float, float]],
-    indices: list[int],
+    boxes: list[tuple[float, float, float, float]],
     colour: str,
     y_offset: int,
-) -> None:
+) -> list[tuple[float, float, float, float]]:
     draw = ImageDraw.Draw(overlay, "RGBA")
     line_width = max(4, overlay.width // 350)
-    for index in indices[:4]:
-        point = points.get(index)
-        if point is None:
-            continue
-        x, y, radius = point
-        y += y_offset
-        box = (x - radius, y - radius, x + radius, y + radius)
+    rendered: list[tuple[float, float, float, float]] = []
+    for source_box in boxes[:4]:
+        box = (
+            source_box[0],
+            source_box[1] + y_offset,
+            source_box[2],
+            source_box[3] + y_offset,
+        )
         fill = (*ImageColor_getrgb(colour), 24)
         draw.ellipse(box, fill=fill, outline=colour, width=line_width)
+        rendered.append(box)
+    return rendered
+
+
+def _bezier_points(
+    start: tuple[float, float],
+    control_1: tuple[float, float],
+    control_2: tuple[float, float],
+    end: tuple[float, float],
+    steps: int = 36,
+) -> list[tuple[float, float]]:
+    points: list[tuple[float, float]] = []
+    for step in range(steps + 1):
+        t = step / steps
+        inverse = 1 - t
+        x = (
+            inverse ** 3 * start[0]
+            + 3 * inverse ** 2 * t * control_1[0]
+            + 3 * inverse * t ** 2 * control_2[0]
+            + t ** 3 * end[0]
+        )
+        y = (
+            inverse ** 3 * start[1]
+            + 3 * inverse ** 2 * t * control_1[1]
+            + 3 * inverse * t ** 2 * control_2[1]
+            + t ** 3 * end[1]
+        )
+        points.append((x, y))
+    return points
+
+
+def _draw_callout(
+    overlay: Image.Image,
+    label: str,
+    colour: str,
+    target_boxes: list[tuple[float, float, float, float]],
+    header_height: int,
+    side: str,
+) -> int:
+    if not target_boxes:
+        return 0
+    draw = ImageDraw.Draw(overlay, "RGBA")
+    font = _load_font(max(16, min(32, overlay.width // 50)), bold=True)
+    stroke_width = max(1, overlay.width // 1000)
+    text_box = draw.textbbox((0, 0), label, font=font, stroke_width=stroke_width)
+    text_width = text_box[2] - text_box[0]
+    text_height = text_box[3] - text_box[1]
+    margin = max(20, overlay.width // 45)
+    x = margin if side == "left" else overlay.width - margin - text_width
+    y = max(8, (header_height - text_height) // 2 - 4)
+    draw.text(
+        (x, y),
+        label,
+        fill=colour,
+        font=font,
+        stroke_width=stroke_width,
+        stroke_fill="white",
+    )
+
+    line_width = max(4, overlay.width // 330)
+    arrow_size = max(11, min(22, overlay.width // 75))
+    ordered_targets = sorted(target_boxes, key=lambda box: (box[0] + box[2]) / 2)
+    target_count = len(ordered_targets)
+    for index, target in enumerate(ordered_targets):
+        progress = 0.08 if target_count == 1 else 0.08 + 0.76 * index / (target_count - 1)
+        start_x = x + text_width * (progress if side == "left" else 1 - progress)
+        start = (start_x, y + text_height + 7)
+        target_center_x = (target[0] + target[2]) / 2
+        approaches_from_left = start_x <= target_center_x
+        end_x = target_center_x
+        end = (end_x, target[1])
+        horizontal_bend = max(45, overlay.width * 0.045)
+        approach_x = end_x - horizontal_bend if approaches_from_left else end_x + horizontal_bend
+        side_offset = 0 if side == "left" else max(36, overlay.height * 0.045)
+        lane_y = (
+            header_height
+            + max(48, overlay.height * 0.065)
+            + side_offset
+            + index * 10
+        )
+        lane_start = (start_x, lane_y)
+        turn = max(16, min(34, overlay.width * 0.018))
+        turn = turn if approaches_from_left else -turn
+        lead = _bezier_points(
+            start,
+            (start_x, start[1] + (lane_y - start[1]) * 0.35),
+            (start_x - turn, lane_y),
+            lane_start,
+            steps=12,
+        )
+        sweep = _bezier_points(
+            lane_start,
+            (start_x + turn, lane_y),
+            (approach_x, lane_y),
+            end,
+            steps=32,
+        )
+        curve = lead[:-1] + sweep
+        draw.line(curve, fill=colour, width=line_width, joint="curve")
+
+        previous = curve[-2]
+        angle = math.atan2(end[1] - previous[1], end[0] - previous[0])
+        arrow_left = (
+            end[0] - arrow_size * math.cos(angle - math.pi / 6),
+            end[1] - arrow_size * math.sin(angle - math.pi / 6),
+        )
+        arrow_right = (
+            end[0] - arrow_size * math.cos(angle + math.pi / 6),
+            end[1] - arrow_size * math.sin(angle + math.pi / 6),
+        )
+        draw.polygon((end, arrow_left, arrow_right), fill=colour)
+    return target_count
 
 
 def ImageColor_getrgb(colour: str) -> tuple[int, int, int]:
@@ -269,21 +549,61 @@ def _render_assessment(
     if not recommended:
         return None
 
-    points = _record_points(chart_type, records, source)
-    recommended = [index for index in recommended if index in points]
-    current = [index for index in current if index in points and index not in recommended]
+    record_boxes = _record_boxes(chart_type, records, source)
+    recommended = [index for index in recommended if index in record_boxes]
+    current = [index for index in current if index in record_boxes and index not in recommended]
     if not recommended:
         return None
 
     width, height = source.size
-    header_height = max(44, min(72, int(height * 0.09)))
+    header_height = max(88, min(128, int(height * 0.13)))
     canvas = Image.new("RGBA", (width, height + header_height), HEADER_BACKGROUND)
     canvas.paste(source.convert("RGBA"), (0, header_height))
-    _draw_legend(ImageDraw.Draw(canvas), width, header_height, bool(current))
 
     overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    _draw_targets(overlay, points, current, CURRENT_COLOR, header_height)
-    _draw_targets(overlay, points, recommended, RECOMMENDED_COLOR, header_height)
+    current_boxes = _target_boxes(
+        chart_type,
+        records,
+        record_boxes,
+        current,
+        source.size,
+    )
+    recommended_boxes = _target_boxes(
+        chart_type,
+        records,
+        record_boxes,
+        recommended,
+        source.size,
+    )
+    rendered_current = _draw_targets(
+        overlay,
+        current_boxes,
+        CURRENT_COLOR,
+        header_height,
+    )
+    rendered_recommended = _draw_targets(
+        overlay,
+        recommended_boxes,
+        RECOMMENDED_COLOR,
+        header_height,
+    )
+    if rendered_current:
+        _draw_callout(
+            overlay,
+            CURRENT_LABEL,
+            CURRENT_COLOR,
+            rendered_current,
+            header_height,
+            "left",
+        )
+    _draw_callout(
+        overlay,
+        RECOMMENDED_LABEL,
+        RECOMMENDED_COLOR,
+        rendered_recommended,
+        header_height,
+        "right" if rendered_current else "left",
+    )
     canvas = Image.alpha_composite(canvas, overlay).convert("RGB")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(output_path, format="PNG", optimize=True)
@@ -293,8 +613,8 @@ def _render_assessment(
         "current_focus_labels": [_record_label(records[index]) for index in current],
         "recommended_focus_labels": [_record_label(records[index]) for index in recommended],
         "legend": {
-            "current": "Current draft focus" if current else None,
-            "recommended": "Suggested focus",
+            "current": CURRENT_LABEL if current else None,
+            "recommended": RECOMMENDED_LABEL,
         },
     }
 

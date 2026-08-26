@@ -5,7 +5,15 @@ from pathlib import Path
 from PIL import Image
 
 from move_feedback import MOVE_CODES, build_move_feedback, move_catalog
-from move_visual_feedback import CURRENT_COLOR, RECOMMENDED_COLOR, render_move_visuals
+from move_visual_feedback import (
+    CURRENT_COLOR,
+    CURRENT_LABEL,
+    RECOMMENDED_COLOR,
+    RECOMMENDED_LABEL,
+    _detect_bar_boxes,
+    _draw_callout,
+    render_move_visuals,
+)
 
 
 def line_chart_data():
@@ -308,6 +316,111 @@ class MoveFeedbackTests(unittest.TestCase):
             self.assertIn(tuple(int(CURRENT_COLOR[index:index + 2], 16) for index in (1, 3, 5)), colour_set)
             self.assertIn(tuple(int(RECOMMENDED_COLOR[index:index + 2], 16) for index in (1, 3, 5)), colour_set)
             self.assertEqual(assessment["visual"]["current_focus_labels"][0], "South · 2020 · 16")
+
+    def test_bar_visual_uses_real_bar_bounds_and_teacher_callouts(self):
+        source_path = (
+            Path(__file__).resolve().parents[2]
+            / "frontend"
+            / "public"
+            / "practice-samples"
+            / "01_bar_recycling_rates.png"
+        )
+        categories = ("Bristol", "Leeds", "Liverpool", "Manchester", "Sheffield")
+        values = ((42, 55), (35, 48), (28, 39), (31, 46), (38, 51))
+        records = [
+            {
+                "category": category,
+                "series": series,
+                "value": value,
+                "official_value": value,
+            }
+            for category, category_values in zip(categories, values)
+            for series, value in zip(("2015", "2020"), category_values)
+        ]
+        with Image.open(source_path) as source:
+            source_size = source.size
+            detected = _detect_bar_boxes(source, len(records))
+        self.assertEqual(len(detected), 10)
+        self.assertEqual(detected[0], (143.0, 246.0, 252.0, 598.0))
+        self.assertEqual(detected[7], (1073.0, 212.0, 1181.0, 598.0))
+        self.assertEqual(detected[9], (1346.0, 170.0, 1455.0, 598.0))
+
+        assessment = {
+            "number": 3,
+            "visual_available": True,
+            "visual_targets": {
+                "current_focus_record_indices": [9, 3],
+                "recommended_record_indices": [6, 7],
+            },
+        }
+        chart_data = {
+            "chart_type": "bar",
+            "records": records,
+            "move_feedback": {"assessments": [assessment]},
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            render_move_visuals(source_path, folder, chart_data)
+            visual = assessment["visual"]
+            output_path = Path(folder) / visual["image_filename"]
+            with Image.open(output_path) as rendered:
+                header_height = rendered.height - source_size[1]
+                pixels = rendered.convert("RGB")
+
+                current_rgb = tuple(
+                    int(CURRENT_COLOR[index : index + 2], 16)
+                    for index in (1, 3, 5)
+                )
+                recommended_rgb = tuple(
+                    int(RECOMMENDED_COLOR[index : index + 2], 16)
+                    for index in (1, 3, 5)
+                )
+                current_crop = pixels.crop((500, 0, 660, rendered.height))
+                recommended_crop = pixels.crop((920, 0, 1220, rendered.height))
+                current_y = [
+                    y
+                    for y in range(current_crop.height)
+                    for x in range(current_crop.width)
+                    if current_crop.getpixel((x, y)) == current_rgb
+                ]
+                recommended_y = [
+                    y
+                    for y in range(recommended_crop.height)
+                    for x in range(recommended_crop.width)
+                    if recommended_crop.getpixel((x, y)) == recommended_rgb
+                ]
+
+            self.assertTrue(current_y)
+            self.assertTrue(recommended_y)
+            self.assertGreater(max(current_y), header_height + 610)
+            self.assertGreater(max(recommended_y), header_height + 610)
+            self.assertEqual(visual["legend"]["current"], CURRENT_LABEL)
+            self.assertEqual(visual["legend"]["recommended"], RECOMMENDED_LABEL)
+            self.assertEqual(len(visual["current_focus_labels"]), 2)
+            self.assertEqual(len(visual["recommended_focus_labels"]), 2)
+
+    def test_teacher_callout_points_to_every_marked_region(self):
+        overlay = Image.new("RGBA", (800, 600), (0, 0, 0, 0))
+        targets = [(190.0, 280.0, 250.0, 500.0), (600.0, 250.0, 660.0, 500.0)]
+
+        arrow_count = _draw_callout(
+            overlay,
+            CURRENT_LABEL,
+            CURRENT_COLOR,
+            targets,
+            100,
+            "left",
+        )
+
+        self.assertEqual(arrow_count, 2)
+        current_rgb = tuple(
+            int(CURRENT_COLOR[index : index + 2], 16)
+            for index in (1, 3, 5)
+        )
+        pixels = overlay.convert("RGB")
+        first_target = pixels.crop((200, 260, 240, 300))
+        second_target = pixels.crop((610, 230, 650, 270))
+        self.assertIn(current_rgb, set(first_target.get_flattened_data()))
+        self.assertIn(current_rgb, set(second_target.get_flattened_data()))
 
 
 if __name__ == "__main__":
