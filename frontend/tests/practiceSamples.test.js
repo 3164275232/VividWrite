@@ -16,7 +16,7 @@ test('provides one preprocessed sample for each supported practice chart type', 
   assert.equal(new Set(PRACTICE_SAMPLES.map((sample) => sample.id)).size, 3);
 
   for (const sample of PRACTICE_SAMPLES) {
-    assert.match(sample.imageUrl, /^\/practice-samples\/.*\.png$/);
+    assert.match(sample.imageUrl, /^\/practice-samples\/.*\.png(?:\?.+)?$/);
     assert.match(sample.deplotText, /^TITLE \| /);
     assert.match(sample.deplotText, /<0x0A>CHART TYPE \| /);
     assert.ok(sample.deplotText.split('<0x0A>').length >= 8);

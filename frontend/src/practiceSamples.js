@@ -3,7 +3,7 @@ const PRACTICE_SAMPLE_LIST = [
     id: 'bar-recycling',
     label: 'Bar chart: UK recycling rates',
     chartType: 'bar',
-    imageUrl: '/practice-samples/01_bar_recycling_rates.png',
+    imageUrl: '/practice-samples/01_bar_recycling_rates.png?v=279e5bd9',
     fileName: '01_bar_recycling_rates.png',
     deplotText: [
       'TITLE | Household recycling rates in five UK cities, 2015 and 2020',
