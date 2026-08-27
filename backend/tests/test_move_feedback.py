@@ -62,6 +62,24 @@ def pie_chart_data():
     }
 
 
+def bar_chart_data():
+    categories = ("Bristol", "Leeds", "Liverpool", "Manchester", "Sheffield")
+    values = ((42, 55), (35, 48), (28, 39), (31, 46), (38, 51))
+    return {
+        "chart_type": "bar",
+        "records": [
+            {
+                "category": category,
+                "series": series,
+                "value": value,
+                "official_value": value,
+            }
+            for category, category_values in zip(categories, values)
+            for series, value in zip(("2015", "2020"), category_values)
+        ],
+    }
+
+
 class MoveFeedbackTests(unittest.TestCase):
     def test_move_1_rejects_a_generic_visual_introduction(self):
         essay = "The supplied graphic contains six different shares."
@@ -233,6 +251,126 @@ class MoveFeedbackTests(unittest.TestCase):
         targets = feedback["assessments"][2]["visual_targets"]
         self.assertEqual(targets["current_focus_record_indices"], [3, 6])
         self.assertEqual(targets["recommended_record_indices"], [1, 7])
+
+    def test_move_3_uses_declared_focus_when_model_selects_a_later_key_feature(self):
+        cases = (
+            (
+                bar_chart_data(),
+                (
+                    "The grouped bar chart compares recycling rates in five cities. "
+                    "The principal pattern was that Bristol exceeded Sheffield by four points "
+                    "in the final year. Manchester illustrates the strongest improvement "
+                    "because its rate rose from 31% to 46%, a gain of 15 points."
+                ),
+                "Manchester illustrates the strongest improvement because its rate rose from 31% to 46%, a gain of 15 points.",
+                [1, 9],
+                [6, 7],
+            ),
+            (
+                multi_point_line_chart_data(),
+                (
+                    "The principal trend was the modest bus fall from 1.8 million in 2010 "
+                    "to 1.3 million in 2020. Rail recorded the strongest increase, rising "
+                    "from 1.1 million to 2.2 million."
+                ),
+                "Rail recorded the strongest increase, rising from 1.1 million to 2.2 million.",
+                [0, 6],
+                [1, 7],
+            ),
+            (
+                pie_chart_data(),
+                (
+                    "The principal feature was the two-point gap between leisure and utilities. "
+                    "Housing was the dominant category at 32%."
+                ),
+                "Housing was the dominant category at 32%.",
+                [3, 4],
+                [0],
+            ),
+        )
+        for chart_data, essay, model_excerpt, expected_current, expected_recommended in cases:
+            with self.subTest(chart_type=chart_data["chart_type"]):
+                feedback = build_move_feedback(
+                    chart_data,
+                    essay,
+                    [{
+                        "code": "move_3_highlighting_key_trends",
+                        "status": "developing",
+                        "excerpt": model_excerpt,
+                        "rationale": "The key trend is correct but somewhat repetitive.",
+                        "hint": "Consolidate the repeated point.",
+                        "visual_focus": {
+                            "current": [{"category": "Manchester", "series": "2020"}],
+                            "recommended": [{"category": "Manchester", "series": "2020"}],
+                        },
+                    }],
+                )
+
+                assessment = feedback["assessments"][2]
+                self.assertEqual(assessment["status"], "developing")
+                self.assertIn("principal", assessment["excerpt"].casefold())
+                self.assertEqual(
+                    assessment["visual_targets"]["current_focus_record_indices"],
+                    expected_current,
+                )
+                self.assertEqual(
+                    assessment["visual_targets"]["recommended_record_indices"],
+                    expected_recommended,
+                )
+                self.assertTrue(assessment["visual_available"])
+
+    def test_developing_visual_is_hidden_without_a_distinct_current_focus(self):
+        essay = "North rose from 10 in 2010 to 30 in 2020."
+        feedback = build_move_feedback(
+            line_chart_data(),
+            essay,
+            [{
+                "code": "move_3_highlighting_key_trends",
+                "status": "developing",
+                "excerpt": essay,
+                "rationale": "The point is repeated later.",
+                "visual_focus": {
+                    "current": [
+                        {"series": "North", "period": "2010"},
+                        {"series": "North", "period": "2020"},
+                    ],
+                    "recommended": [
+                        {"series": "North", "period": "2010"},
+                        {"series": "North", "period": "2020"},
+                    ],
+                },
+            }],
+        )
+
+        assessment = feedback["assessments"][2]
+        self.assertFalse(assessment["visual_available"])
+        self.assertEqual(
+            assessment["visual_targets"]["current_focus_record_indices"],
+            [0, 1],
+        )
+
+    def test_move_2_maps_unlabelled_but_unique_values_to_a_current_focus(self):
+        essay = "Overall, the first three shares were 32%, 21% and 17%."
+        feedback = build_move_feedback(
+            pie_chart_data(),
+            essay,
+            [{
+                "code": "move_2_stating_overview",
+                "status": "developing",
+                "excerpt": essay,
+            }],
+        )
+
+        assessment = feedback["assessments"][1]
+        self.assertTrue(assessment["visual_available"])
+        self.assertEqual(
+            assessment["visual_targets"]["current_focus_record_indices"],
+            [0, 1, 2],
+        )
+        self.assertEqual(
+            assessment["visual_targets"]["recommended_record_indices"],
+            [0, 5],
+        )
 
     def test_move_6_rejects_an_unspecified_comparison(self):
         essay = "The two regions can be compared, and some figures were higher than others."

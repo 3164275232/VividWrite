@@ -117,8 +117,13 @@ Move-feedback rules:
   Leave current empty when no current focus can be located. Leave both empty for other moves.
 - For Move 3, prioritise genuinely salient features such as the largest change, a clear
   reversal, an extreme, or a meaningful crossover rather than mechanically choosing the
-  first or last record. For Move 5, select evidence that directly supports the trend named
-  in the hint.
+  first or last record. Treat explicit declarations such as "the principal pattern" or
+  "the most important feature" as the focus the writer has chosen; a later mention of a
+  better feature does not erase that declared priority. Do not mark Move 3 developing only
+  because a correctly prioritised trend is repeated. For a developing visual comparison,
+  current and recommended must both be grounded in distinct chart records; otherwise leave
+  both empty and rely on textual feedback. For Move 5, select evidence that directly
+  supports the trend named in the hint.
 
 Vega-Lite rules:
 - Use only inline fields from records: category, series, period, region, value, x, y,

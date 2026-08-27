@@ -118,6 +118,13 @@ _PRIORITY_RE = re.compile(
     r"strongest|dominant)\b",
     re.IGNORECASE,
 )
+_DECLARED_FOCUS_RE = re.compile(
+    r"\b(?:key|main|central|principal|defining|clearest|"
+    r"most\s+(?:notable|prominent|important))\s+"
+    r"(?:feature|pattern|trend|change|difference|gap|development)\b",
+    re.IGNORECASE,
+)
+_REPETITION_RE = re.compile(r"\b(?:repeat(?:ed|ing|s)?|repetitive|redundan(?:t|cy)|consolidat(?:e|ing))\b", re.IGNORECASE)
 _SUPPORT_LINK_RE = re.compile(
     r"\b(?:supported\s+by|demonstrated\s+by|shown\s+by|as\s+shown\s+by|"
     r"as\s+demonstrated\s+by|as\s+evidenced\s+by|evidenced\s+by)\b",
@@ -335,7 +342,7 @@ def _recommended_visual_indices(chart_data: dict, move_code: str) -> list[int]:
     if move_code == "move_2_stating_overview":
         return list(dict.fromkeys(change + extremes))[:4]
     if move_code == "move_3_highlighting_key_trends":
-        return (change or extremes)[:2]
+        return change[:2] if change else extremes[:1]
     if move_code == "move_5_integrating_trend_and_detail":
         return list(dict.fromkeys(change + extremes))[:3]
     return []
@@ -652,6 +659,63 @@ def _record_indices_for_values(records: list[dict], text: str) -> list[int]:
     ][:4]
 
 
+def _declared_focus_candidate(
+    records: list[dict],
+    spans: list[tuple[int, int, str]],
+) -> tuple[str, list[int]]:
+    """Return the first explicit statement of what the writer treats as central."""
+    for _, _, sentence in spans:
+        if not _DECLARED_FOCUS_RE.search(sentence):
+            continue
+        indices = (
+            _mentioned_record_indices(records, sentence)
+            or _record_indices_for_values(records, sentence)
+        )
+        if indices:
+            return sentence, indices
+    return "", []
+
+
+def _finalise_visual_targets(assessments: list[dict], records: list[dict]) -> None:
+    """Only expose a red/blue comparison when both sides are grounded and distinct."""
+    for assessment in assessments:
+        if assessment.get("code") not in VISUAL_MOVE_CODES:
+            continue
+        if assessment.get("status") not in {"developing", "not_detected"}:
+            assessment["visual_available"] = False
+            assessment.pop("visual_targets", None)
+            continue
+
+        targets = assessment.get("visual_targets")
+        if not isinstance(targets, dict):
+            assessment["visual_available"] = False
+            continue
+        recommended = list(dict.fromkeys(
+            index for index in targets.get("recommended_record_indices", [])
+            if isinstance(index, int) and 0 <= index < len(records)
+        ))
+        current = list(dict.fromkeys(
+            index for index in targets.get("current_focus_record_indices", [])
+            if isinstance(index, int) and 0 <= index < len(records)
+        ))
+        if assessment.get("status") == "developing" and not current:
+            excerpt = str(assessment.get("excerpt") or "")
+            current = (
+                _mentioned_record_indices(records, excerpt)
+                or _record_indices_for_values(records, excerpt)
+            )
+
+        distinct_current = [index for index in current if index not in recommended]
+        assessment["visual_targets"] = {
+            "current_focus_record_indices": current,
+            "recommended_record_indices": recommended,
+        }
+        assessment["visual_available"] = bool(
+            recommended
+            and (distinct_current or assessment.get("status") == "not_detected")
+        )
+
+
 def _replace_assessment_excerpt(assessment: dict, student_answer: str, excerpt: str) -> None:
     excerpt_range, matched_excerpt = _find_excerpt_range(student_answer, excerpt)
     assessment["excerpt"] = matched_excerpt or ""
@@ -706,7 +770,11 @@ def _apply_local_quality_guards(
 
     assessment = by_code["move_2_stating_overview"]
     if assessment["status"] == "developing":
-        current = _mentioned_record_indices(records, assessment.get("excerpt") or "")
+        excerpt = assessment.get("excerpt") or ""
+        current = (
+            _mentioned_record_indices(records, excerpt)
+            or _record_indices_for_values(records, excerpt)
+        )
         recommended = _recommended_visual_indices(
             chart_data,
             "move_2_stating_overview",
@@ -717,15 +785,44 @@ def _apply_local_quality_guards(
         }
         assessment["visual_available"] = bool(recommended)
 
-    # Move 3 visual selectors must remain stable across unfamiliar wording. The
-    # excerpt identifies the draft's local focus; chart-grounded change/extreme
-    # calculations identify a stronger feature without relying on model coords.
+    # Move 3 follows the writer's explicit declaration of priority. A later
+    # accurate description does not erase an earlier "principal pattern" claim.
     assessment = by_code["move_3_highlighting_key_trends"]
+    recommended = _recommended_visual_indices(
+        chart_data,
+        "move_3_highlighting_key_trends",
+    )
+    declared_sentence, declared_current = _declared_focus_candidate(records, spans)
+    if declared_sentence and recommended:
+        aligned = any(index in recommended for index in declared_current)
+        if not aligned:
+            assessment["status"] = "developing"
+            assessment["rationale"] = (
+                "The draft explicitly declares a less informative feature as its main focus, "
+                "while the official chart contains a more consequential pattern."
+            )
+            assessment["hint"] = (
+                "Prioritise the chart's most consequential pattern before discussing the smaller feature."
+            )
+            _replace_assessment_excerpt(assessment, student_answer, declared_sentence)
+            assessment["visual_targets"] = {
+                "current_focus_record_indices": declared_current,
+                "recommended_record_indices": recommended,
+            }
+            assessment["visual_available"] = True
+        elif assessment["status"] == "developing" and _REPETITION_RE.search(
+            f'{assessment.get("rationale", "")} {assessment.get("hint", "")}'
+        ):
+            assessment["status"] = "effective"
+            assessment["rationale"] = "The draft explicitly prioritises a chart-salient feature."
+            assessment["hint"] = ""
+            _replace_assessment_excerpt(assessment, student_answer, declared_sentence)
+
     if assessment["status"] == "developing":
-        current = _mentioned_record_indices(records, assessment.get("excerpt") or "")
-        recommended = _recommended_visual_indices(
-            chart_data,
-            "move_3_highlighting_key_trends",
+        excerpt = assessment.get("excerpt") or ""
+        current = (
+            _mentioned_record_indices(records, excerpt)
+            or _record_indices_for_values(records, excerpt)
         )
         assessment["visual_targets"] = {
             "current_focus_record_indices": current,
@@ -924,6 +1021,7 @@ def build_move_feedback(
         assessments.append(assessment)
 
     _apply_local_quality_guards(chart_data, student_answer, assessments, records)
+    _finalise_visual_targets(assessments, records)
 
     counts = {status: 0 for status in VALID_STATUSES}
     for assessment in assessments:
