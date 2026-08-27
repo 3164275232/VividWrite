@@ -230,6 +230,54 @@ class ErrorTaxonomyTests(unittest.TestCase):
         self.assertEqual(issue["official_fact"]["entities"], ["Bus"])
         self.assertEqual(issue["verification"]["method"], "official_context_ranking")
 
+    def test_nearest_rank_word_is_assigned_to_each_pie_category(self):
+        result = build_error_taxonomy(
+            chart_data("pie", pie_records()),
+            (
+                "Overall, housing formed the largest share of spending and other expenses "
+                "the smallest. Housing was 32%, food 21%, transport 17%, leisure 12%, "
+                "utilities 10%, and other spending 8%."
+            ),
+        )
+
+        ranking_issues = [
+            issue for issue in result["issues"]
+            if issue["error_type"] == "comparison_ranking_error"
+        ]
+        self.assertEqual(ranking_issues, [])
+
+    def test_least_is_assigned_to_the_nearest_pie_category(self):
+        result = build_error_taxonomy(
+            chart_data("pie", pie_records()),
+            (
+                "Overall, housing occupied the greatest proportion and other costs the least. "
+                "Housing was 32%, food 21%, transport 17%, leisure 12%, utilities 10%, "
+                "and other spending 8%."
+            ),
+        )
+
+        ranking_issues = [
+            issue for issue in result["issues"]
+            if issue["error_type"] == "comparison_ranking_error"
+        ]
+        self.assertEqual(ranking_issues, [])
+
+    def test_grouped_smallest_categories_do_not_claim_a_unique_minimum(self):
+        result = build_error_taxonomy(
+            chart_data("pie", pie_records()),
+            (
+                "Overall, housing was the largest category, while utilities and other spending "
+                "made up the two smallest portions. Housing was 32%, food 21%, transport 17%, "
+                "leisure 12%, utilities 10%, and other spending 8%."
+            ),
+        )
+
+        ranking_issues = [
+            issue for issue in result["issues"]
+            if issue["error_type"] == "comparison_ranking_error"
+        ]
+        self.assertEqual(ranking_issues, [])
+
     def test_complete_entity_absence_is_a_key_feature_omission(self):
         result = build_error_taxonomy(
             chart_data(

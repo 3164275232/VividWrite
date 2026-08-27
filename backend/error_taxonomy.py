@@ -76,7 +76,7 @@ _DIRECTION_PATTERNS = {
 }
 _RANK_PATTERNS = {
     "highest": re.compile(r"\b(?:highest|largest|greatest)\b", flags=re.IGNORECASE),
-    "lowest": re.compile(r"\b(?:lowest|smallest)\b", flags=re.IGNORECASE),
+    "lowest": re.compile(r"\b(?:lowest|smallest|least)\b", flags=re.IGNORECASE),
 }
 _HIGHER_THAN_RE = re.compile(
     r"\b(?:higher|larger|greater|more)\s+than\b", flags=re.IGNORECASE
@@ -563,13 +563,26 @@ def _rank_claim_for_entity(sentence: str, entity: str) -> str | None:
     entity_pattern = re.compile(rf"\b{re.escape(str(entity))}\b", flags=re.IGNORECASE)
     entity_matches = list(entity_pattern.finditer(sentence))
     clause_boundary = re.compile(r"[,;:]|\b(?:while|whereas|but|although)\b", flags=re.IGNORECASE)
+    candidates: list[tuple[float, str]] = []
     for rank, pattern in _RANK_PATTERNS.items():
         for rank_match in pattern.finditer(sentence):
-            qualifier = sentence[max(0, rank_match.start() - 16) : rank_match.start()]
+            qualifier = sentence[max(0, rank_match.start() - 32) : rank_match.start()]
             if re.search(
                 r"\b(?:second|third|fourth|fifth|next)\s*[- ]?\s*$",
                 qualifier,
                 flags=re.IGNORECASE,
+            ):
+                continue
+            # A grouped superlative (for example, "the two smallest shares")
+            # does not claim that every member of the group is the unique minimum.
+            if re.search(
+                r"\b(?:one\s+of\s+the|among\s+the|two|three|four|five|six|several)\s+$",
+                qualifier,
+                flags=re.IGNORECASE,
+            ):
+                continue
+            if rank_match.group(0).casefold() == "least" and re.search(
+                r"\bat\s+$", qualifier, flags=re.IGNORECASE
             ):
                 continue
             for entity_match in entity_matches:
@@ -577,8 +590,12 @@ def _rank_claim_for_entity(sentence: str, entity: str) -> str | None:
                 between_end = max(entity_match.start(), rank_match.start())
                 between = sentence[between_start:between_end]
                 if len(between) <= 60 and not clause_boundary.search(between):
-                    return rank
-    return None
+                    entity_middle = (entity_match.start() + entity_match.end()) / 2
+                    rank_middle = (rank_match.start() + rank_match.end()) / 2
+                    candidates.append((abs(entity_middle - rank_middle), rank))
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: item[0])[1]
 
 
 def _find_ranking_errors(chart_data: dict, records: list[dict], student_answer: str, tolerance: float) -> list[dict]:

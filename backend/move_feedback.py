@@ -341,47 +341,196 @@ def _recommended_visual_indices(chart_data: dict, move_code: str) -> list[int]:
     return []
 
 
+def _label_aliases(label: str) -> set[str]:
+    key = _normalise(label)
+    if not key:
+        return set()
+    aliases = {key}
+    if " " not in key:
+        aliases.update({f"{key}s", f"{key}es"})
+        if key.endswith("y") and len(key) > 1:
+            aliases.add(f"{key[:-1]}ies")
+    return aliases
+
+
+def _entity_mentions(text: str, labels: list[str]) -> list[tuple[int, int, str]]:
+    mentions: list[tuple[int, int, str]] = []
+    for label in labels:
+        for alias in sorted(_label_aliases(label), key=len, reverse=True):
+            pattern = re.compile(
+                rf"(?<!\w){re.escape(alias).replace(r'\ ', r'\s+')}(?!\w)",
+                flags=re.IGNORECASE,
+            )
+            mentions.extend((match.start(), match.end(), label) for match in pattern.finditer(text))
+    return sorted(set(mentions), key=lambda item: (item[0], -(item[1] - item[0])))
+
+
+def _record_matches_entity(record: dict, entity: str) -> bool:
+    entity_key = _normalise(entity)
+    return any(
+        entity_key and entity_key == _normalise(record.get(field))
+        for field in ("category", "series", "region")
+    )
+
+
+def _record_value_matches_numbers(record: dict, numbers: list[float]) -> bool:
+    value = _number(record.get("value"))
+    if value is None:
+        value = _official_value(record)
+    return value is not None and any(abs(value - number) <= 1e-9 for number in numbers)
+
+
+def _record_period_is_mentioned(record: dict, text: str) -> bool:
+    return any(
+        (label := str(record.get(field) or "").strip())
+        and _TEMPORAL_RE.match(label)
+        and _label_is_mentioned(text, label)
+        for field in ("period", "category", "series")
+    )
+
+
+def _endpoint_record_indices_for_entities(records: list[dict], entities: list[str]) -> list[int]:
+    indices: list[int] = []
+    for entity in entities:
+        matches = [
+            index for index, record in enumerate(records)
+            if _record_matches_entity(record, entity)
+        ]
+        if len(matches) > 2:
+            matches = [matches[0], matches[-1]]
+        indices.extend(matches)
+    return list(dict.fromkeys(indices))[:4]
+
+
+def _entity_has_matching_value(records: list[dict], entity: str, text: str) -> bool:
+    numbers = _meaningful_numbers(text, records)
+    return bool(numbers) and any(
+        _record_matches_entity(record, entity)
+        and _record_value_matches_numbers(record, numbers)
+        for record in records
+    )
+
+
+def _relative_period_record_indices(
+    records: list[dict],
+    entities: list[str],
+    text: str,
+) -> list[int]:
+    position: str | None = None
+    if re.search(r"\b(?:first|initial)\s+(?:year|period)\b|\bat\s+the\s+(?:start|beginning)\b", text, re.IGNORECASE):
+        position = "first"
+    elif re.search(r"\b(?:final|last)\s+(?:year|period)\b|\b(?:by|at)\s+the\s+end\b", text, re.IGNORECASE):
+        position = "last"
+    if position is None:
+        return []
+
+    indices: list[int] = []
+    for entity in entities:
+        matches = [
+            index for index, record in enumerate(records)
+            if _record_matches_entity(record, entity)
+        ]
+        if matches:
+            indices.append(matches[0] if position == "first" else matches[-1])
+    return list(dict.fromkeys(indices))[:4]
+
+
 def _mentioned_record_indices(records: list[dict], excerpt: str) -> list[int]:
     excerpt_key = _normalise(excerpt)
-    excerpt_numbers = {
-        float(value.replace(",", "")) for value in _NUMBER_RE.findall(excerpt)
-    }
     relationship_value = bool(re.search(
         r"\b(?:gap|difference|spread|above|below|ahead|behind|exceed(?:ed|s)?|"
         r"higher|lower|more|less)\b",
         excerpt,
         flags=re.IGNORECASE,
     ))
-    temporal_context = any(
-        _TEMPORAL_RE.match(str(record.get(field) or "").strip())
-        and f" {_normalise(record.get(field))} " in f" {excerpt_key} "
-        for record in records
-        for field in ("period", "category", "series")
-    )
+    entity_labels = _chart_entity_labels(records)
+    mentions = _entity_mentions(excerpt, entity_labels)
+    global_numbers = _meaningful_numbers(excerpt, records)
     matched: list[int] = []
-    for index, record in enumerate(records):
-        entity_labels = []
-        temporal_labels = []
-        for field in ("category", "series", "period", "region"):
-            raw_label = str(record.get(field) or "").strip()
-            if not raw_label:
-                continue
-            if _TEMPORAL_RE.match(raw_label):
-                temporal_labels.append(_normalise(raw_label))
-            else:
-                entity_labels.append(_normalise(raw_label))
-        entity_match = any(label and f" {label} " in f" {excerpt_key} " for label in entity_labels)
-        temporal_match = any(label and f" {label} " in f" {excerpt_key} " for label in temporal_labels)
-        value = _number(record.get("value"))
-        value_match = value is not None and any(abs(value - item) <= 1e-9 for item in excerpt_numbers)
-        if entity_match and (
-            value_match
-            or temporal_match
-            or not excerpt_numbers
-            or (relationship_value and not temporal_context)
+
+    for position, (start, _, entity) in enumerate(mentions):
+        segment_end = mentions[position + 1][0] if position + 1 < len(mentions) else len(excerpt)
+        segment = excerpt[start:segment_end]
+        segment_numbers = _meaningful_numbers(segment, records)
+        candidates = [
+            index for index, record in enumerate(records)
+            if _record_matches_entity(record, entity)
+        ]
+        value_matches = [
+            index for index in candidates
+            if _record_value_matches_numbers(records[index], segment_numbers)
+        ]
+        period_matches = [
+            index for index in candidates
+            if _record_period_is_mentioned(records[index], segment)
+        ]
+        leading_value_match = re.search(
+            r"([-+]?\d[\d,]*(?:\.\d+)?)\s*%?\s+(?:for|in|at|to)\s+$",
+            excerpt[max(0, start - 80):start],
+            flags=re.IGNORECASE,
+        )
+        leading_value_matches: list[int] = []
+        if leading_value_match:
+            leading_number = float(leading_value_match.group(1).replace(",", ""))
+            leading_value_matches = [
+                index for index in candidates
+                if _record_value_matches_numbers(records[index], [leading_number])
+            ]
+        if value_matches:
+            matched.extend(value_matches)
+        elif period_matches:
+            matched.extend(period_matches)
+        elif leading_value_matches:
+            matched.extend(leading_value_matches)
+        elif not global_numbers and not relationship_value:
+            matched.extend(_endpoint_record_indices_for_entities(records, [entity]))
+
+    # A stated gap usually gives the relationship value rather than either data
+    # value. In that case, map all named entities to the named period.
+    if relationship_value:
+        temporal_records = [
+            index for index, record in enumerate(records)
+            if _record_period_is_mentioned(record, excerpt)
+        ]
+        if temporal_records:
+            for _, _, entity in mentions:
+                matched.extend(
+                    index for index in temporal_records
+                    if _record_matches_entity(records[index], entity)
+                )
+        elif relative_indices := _relative_period_record_indices(
+            records,
+            [entity for _, _, entity in mentions],
+            excerpt,
         ):
-            matched.append(index)
-    return matched[:4]
+            matched.extend(relative_indices)
+        elif not matched:
+            matched.extend(_endpoint_record_indices_for_entities(
+                records,
+                [entity for _, _, entity in mentions],
+            ))
+
+    respectively = re.search(r"\brespectively\b", excerpt, re.IGNORECASE)
+    if respectively:
+        prefix = excerpt[:respectively.start()]
+        prefix_entities = list(dict.fromkeys(
+            entity for start, _, entity in mentions if start < respectively.start()
+        ))
+        prefix_numbers = _meaningful_numbers(prefix, records)
+        if len(prefix_entities) >= 2 and len(prefix_numbers) >= 2:
+            pair_count = min(len(prefix_entities), len(prefix_numbers), 4)
+            for entity, number in zip(
+                prefix_entities[-pair_count:],
+                prefix_numbers[-pair_count:],
+            ):
+                matched.extend(
+                    index for index, record in enumerate(records)
+                    if _record_matches_entity(record, entity)
+                    and _record_value_matches_numbers(record, [number])
+                )
+
+    matched_set = set(matched)
+    return [index for index in range(len(records)) if index in matched_set][:4]
 
 
 def _selector_record_indices(records: list[dict], selectors: Any) -> list[int]:
@@ -436,15 +585,10 @@ def _visual_focus_from_model(records: list[dict], raw: dict) -> tuple[list[int],
 
 
 def _label_is_mentioned(text: str, label: str) -> bool:
-    key = _normalise(label)
-    if not key:
+    aliases = _label_aliases(label)
+    if not aliases:
         return False
     text_key = f" {_normalise(text)} "
-    aliases = {key}
-    if " " not in key:
-        aliases.update({f"{key}s", f"{key}es"})
-        if key.endswith("y") and len(key) > 1:
-            aliases.add(f"{key[:-1]}ies")
     return any(f" {alias} " in text_key for alias in aliases)
 
 
@@ -559,6 +703,35 @@ def _apply_local_quality_guards(
         assessment["visual_available"] = bool(recommended)
         break
 
+    assessment = by_code["move_2_stating_overview"]
+    if assessment["status"] == "developing":
+        current = _mentioned_record_indices(records, assessment.get("excerpt") or "")
+        recommended = _recommended_visual_indices(
+            chart_data,
+            "move_2_stating_overview",
+        )
+        assessment["visual_targets"] = {
+            "current_focus_record_indices": current,
+            "recommended_record_indices": recommended,
+        }
+        assessment["visual_available"] = bool(recommended)
+
+    # Move 3 visual selectors must remain stable across unfamiliar wording. The
+    # excerpt identifies the draft's local focus; chart-grounded change/extreme
+    # calculations identify a stronger feature without relying on model coords.
+    assessment = by_code["move_3_highlighting_key_trends"]
+    if assessment["status"] == "developing":
+        current = _mentioned_record_indices(records, assessment.get("excerpt") or "")
+        recommended = _recommended_visual_indices(
+            chart_data,
+            "move_3_highlighting_key_trends",
+        )
+        assessment["visual_targets"] = {
+            "current_focus_record_indices": current,
+            "recommended_record_indices": recommended,
+        }
+        assessment["visual_available"] = bool(recommended)
+
     # Move 4: naming a priority trend is not elaboration unless that same chart
     # entity is supported somewhere with a concrete, non-period value.
     priority_candidates: list[tuple[str, list[str]]] = []
@@ -593,9 +766,25 @@ def _apply_local_quality_guards(
         link = _SUPPORT_LINK_RE.search(sentence)
         if not link:
             continue
-        current_entities = _mentioned_entities(sentence[link.end():], entity_labels)
+        support_text = sentence[link.end():]
+        current_entities = _mentioned_entities(support_text, entity_labels)
         trend_entities = _mentioned_entities(sentence[:link.start()], entity_labels)
-        if not current_entities or not trend_entities:
+        if not trend_entities:
+            continue
+        support_core = re.split(
+            r"\b(?:compared\s+with|whereas|while|rather\s+than)\b",
+            support_text,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        support_core_entities = _mentioned_entities(support_core, entity_labels)
+        if not support_core_entities:
+            current_entities.extend(
+                entity for entity in trend_entities
+                if _entity_has_matching_value(records, entity, support_core)
+                and entity not in current_entities
+            )
+        if not current_entities:
             continue
         if {_normalise(item) for item in current_entities}.intersection(
             {_normalise(item) for item in trend_entities}
@@ -608,8 +797,11 @@ def _apply_local_quality_guards(
         )
         assessment["hint"] = "Link the selected trend to evidence from the same chart entity."
         _replace_assessment_excerpt(assessment, student_answer, sentence)
-        current = _record_indices_for_entities(records, current_entities)
-        recommended = _record_indices_for_entities(records, trend_entities)
+        current = (
+            _mentioned_record_indices(records, support_text)
+            or _endpoint_record_indices_for_entities(records, current_entities)
+        )
+        recommended = _endpoint_record_indices_for_entities(records, trend_entities)
         assessment["visual_targets"] = {
             "current_focus_record_indices": current,
             "recommended_record_indices": recommended,

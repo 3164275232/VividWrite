@@ -28,6 +28,23 @@ def line_chart_data():
     }
 
 
+def multi_point_line_chart_data():
+    return {
+        "chart_type": "line",
+        "records": [
+            {"period": "2010", "series": "Bus", "value": 1.8, "official_value": 1.8},
+            {"period": "2010", "series": "Rail", "value": 1.1, "official_value": 1.1},
+            {"period": "2010", "series": "Metro", "value": 0.8, "official_value": 0.8},
+            {"period": "2012", "series": "Bus", "value": 1.9, "official_value": 1.9},
+            {"period": "2012", "series": "Rail", "value": 1.3, "official_value": 1.3},
+            {"period": "2012", "series": "Metro", "value": 1.2, "official_value": 1.2},
+            {"period": "2020", "series": "Bus", "value": 1.3, "official_value": 1.3},
+            {"period": "2020", "series": "Rail", "value": 2.2, "official_value": 2.2},
+            {"period": "2020", "series": "Metro", "value": 1.9, "official_value": 1.9},
+        ],
+    }
+
+
 def pie_chart_data():
     return {
         "chart_type": "pie",
@@ -68,7 +85,7 @@ class MoveFeedbackTests(unittest.TestCase):
             pie_chart_data(),
             essay,
             [{
-                "code": "move_2_stating_overview",
+                "code": "move_5_integrating_trend_and_detail",
                 "status": "effective",
                 "excerpt": essay,
             }],
@@ -128,6 +145,94 @@ class MoveFeedbackTests(unittest.TestCase):
             assessment["visual_targets"]["recommended_record_indices"],
             [0, 1],
         )
+
+    def test_move_2_keeps_values_with_their_local_line_series(self):
+        essay = (
+            "Overall, metro moved from 0.8 million to 1.9 million, while bus changed "
+            "from 1.8 million to 1.3 million."
+        )
+        feedback = build_move_feedback(
+            multi_point_line_chart_data(),
+            essay,
+            [{
+                "code": "move_2_stating_overview",
+                "status": "effective",
+                "excerpt": essay,
+            }],
+        )
+
+        targets = feedback["assessments"][1]["visual_targets"]
+        self.assertEqual(targets["current_focus_record_indices"], [0, 2, 6, 8])
+        self.assertNotIn(3, targets["current_focus_record_indices"])
+
+    def test_move_5_marks_only_series_endpoints_for_mismatched_evidence(self):
+        essay = (
+            "Rail showed the strongest growth, supported by bus falling from "
+            "1.8 million to 1.3 million."
+        )
+        feedback = build_move_feedback(
+            multi_point_line_chart_data(),
+            essay,
+            [{
+                "code": "move_5_integrating_trend_and_detail",
+                "status": "effective",
+                "excerpt": essay,
+            }],
+        )
+
+        assessment = feedback["assessments"][4]
+        self.assertEqual(assessment["status"], "developing")
+        self.assertEqual(
+            assessment["visual_targets"]["current_focus_record_indices"],
+            [0, 6],
+        )
+        self.assertEqual(
+            assessment["visual_targets"]["recommended_record_indices"],
+            [1, 7],
+        )
+
+    def test_move_5_accepts_pronoun_evidence_for_the_same_entity(self):
+        essay = (
+            "Housing dominance is supported by its 32% allocation, compared with "
+            "only 8% for other spending."
+        )
+        feedback = build_move_feedback(
+            pie_chart_data(),
+            essay,
+            [{
+                "code": "move_5_integrating_trend_and_detail",
+                "status": "effective",
+                "excerpt": essay,
+            }],
+        )
+
+        self.assertEqual(feedback["assessments"][4]["status"], "effective")
+
+    def test_move_3_uses_explicit_local_values_and_chart_grounded_endpoints(self):
+        essay = (
+            "The principal trend was the modest bus fall from 1.9 million in 2012 "
+            "to 1.3 million in 2020."
+        )
+        feedback = build_move_feedback(
+            multi_point_line_chart_data(),
+            essay,
+            [{
+                "code": "move_3_highlighting_key_trends",
+                "status": "developing",
+                "excerpt": essay,
+                "visual_focus": {
+                    "current": [{"series": "Bus", "period": "2020"}],
+                    "recommended": [
+                        {"series": "Bus", "period": "2012"},
+                        {"series": "Metro", "period": "2012"},
+                    ],
+                },
+            }],
+        )
+
+        targets = feedback["assessments"][2]["visual_targets"]
+        self.assertEqual(targets["current_focus_record_indices"], [3, 6])
+        self.assertEqual(targets["recommended_record_indices"], [1, 7])
 
     def test_move_6_rejects_an_unspecified_comparison(self):
         essay = "The two regions can be compared, and some figures were higher than others."
@@ -225,7 +330,7 @@ class MoveFeedbackTests(unittest.TestCase):
             line_chart_data(),
             essay,
             [{
-                "code": "move_3_highlighting_key_trends",
+                "code": "move_5_integrating_trend_and_detail",
                 "status": "developing",
                 "excerpt": essay,
                 "visual_focus": {
@@ -238,9 +343,83 @@ class MoveFeedbackTests(unittest.TestCase):
             }],
         )
 
-        targets = feedback["assessments"][2]["visual_targets"]
+        targets = feedback["assessments"][4]["visual_targets"]
         self.assertEqual(targets["current_focus_record_indices"], [3])
         self.assertEqual(targets["recommended_record_indices"], [0, 1])
+
+    def test_move_2_uses_local_details_and_chart_grounded_overview_targets(self):
+        essay = (
+            "Overall, rail reached 1.3 million in 2012 and 2.2 million in 2020, "
+            "whereas metro stood at 1.2 million and 1.9 million."
+        )
+        feedback = build_move_feedback(
+            multi_point_line_chart_data(),
+            essay,
+            [{
+                "code": "move_2_stating_overview",
+                "status": "developing",
+                "excerpt": essay,
+                "visual_focus": {
+                    "current": [{"series": "Bus", "period": "2012"}],
+                    "recommended": [
+                        {"series": "Bus", "period": "2010"},
+                        {"series": "Bus", "period": "2020"},
+                    ],
+                },
+            }],
+        )
+
+        targets = feedback["assessments"][1]["visual_targets"]
+        self.assertEqual(targets["current_focus_record_indices"], [4, 5, 7, 8])
+        self.assertEqual(targets["recommended_record_indices"], [1, 7, 2])
+
+    def test_relationship_words_map_both_entities_to_the_named_period(self):
+        essay = "The defining feature was North remaining two points above South in 2020."
+        feedback = build_move_feedback(
+            line_chart_data(),
+            essay,
+            [{
+                "code": "move_3_highlighting_key_trends",
+                "status": "developing",
+                "excerpt": essay,
+            }],
+        )
+
+        targets = feedback["assessments"][2]["visual_targets"]
+        self.assertEqual(targets["current_focus_record_indices"], [1, 3])
+
+    def test_relative_final_year_maps_relationship_entities_to_last_records(self):
+        essay = "The defining feature was North remaining four points above South in the final year."
+        feedback = build_move_feedback(
+            line_chart_data(),
+            essay,
+            [{
+                "code": "move_3_highlighting_key_trends",
+                "status": "developing",
+                "excerpt": essay,
+            }],
+        )
+
+        targets = feedback["assessments"][2]["visual_targets"]
+        self.assertEqual(targets["current_focus_record_indices"], [1, 3])
+
+    def test_respectively_maps_each_pie_value_to_its_named_category(self):
+        essay = (
+            "Overall, leisure and utilities made up 12% and 10% respectively, "
+            "compared with 8% for other spending."
+        )
+        feedback = build_move_feedback(
+            pie_chart_data(),
+            essay,
+            [{
+                "code": "move_2_stating_overview",
+                "status": "developing",
+                "excerpt": essay,
+            }],
+        )
+
+        targets = feedback["assessments"][1]["visual_targets"]
+        self.assertEqual(targets["current_focus_record_indices"], [3, 4, 5])
 
     def test_visual_fallback_maps_a_relationship_value_to_named_entities(self):
         essay = "The main feature was the 2-point gap between North and South in 2020."
@@ -315,7 +494,7 @@ class MoveFeedbackTests(unittest.TestCase):
             colour_set = {colour for _, colour in colours}
             self.assertIn(tuple(int(CURRENT_COLOR[index:index + 2], 16) for index in (1, 3, 5)), colour_set)
             self.assertIn(tuple(int(RECOMMENDED_COLOR[index:index + 2], 16) for index in (1, 3, 5)), colour_set)
-            self.assertEqual(assessment["visual"]["current_focus_labels"][0], "South · 2020 · 16")
+            self.assertEqual(assessment["visual"]["current_focus_labels"][0], "South · 2010 · 18")
 
     def test_bar_visual_uses_real_bar_bounds_and_teacher_callouts(self):
         source_path = (
@@ -341,9 +520,9 @@ class MoveFeedbackTests(unittest.TestCase):
             source_size = source.size
             detected = _detect_bar_boxes(source, len(records))
         self.assertEqual(len(detected), 10)
-        self.assertEqual(detected[0], (143.0, 246.0, 252.0, 598.0))
-        self.assertEqual(detected[7], (1073.0, 212.0, 1181.0, 598.0))
-        self.assertEqual(detected[9], (1346.0, 170.0, 1455.0, 598.0))
+        self.assertEqual(detected[0], (136.0, 246.0, 236.0, 705.0))
+        self.assertEqual(detected[7], (988.0, 197.0, 1087.0, 705.0))
+        self.assertEqual(detected[9], (1238.0, 135.0, 1338.0, 705.0))
 
         assessment = {
             "number": 3,
