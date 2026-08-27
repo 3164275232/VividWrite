@@ -357,8 +357,9 @@ def _entity_mentions(text: str, labels: list[str]) -> list[tuple[int, int, str]]
     mentions: list[tuple[int, int, str]] = []
     for label in labels:
         for alias in sorted(_label_aliases(label), key=len, reverse=True):
+            escaped_alias = re.escape(alias).replace(r"\ ", r"\s+")
             pattern = re.compile(
-                rf"(?<!\w){re.escape(alias).replace(r'\ ', r'\s+')}(?!\w)",
+                rf"(?<!\w){escaped_alias}(?!\w)",
                 flags=re.IGNORECASE,
             )
             mentions.extend((match.start(), match.end(), label) for match in pattern.finditer(text))
