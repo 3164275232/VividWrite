@@ -331,6 +331,39 @@ def _collect_explicit_pie_percentages(
                 candidates[label].append(float(value_match.group("value")))
             continue
 
+        mixed_bindings: list[tuple[str, re.Match[str]]] = []
+        used_labels: set[str] = set()
+        for value_match in percentage_matches:
+            preceding = [item for item in label_matches if item[1] <= value_match.start()]
+            following = [item for item in label_matches if item[0] >= value_match.end()]
+            grammatical_following = [
+                item for item in following
+                if re.fullmatch(
+                    r"\s*(?:of\s+(?:the\s+)?(?:budget|total|spending|expenditure)\s+)?"
+                    r"(?:for|on|to)\s+",
+                    clause[value_match.end():item[0]],
+                    flags=re.IGNORECASE,
+                )
+            ]
+            label_match = (
+                min(grammatical_following, key=lambda item: item[0])
+                if grammatical_following
+                else max(preceding, key=lambda item: item[1])
+                if preceding
+                else None
+            )
+            if label_match is None or label_match[2] in used_labels:
+                break
+            used_labels.add(label_match[2])
+            mixed_bindings.append((label_match[2], value_match))
+        if (
+            not _PIE_AGGREGATE_PATTERN.search(clause)
+            and len(mixed_bindings) == len(percentage_matches)
+        ):
+            for label, value_match in mixed_bindings:
+                candidates[label].append(float(value_match.group("value")))
+            continue
+
         value_then_label: list[tuple[str, re.Match[str]]] = []
         used_labels: set[str] = set()
         for value_match in percentage_matches:
@@ -529,7 +562,8 @@ _CHANGE_VALUE_PREFIX_RE = re.compile(
 )
 _RELATIVE_VALUE_SUFFIX_RE = re.compile(
     r"^\s*(?:%|percentage\s+points?|percent(?:age\s+points?)?|million|billion|thousand)?"
-    r"\s*(?:above|below|ahead\s+of|behind|higher\s+than|lower\s+than|more\s+than|less\s+than)\b",
+    r"\s*(?:above|below|ahead\s+of|behind|higher\s+than|lower\s+than|"
+    r"(?:more|less)(?:\s+(?:daily\s+)?(?:passengers?|people|users?|units?|tonnes?|tons?))?\s+than)\b",
     flags=re.IGNORECASE,
 )
 _FROM_TO_VALUE_RE = re.compile(
@@ -578,9 +612,13 @@ _OPEN_CLOSE_VALUE_RE = re.compile(
 )
 _ORDERED_SERIES_VALUES_RE = re.compile(
     r"\b(?:respectively|chronological\s+order|in\s+order|from\s+(?:19|20)\d{2}\s+"
-    r"(?:through|to|until)\s+(?:19|20)\d{2}|across\s+the\s+(?:six|\d+)\s+(?:years|periods))\b",
+    r"(?:through|to|until)\s+(?:19|20)\d{2}|across\s+the\s+(?:six|\d+)\s+"
+    r"(?:years|periods|dates|points)|(?:at|over)\s+the\s+(?:five|six|\d+)\s+"
+    r"subsequent\s+(?:dates|points|observations)|from\b[^!?;]{0,180}\bthrough\b"
+    r"[^!?;]{0,180}\bto)\b",
     flags=re.IGNORECASE,
 )
+_CARTESIAN_CLAUSE_BOUNDARY_RE = re.compile(r",\s+(?=as\s+[a-z])", re.IGNORECASE)
 
 
 def _match_distance(span: tuple[int, int], value_span: tuple[int, int]) -> int:
@@ -743,9 +781,10 @@ def _collect_explicit_cartesian_values(
             claims.setdefault((category, series), []).append(value)
 
     sentences = [
-        sentence.strip()
+        clause.strip()
         for sentence in re.split(r"(?<=[.!?;])\s+|[\r\n]+", student_answer)
-        if sentence.strip()
+        for clause in _CARTESIAN_CLAUSE_BOUNDARY_RE.split(sentence)
+        if clause.strip()
     ]
     for sentence in sentences:
         category_occurrences = _label_occurrences(sentence, categories)

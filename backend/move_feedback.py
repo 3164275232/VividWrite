@@ -127,7 +127,7 @@ _DECLARED_FOCUS_RE = re.compile(
 _REPETITION_RE = re.compile(r"\b(?:repeat(?:ed|ing|s)?|repetitive|redundan(?:t|cy)|consolidat(?:e|ing))\b", re.IGNORECASE)
 _SUPPORT_LINK_RE = re.compile(
     r"\b(?:supported\s+by|demonstrated\s+by|shown\s+by|as\s+shown\s+by|"
-    r"as\s+demonstrated\s+by|as\s+evidenced\s+by|evidenced\s+by)\b",
+    r"as\s+demonstrated\s+by|as\s+evidenced\s+by|evidenced\s+by|because|,\s*as)\b",
     re.IGNORECASE,
 )
 _VAGUE_COMPARISON_RE = re.compile(
@@ -143,6 +143,9 @@ _WEAK_CLOSING_RE = re.compile(
     r"\b(?:described\s+above|presented\s+above|(?:already|also)\s+(?:listed|presented|described)|"
     r"as\s+(?:listed|presented|described)|"
     r"contains?\s+\w*\s*(?:figures?|percentages?|lines?|observations?)|"
+    r"(?:chart|graph|figure|visual)\s+(?:contains?|covers?|uses?)|"
+    r"this\s+is\s+(?:a|an)\s+(?:(?:bar|line|pie)\s+)?(?:chart|graph|figure)|"
+    r"(?:shares?|figures?|values?)\s+(?:add|sum|total)(?:s)?\s+(?:up\s+)?to\s+100|"
     r"as\s+(?:is\s+)?expected|add(?:s)?\s+(?:up\s+)?to\s+100|"
     r"producing\s+the\s+values|all\s+of\s+the\s+(?:numbers|figures))\b",
     re.IGNORECASE,
@@ -152,8 +155,9 @@ _EXPLICIT_CLOSING_RE = re.compile(
     re.IGNORECASE,
 )
 _VAGUE_INTRO_RE = re.compile(
-    r"\b(?:collection|set|number|several|different|series)\s+(?:of\s+)?"
-    r"(?:figures?|numbers?|items?|places?|lines?|shares?|percentages?|parts?|values?)\b|"
+    r"\b(?:collection|sets?|number|several|different|series|measured)\s+(?:of\s+)?"
+    r"(?:changing\s+|measured\s+)?"
+    r"(?:figures?|numbers?|items?|places?|lines?|shares?|percentages?|parts?|portions?|values?)\b|"
     r"\b(?:figures?|numbers?|items?|lines?|shares?|percentages?|values?)\s+"
     r"(?:for\s+consideration|that\s+changed\s+over\s+time)\b",
     re.IGNORECASE,
@@ -842,7 +846,7 @@ def _apply_local_quality_guards(
         for entity in entities:
             has_evidence = any(
                 _label_is_mentioned(other_sentence, entity)
-                and bool(_meaningful_numbers(other_sentence, records))
+                and _entity_has_matching_value(records, entity, other_sentence)
                 for _, _, other_sentence in spans
             )
             if not has_evidence:

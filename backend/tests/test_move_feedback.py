@@ -97,6 +97,38 @@ class MoveFeedbackTests(unittest.TestCase):
         self.assertEqual(assessment["status"], "developing")
         self.assertEqual(assessment["excerpt"], essay)
 
+    def test_move_1_rejects_generic_measured_items(self):
+        essay = "The supplied image gives information about three measured items."
+        feedback = build_move_feedback(
+            line_chart_data(),
+            essay,
+            [{
+                "code": "move_1_introducing_topic",
+                "status": "effective",
+                "excerpt": essay,
+            }],
+        )
+
+        assessment = feedback["assessments"][0]
+        self.assertEqual(assessment["status"], "developing")
+        self.assertEqual(assessment["excerpt"], essay)
+
+    def test_move_1_rejects_generic_sets_of_changing_numbers(self):
+        essay = "The figure displays three sets of changing numbers."
+        feedback = build_move_feedback(
+            line_chart_data(),
+            essay,
+            [{
+                "code": "move_1_introducing_topic",
+                "status": "effective",
+                "excerpt": essay,
+            }],
+        )
+
+        assessment = feedback["assessments"][0]
+        self.assertEqual(assessment["status"], "developing")
+        self.assertEqual(assessment["excerpt"], essay)
+
     def test_move_2_rejects_an_overview_that_only_lists_values(self):
         essay = "Overall, housing represented 32% and food 21%, while transport accounted for 17%."
         feedback = build_move_feedback(
@@ -140,6 +172,25 @@ class MoveFeedbackTests(unittest.TestCase):
             assessment["excerpt"],
         )
 
+    def test_move_4_does_not_borrow_values_from_other_entities(self):
+        essay = (
+            "Overall, housing is the dominant category, but its exact share is not stated. "
+            "Food represents 21% and transport accounts for 17%, while housing remains the largest slice."
+        )
+        feedback = build_move_feedback(
+            pie_chart_data(),
+            essay,
+            [{
+                "code": "move_4_elaborating_key_trends",
+                "status": "effective",
+                "excerpt": essay,
+            }],
+        )
+
+        assessment = feedback["assessments"][3]
+        self.assertEqual(assessment["status"], "developing")
+        self.assertIn("housing", assessment["rationale"].casefold())
+
     def test_move_5_rejects_evidence_from_a_different_entity(self):
         essay = "North showed the main growth, supported by South falling from 18 to 16."
         feedback = build_move_feedback(
@@ -163,6 +214,34 @@ class MoveFeedbackTests(unittest.TestCase):
             assessment["visual_targets"]["recommended_record_indices"],
             [0, 1],
         )
+
+    def test_move_5_rejects_mismatched_evidence_after_because(self):
+        essay = "Housing forms the dominant share because food accounts for 21% of the budget."
+        feedback = build_move_feedback(
+            pie_chart_data(),
+            essay,
+            [{
+                "code": "move_5_integrating_trend_and_detail",
+                "status": "effective",
+                "excerpt": essay,
+            }],
+        )
+
+        self.assertEqual(feedback["assessments"][4]["status"], "developing")
+
+    def test_move_5_rejects_mismatched_evidence_after_comma_as(self):
+        essay = "Manchester produced the strongest increase, as Leeds moved from 35% to 48%."
+        feedback = build_move_feedback(
+            bar_chart_data(),
+            essay,
+            [{
+                "code": "move_5_integrating_trend_and_detail",
+                "status": "effective",
+                "excerpt": essay,
+            }],
+        )
+
+        self.assertEqual(feedback["assessments"][4]["status"], "developing")
 
     def test_move_2_keeps_values_with_their_local_line_series(self):
         essay = (
@@ -406,6 +485,35 @@ class MoveFeedbackTests(unittest.TestCase):
         assessment = feedback["assessments"][6]
         self.assertEqual(assessment["status"], "developing")
         self.assertTrue(assessment["excerpt"].startswith("In conclusion"))
+
+    def test_move_7_reviews_chart_metadata_conclusions(self):
+        cases = (
+            (
+                bar_chart_data(),
+                "In conclusion, the chart contains five cities, two years and percentage figures.",
+            ),
+            (
+                line_chart_data(),
+                "In conclusion, the graph covers two series between 2010 and 2020 and uses millions as its unit.",
+            ),
+            (
+                pie_chart_data(),
+                "In conclusion, this is a pie chart with six labelled categories whose shares total 100%.",
+            ),
+        )
+        for chart_data, essay in cases:
+            with self.subTest(essay=essay):
+                feedback = build_move_feedback(
+                    chart_data,
+                    essay,
+                    [{
+                        "code": "move_7_closing_summary",
+                        "status": "not_applicable",
+                        "excerpt": "",
+                    }],
+                )
+
+                self.assertEqual(feedback["assessments"][6]["status"], "developing")
 
     def test_catalog_exposes_seven_moves_in_documented_order(self):
         catalog = move_catalog()

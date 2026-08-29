@@ -127,6 +127,53 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
                     [1.8, 1.9, 1.7, 1.6, 1.5, 1.3],
                 )
 
+    def test_line_ordered_values_accept_subsequent_points_and_dates(self):
+        official_records = [
+            {"category": period, "series": "Rail"}
+            for period in ("2010", "2012", "2014", "2016", "2018", "2020")
+        ]
+        variants = (
+            "Rail increased from 1.1 million in 2010 to 1.3, 1.5, 1.8, 2.0 and 2.2 million at the five subsequent points.",
+            "Rail recorded 1.1, 1.3, 1.5, 1.8, 2.0 and 2.2 million across the six dates.",
+        )
+
+        for essay in variants:
+            with self.subTest(essay=essay):
+                claims = _collect_explicit_cartesian_values(essay, official_records)
+                self.assertEqual(
+                    [claims[(period, "Rail")][-1] for period in ("2010", "2012", "2014", "2016", "2018", "2020")],
+                    [1.1, 1.3, 1.5, 1.8, 2.0, 2.2],
+                )
+
+    def test_line_parser_separates_as_linked_series_before_mapping_values(self):
+        official_records = [
+            {"category": period, "series": entity}
+            for period in ("2010", "2012", "2014", "2016", "2018", "2020")
+            for entity in ("Rail", "Metro")
+        ]
+        essay = (
+            "Rail made the strongest increase, as metro rose from 0.8 million in 2010 "
+            "through 1.0, 1.2, 1.5 and 1.7 million to 1.9 million in 2020."
+        )
+
+        claims = _collect_explicit_cartesian_values(essay, official_records)
+
+        self.assertEqual(
+            [claims[(period, "Metro")][-1] for period in ("2010", "2012", "2014", "2016", "2018", "2020")],
+            [0.8, 1.0, 1.2, 1.5, 1.7, 1.9],
+        )
+
+    def test_pie_parser_maps_mixed_subject_and_for_value_phrasing(self):
+        claims = _collect_explicit_pie_percentages(
+            "Housing represents 32% of expenditure, compared with 21% for food and 17% for transport.",
+            ["Housing", "Food", "Transport"],
+        )
+
+        self.assertEqual(
+            claims,
+            {"Housing": [32.0], "Food": [21.0], "Transport": [17.0]},
+        )
+
     def test_relative_line_gap_is_not_treated_as_a_series_value(self):
         official_records = [
             {"category": "2020", "series": "Bus"},
@@ -135,6 +182,19 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
 
         claims = _collect_explicit_cartesian_values(
             "In 2020, metro stood 0.6 million above bus use.",
+            official_records,
+        )
+
+        self.assertEqual(claims, {})
+
+    def test_relative_line_passenger_gap_is_not_treated_as_a_series_value(self):
+        official_records = [
+            {"category": "2020", "series": "Rail"},
+            {"category": "2020", "series": "Metro"},
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "By 2020, rail carried 0.3 million more passengers than metro.",
             official_records,
         )
 
