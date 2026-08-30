@@ -671,9 +671,15 @@ def _declared_focus_candidate(
     for _, _, sentence in spans:
         if not _DECLARED_FOCUS_RE.search(sentence):
             continue
+        focus_clause = re.split(
+            r"\b(?:although|even\s+though|despite|whereas|while|but)\b",
+            sentence,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
         indices = (
-            _mentioned_record_indices(records, sentence)
-            or _record_indices_for_values(records, sentence)
+            _mentioned_record_indices(records, focus_clause)
+            or _record_indices_for_values(records, focus_clause)
         )
         if indices:
             return sentence, indices
@@ -797,9 +803,11 @@ def _apply_local_quality_guards(
         "move_3_highlighting_key_trends",
     )
     declared_sentence, declared_current = _declared_focus_candidate(records, spans)
+    declared_misaligned = False
     if declared_sentence and recommended:
         aligned = any(index in recommended for index in declared_current)
         if not aligned:
+            declared_misaligned = True
             assessment["status"] = "developing"
             assessment["rationale"] = (
                 "The draft explicitly declares a less informative feature as its main focus, "
@@ -824,7 +832,7 @@ def _apply_local_quality_guards(
 
     if assessment["status"] == "developing":
         excerpt = assessment.get("excerpt") or ""
-        current = (
+        current = declared_current if declared_misaligned else (
             _mentioned_record_indices(records, excerpt)
             or _record_indices_for_values(records, excerpt)
         )

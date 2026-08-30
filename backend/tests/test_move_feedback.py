@@ -331,6 +331,30 @@ class MoveFeedbackTests(unittest.TestCase):
         self.assertEqual(targets["current_focus_record_indices"], [3, 6])
         self.assertEqual(targets["recommended_record_indices"], [1, 7])
 
+    def test_move_3_declared_focus_excludes_a_conceded_stronger_trend(self):
+        essay = (
+            "Overall, the main feature was the small increase in bus use from "
+            "1.8 million in 2010 to 1.9 million in 2012, even though rail later "
+            "changed much more."
+        )
+        feedback = build_move_feedback(
+            multi_point_line_chart_data(),
+            essay,
+            [{
+                "code": "move_3_highlighting_key_trends",
+                "status": "developing",
+                "excerpt": essay,
+            }],
+        )
+
+        assessment = feedback["assessments"][2]
+        self.assertEqual(assessment["status"], "developing")
+        self.assertEqual(
+            assessment["visual_targets"]["current_focus_record_indices"],
+            [0, 3],
+        )
+        self.assertTrue(assessment["visual_available"])
+
     def test_move_3_uses_declared_focus_when_model_selects_a_later_key_feature(self):
         cases = (
             (
