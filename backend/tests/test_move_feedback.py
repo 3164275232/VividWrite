@@ -594,6 +594,68 @@ class MoveFeedbackTests(unittest.TestCase):
         self.assertEqual(assessment["status"], "not_detected")
         self.assertIsNone(assessment["range"])
 
+    def test_effective_status_does_not_require_a_verbatim_excerpt(self):
+        essay = (
+            "Overall, North rose substantially while South declined slightly. "
+            "North increased from 10 to 30, whereas South moved from 18 to 16."
+        )
+        feedback = build_move_feedback(
+            line_chart_data(),
+            essay,
+            [{
+                "code": "move_4_elaborating_key_trends",
+                "status": "effective",
+                "excerpt": "The report thoroughly elaborates every key trend.",
+                "rationale": "The key trends are supported with accurate endpoint values.",
+                "hint": "No revision needed.",
+            }],
+        )
+
+        assessment = feedback["assessments"][3]
+        self.assertEqual(assessment["status"], "effective")
+        self.assertEqual(assessment["excerpt"], "")
+        self.assertIsNone(assessment["range"])
+        self.assertEqual(assessment["hint"], "")
+
+    def test_no_revision_hint_corrects_a_contradictory_negative_status(self):
+        essay = (
+            "Overall, North rose substantially while South declined slightly. "
+            "North increased from 10 to 30, whereas South moved from 18 to 16."
+        )
+        feedback = build_move_feedback(
+            line_chart_data(),
+            essay,
+            [{
+                "code": "move_4_elaborating_key_trends",
+                "status": "not_detected",
+                "excerpt": "",
+                "rationale": "The key trends are supported with accurate endpoint values.",
+                "hint": "No revision needed; the elaboration is thorough and accurate.",
+            }],
+        )
+
+        assessment = feedback["assessments"][3]
+        self.assertEqual(assessment["status"], "effective")
+        self.assertEqual(assessment["hint"], "")
+
+    def test_local_guard_overrides_a_no_revision_hint_for_a_real_flaw(self):
+        essay = "The supplied figure presents several measured values."
+        feedback = build_move_feedback(
+            bar_chart_data(),
+            essay,
+            [{
+                "code": "move_1_introducing_topic",
+                "status": "not_detected",
+                "excerpt": "",
+                "rationale": "The opening is sufficient.",
+                "hint": "No revision needed.",
+            }],
+        )
+
+        assessment = feedback["assessments"][0]
+        self.assertEqual(assessment["status"], "developing")
+        self.assertIn("subject and scope", assessment["rationale"])
+
     def test_model_visual_selectors_are_resolved_against_unseen_record_labels(self):
         essay = "The South figure changed from 18 to 16."
         feedback = build_move_feedback(

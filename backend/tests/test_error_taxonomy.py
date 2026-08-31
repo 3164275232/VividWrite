@@ -234,6 +234,99 @@ class ErrorTaxonomyTests(unittest.TestCase):
         self.assertEqual(issue["student_claim"]["direction"], "stable")
         self.assertEqual(issue["official_fact"]["direction"], "increase")
 
+    def test_entity_label_does_not_match_inside_an_unrelated_word(self):
+        result = build_error_taxonomy(
+            chart_data(
+                "line",
+                [
+                    {
+                        "category": period,
+                        "period": period,
+                        "series": series,
+                        "value": value,
+                        "official_value": value,
+                        "feedback_status": "correct",
+                    }
+                    for period, bus, rail in (
+                        ("2010", 1.8, 1.1),
+                        ("2020", 1.3, 2.2),
+                    )
+                    for series, value in (("Bus", bus), ("Rail", rail))
+                ],
+            ),
+            "Overall, rail showed the most important sustained increase and finished as the busiest mode.",
+        )
+
+        trend_issues = [
+            issue
+            for issue in result["issues"]
+            if issue["error_type"] == "trend_direction_error"
+        ]
+        self.assertEqual(trend_issues, [])
+
+    def test_direction_in_one_contrasting_clause_is_not_applied_to_another_entity(self):
+        result = build_error_taxonomy(
+            chart_data(
+                "line",
+                [
+                    {
+                        "category": period,
+                        "period": period,
+                        "series": series,
+                        "value": value,
+                        "official_value": value,
+                        "feedback_status": "correct",
+                    }
+                    for period, bus, rail in (
+                        ("2010", 1.8, 1.1),
+                        ("2020", 1.3, 2.2),
+                    )
+                    for series, value in (("Bus", bus), ("Rail", rail))
+                ],
+            ),
+            (
+                "After the middle of the period, bus moved downward while rail continued "
+                "to attract more passengers."
+            ),
+        )
+
+        trend_issues = [
+            issue
+            for issue in result["issues"]
+            if issue["error_type"] == "trend_direction_error"
+        ]
+        self.assertEqual(trend_issues, [])
+
+    def test_trend_claim_with_named_periods_uses_that_subperiod(self):
+        result = build_error_taxonomy(
+            chart_data(
+                "line",
+                [
+                    {
+                        "category": period,
+                        "period": period,
+                        "series": "Bus",
+                        "value": value,
+                        "official_value": value,
+                        "feedback_status": "correct",
+                    }
+                    for period, value in (
+                        ("2010", 1.8),
+                        ("2012", 1.9),
+                        ("2020", 1.3),
+                    )
+                ],
+            ),
+            "Bus use increased from 1.8 million in 2010 to 1.9 million in 2012.",
+        )
+
+        trend_issues = [
+            issue
+            for issue in result["issues"]
+            if issue["error_type"] == "trend_direction_error"
+        ]
+        self.assertEqual(trend_issues, [])
+
     def test_trend_claim_resolves_an_unambiguous_cross_sentence_pronoun(self):
         result = build_error_taxonomy(
             chart_data(

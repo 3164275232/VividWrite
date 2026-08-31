@@ -89,6 +89,10 @@ _ENTITY_PRONOUN_RE = re.compile(
     r"(?:it|its|this\s+(?:city|category|series|figure|rate))\b",
     flags=re.IGNORECASE,
 )
+_TREND_CLAUSE_DIVIDER_RE = re.compile(
+    r":|\b(?:even\s+though|although|though|while|whereas|but)\b",
+    flags=re.IGNORECASE,
+)
 _RELATIONAL_ORDER_RE = re.compile(
     r"\b(?:rank(?:ing|ings)?|rank\s+order|order(?:ing)?|position(?:s)?|"
     r"standing(?:s)?|placement(?:s)?|hierarch(?:y|ies)|distribution)\b",
@@ -174,7 +178,15 @@ def _sentence_parts(student_answer: str) -> list[str]:
 
 def _contains_label(sentence: str, label: Any) -> bool:
     key = _normalise(label)
-    return bool(key) and key in _normalise(sentence)
+    if not key:
+        return False
+    suffix = r"(?:es|s)?" if " " not in key else ""
+    return bool(
+        re.search(
+            rf"(?<![a-z0-9]){re.escape(key)}{suffix}(?![a-z0-9])",
+            _normalise(sentence),
+        )
+    )
 
 
 def _sentence_numbers(sentence: str) -> list[float]:
@@ -472,7 +484,12 @@ def _trend_sentence_candidates(
     candidates = []
     for index, sentence in enumerate(sentences):
         if _contains_label(sentence, entity):
-            candidates.append((sentence, [sentence]))
+            clauses = [
+                clause.strip(" ,")
+                for clause in _TREND_CLAUSE_DIVIDER_RE.split(sentence)
+                if clause.strip(" ,") and _contains_label(clause, entity)
+            ]
+            candidates.extend((clause, [sentence]) for clause in clauses or [sentence])
             continue
         if index == 0 or not _ENTITY_PRONOUN_RE.search(sentence):
             continue
@@ -485,26 +502,43 @@ def _trend_sentence_candidates(
     return candidates
 
 
+def _scoped_official_points(
+    indexed_records: list[tuple[int, dict]], claim_text: str
+) -> list[tuple[int, dict, float]]:
+    all_points = [
+        (index, record, value)
+        for index, record in indexed_records
+        if (value := _official_value(record)) is not None
+    ]
+    scoped_points = []
+    for point in all_points:
+        _, record, _ = point
+        temporal_labels = [
+            str(record.get(field))
+            for field in ("period", "category", "series")
+            if _is_temporal_label(record.get(field))
+        ]
+        if any(_contains_label(claim_text, label) for label in temporal_labels):
+            scoped_points.append(point)
+    return scoped_points if len(scoped_points) >= 2 else all_points
+
+
 def _find_trend_errors(chart_data: dict, records: list[dict], student_answer: str, tolerance: float) -> list[dict]:
     issues = []
     sentences = _sentence_parts(student_answer)
     trend_entities = _trend_entities(chart_data, records)
     all_entities = [entity for entity, _ in trend_entities]
     for entity, indexed_records in trend_entities:
-        official_points = [
-            (index, record, _official_value(record))
-            for index, record in indexed_records
-            if _official_value(record) is not None
-        ]
-        if len(official_points) < 2:
-            continue
-        start_index, start_record, start_value = official_points[0]
-        end_index, end_record, end_value = official_points[-1]
-        official_direction = _direction(start_value, end_value, tolerance)
-        for sentence, evidence_sentences in _trend_sentence_candidates(
+        for claim_text, evidence_sentences in _trend_sentence_candidates(
             sentences, entity, all_entities
         ):
-            claimed_direction = _claimed_direction(sentence)
+            official_points = _scoped_official_points(indexed_records, claim_text)
+            if len(official_points) < 2:
+                continue
+            start_index, start_record, start_value = official_points[0]
+            end_index, end_record, end_value = official_points[-1]
+            official_direction = _direction(start_value, end_value, tolerance)
+            claimed_direction = _claimed_direction(claim_text)
             if claimed_direction is None or claimed_direction == official_direction:
                 continue
             issues.append(

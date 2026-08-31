@@ -154,6 +154,12 @@ _EXPLICIT_CLOSING_RE = re.compile(
     r"^(?:in\s+summary|to\s+sum\s+up|in\s+conclusion|to\s+conclude)\b",
     re.IGNORECASE,
 )
+_NO_REVISION_NEEDED_RE = re.compile(
+    r"\b(?:no\s+(?:revision|change|improvement)s?\s+(?:(?:is|are)\s+)?needed|"
+    r"there\s+is\s+no\s+need\s+to\s+(?:revise|change|improve)|"
+    r"this\s+criterion\s+is\s+(?:fully\s+)?met)\b",
+    re.IGNORECASE,
+)
 _VAGUE_INTRO_RE = re.compile(
     r"\b(?:collection|sets?|number|several|different|series|measured)\s+(?:of\s+)?"
     r"(?:changing\s+|measured\s+)?"
@@ -987,10 +993,14 @@ def build_move_feedback(
 
         excerpt_range, matched_excerpt = _find_excerpt_range(student_answer, raw.get("excerpt", ""))
         status = _normalise_status(raw.get("status"), matched_excerpt is not None)
-        if status in {"effective", "developing"} and matched_excerpt is None:
+        if status == "developing" and matched_excerpt is None:
             status = "not_detected"
 
         hint = str(raw.get("hint") or "").strip()[:500]
+        if status in {"developing", "not_detected"} and _NO_REVISION_NEEDED_RE.search(hint):
+            status = "effective"
+        if status == "effective":
+            hint = ""
         if status != "effective" and not hint:
             hint = _DEFAULT_HINTS[code]
         rationale = str(raw.get("rationale") or "").strip()[:500]
