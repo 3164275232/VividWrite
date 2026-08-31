@@ -166,6 +166,74 @@ class ErrorTaxonomyTests(unittest.TestCase):
         self.assertEqual(issue["official_fact"]["start_value"], 10.0)
         self.assertEqual(issue["official_fact"]["end_value"], 20.0)
 
+    def test_stable_ranking_is_not_treated_as_a_stable_numeric_trend(self):
+        result = build_error_taxonomy(
+            chart_data(
+                "bar",
+                [
+                    {
+                        "category": city,
+                        "series": year,
+                        "value": value,
+                        "official_value": value,
+                        "feedback_status": "correct",
+                    }
+                    for city, start, end in (
+                        ("Bristol", 42.0, 55.0),
+                        ("Leeds", 35.0, 48.0),
+                        ("Liverpool", 28.0, 39.0),
+                        ("Manchester", 31.0, 46.0),
+                        ("Sheffield", 38.0, 51.0),
+                    )
+                    for year, value in (("2015", start), ("2020", end))
+                ],
+            ),
+            (
+                "The middle of the ranking was comparatively stable: Sheffield and Leeds "
+                "stayed behind Bristol, whereas Manchester remained above Liverpool in both "
+                "observations."
+            ),
+        )
+
+        trend_issues = [
+            issue
+            for issue in result["issues"]
+            if issue["error_type"] == "trend_direction_error"
+        ]
+        self.assertEqual(trend_issues, [])
+
+    def test_explicit_stable_rate_is_still_checked_as_a_numeric_trend(self):
+        result = build_error_taxonomy(
+            chart_data(
+                "bar",
+                [
+                    {
+                        "category": "Bristol",
+                        "series": "2015",
+                        "value": 42.0,
+                        "official_value": 42.0,
+                        "feedback_status": "correct",
+                    },
+                    {
+                        "category": "Bristol",
+                        "series": "2020",
+                        "value": 55.0,
+                        "official_value": 55.0,
+                        "feedback_status": "correct",
+                    },
+                ],
+            ),
+            "Bristol's recycling rate remained stable over the period.",
+        )
+
+        issue = next(
+            issue
+            for issue in result["issues"]
+            if issue["error_type"] == "trend_direction_error"
+        )
+        self.assertEqual(issue["student_claim"]["direction"], "stable")
+        self.assertEqual(issue["official_fact"]["direction"], "increase")
+
     def test_trend_claim_resolves_an_unambiguous_cross_sentence_pronoun(self):
         result = build_error_taxonomy(
             chart_data(

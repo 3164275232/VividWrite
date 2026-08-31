@@ -89,6 +89,15 @@ _ENTITY_PRONOUN_RE = re.compile(
     r"(?:it|its|this\s+(?:city|category|series|figure|rate))\b",
     flags=re.IGNORECASE,
 )
+_RELATIONAL_ORDER_RE = re.compile(
+    r"\b(?:rank(?:ing|ings)?|rank\s+order|order(?:ing)?|position(?:s)?|"
+    r"standing(?:s)?|placement(?:s)?|hierarch(?:y|ies)|distribution)\b",
+    flags=re.IGNORECASE,
+)
+_CLAUSE_DIVIDER_RE = re.compile(
+    r"[;:.!?]|\b(?:although|though|while|whereas|but)\b",
+    flags=re.IGNORECASE,
+)
 
 
 def taxonomy_catalog() -> dict:
@@ -438,6 +447,19 @@ def _claimed_direction(sentence: str) -> str | None:
         return None
     match = _DIRECTION_PATTERNS[matches[0]].search(sentence)
     if match:
+        if matches[0] == "stable":
+            left = max(
+                (divider.end() for divider in _CLAUSE_DIVIDER_RE.finditer(sentence)
+                 if divider.end() <= match.start()),
+                default=0,
+            )
+            right = min(
+                (divider.start() for divider in _CLAUSE_DIVIDER_RE.finditer(sentence)
+                 if divider.start() >= match.end()),
+                default=len(sentence),
+            )
+            if _RELATIONAL_ORDER_RE.search(sentence[left:right]):
+                return None
         preceding = sentence[max(0, match.start() - 12) : match.start()]
         if re.search(r"\b(?:not|never|no)\b", preceding, flags=re.IGNORECASE):
             return None
