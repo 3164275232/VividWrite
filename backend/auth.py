@@ -110,13 +110,19 @@ def _session_ttl_seconds() -> int:
         return DEFAULT_SESSION_TTL_SECONDS
 
 
-def create_session_token(username: str, now: int | None = None) -> str:
+def create_session_token(
+    username: str,
+    now: int | None = None,
+    *,
+    consent_version: str | None = None,
+) -> str:
     issued_at = int(time.time() if now is None else now)
     payload = json.dumps(
         {
             "username": username,
             "issued_at": issued_at,
             "expires_at": issued_at + _session_ttl_seconds(),
+            "consent_version": consent_version,
         },
         separators=(",", ":"),
         sort_keys=True,
@@ -146,6 +152,7 @@ def read_session_token(token: str | None, now: int | None = None) -> str | None:
         data = json.loads(payload)
         username = str(data["username"]).strip().lower()
         expires_at = int(data["expires_at"])
+        token_consent_version = data.get("consent_version")
     except (KeyError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return None
 
@@ -153,6 +160,21 @@ def read_session_token(token: str | None, now: int | None = None) -> str | None:
     if expires_at <= current_time:
         return None
     if auth_enabled() and username not in configured_users():
+        return None
+    try:
+        from research_data import (
+            research_consent_required,
+            research_consent_version,
+            research_enabled,
+        )
+
+        if (
+            research_enabled()
+            and research_consent_required()
+            and token_consent_version != research_consent_version()
+        ):
+            return None
+    except ImportError:
         return None
     return username
 
@@ -187,11 +209,16 @@ def _clear_failed_logins(client_key: str) -> None:
         _failed_logins.pop(client_key, None)
 
 
-def _set_session_cookie(response: Response, username: str) -> None:
+def _set_session_cookie(
+    response: Response,
+    username: str,
+    *,
+    consent_version: str | None = None,
+) -> None:
     ttl = _session_ttl_seconds()
     response.set_cookie(
         key=AUTH_COOKIE_NAME,
-        value=create_session_token(username),
+        value=create_session_token(username, consent_version=consent_version),
         max_age=ttl,
         httponly=True,
         secure=os.getenv("APP_COOKIE_SECURE", "false").strip().lower() == "true",
@@ -294,7 +321,11 @@ def login(payload: LoginRequest, request: Request, response: Response):
             )
 
     _clear_failed_logins(client_key)
-    _set_session_cookie(response, username)
+    _set_session_cookie(
+        response,
+        username,
+        consent_version=payload.consent_version if research_enabled() else None,
+    )
     _record_research_auth_event(
         username,
         "auth_login_succeeded",

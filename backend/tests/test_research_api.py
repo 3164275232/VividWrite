@@ -8,7 +8,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 import research_data
-from auth import create_password_hash
+from auth import AUTH_COOKIE_NAME, create_password_hash, create_session_token
 from main import app
 from research_data import ResearchStore
 
@@ -31,6 +31,11 @@ class ResearchApiTests(unittest.TestCase):
             research_data._default_store = ResearchStore(Path(temp_dir))
             try:
                 client = TestClient(app)
+                client.cookies.set(AUTH_COOKIE_NAME, create_session_token("tester01"))
+                legacy_session = client.get("/api/auth/me")
+                self.assertEqual(legacy_session.status_code, 401)
+                client.cookies.clear()
+
                 rejected = client.post(
                     "/api/auth/login",
                     json={"username": "tester01", "password": "shared-test-password"},
