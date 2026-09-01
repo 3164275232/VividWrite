@@ -18,4 +18,5 @@ backend/generated_charts/
 backend/uploaded_images/
 backend/user_data/
 deploy/nginx/.htpasswd
+deploy/.research-admin-key
 test_samples/**/*.mp4

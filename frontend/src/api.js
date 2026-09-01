@@ -1,3 +1,9 @@
+import {
+  captureApiCall,
+  getResearchRequestHeaders,
+  serializeResearchValue,
+} from './researchTelemetry.js';
+
 const configuredApiBase = import.meta.env?.VITE_API_BASE;
 export const API_BASE = (
   configuredApiBase === undefined ? 'http://127.0.0.1:8000' : configuredApiBase
@@ -22,15 +28,31 @@ function wait(milliseconds) {
 
 async function requestJson(path, options, action, { retryTransient = false } = {}) {
   const maxAttempts = retryTransient ? 2 : 1;
+  const requestPayload = serializeResearchValue(
+    options?.body instanceof FormData ? options.body : parseJsonBody(options?.body),
+  );
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     let response;
+    const startedAt = performance.now();
     try {
       response = await fetch(`${API_BASE}${path}`, {
         ...options,
         credentials: 'include',
+        headers: {
+          ...getResearchRequestHeaders(),
+          ...(options?.headers || {}),
+        },
       });
     } catch (error) {
+      captureApiCall({
+        path,
+        method: options?.method || 'GET',
+        requestPayload,
+        durationMs: performance.now() - startedAt,
+        attempt,
+        error: error?.message || String(error),
+      });
       const canRetry = retryTransient && attempt < maxAttempts && error?.name !== 'AbortError';
       if (canRetry) {
         await wait(TRANSIENT_RETRY_DELAY_MS);
@@ -48,6 +70,15 @@ async function requestJson(path, options, action, { retryTransient = false } = {
     } catch {
       // Preserve the HTTP status when the backend returns a non-JSON response.
     }
+    captureApiCall({
+      path,
+      method: options?.method || 'GET',
+      status: response.status,
+      requestPayload,
+      responsePayload: data,
+      durationMs: performance.now() - startedAt,
+      attempt,
+    });
     if (response.ok) {
       return data;
     }
@@ -67,6 +98,15 @@ async function requestJson(path, options, action, { retryTransient = false } = {
   }
 
   throw new Error(transientFailureMessage(action));
+}
+
+function parseJsonBody(body) {
+  if (typeof body !== 'string') return body ?? null;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return body;
+  }
 }
 
 function postJson(path, payload, action, requestPolicy) {
@@ -90,8 +130,14 @@ export function getCurrentUser() {
   return requestJson('/api/auth/me', {}, 'Checking your login failed');
 }
 
-export function login(username, password) {
-  return postJson('/api/auth/login', { username, password }, 'Login failed');
+export function login(username, password, consent = {}) {
+  return postJson('/api/auth/login', {
+    username,
+    password,
+    consent_granted: Boolean(consent.consent_granted),
+    consent_version: consent.consent_version || null,
+    consented_at: consent.consented_at || null,
+  }, 'Login failed');
 }
 
 export function logout() {

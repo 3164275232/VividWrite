@@ -27,6 +27,9 @@ _failed_logins_lock = threading.Lock()
 class LoginRequest(BaseModel):
     username: str
     password: str = ""
+    consent_granted: bool = False
+    consent_version: str | None = None
+    consented_at: str | None = None
 
 
 def auth_enabled() -> bool:
@@ -197,13 +200,64 @@ def _set_session_cookie(response: Response, username: str) -> None:
     )
 
 
+def _record_research_auth_event(
+    username: str,
+    event_type: str,
+    request: Request,
+    *,
+    consent_version: str | None = None,
+    consented_at: str | None = None,
+) -> None:
+    try:
+        from research_data import get_research_store, research_enabled
+
+        if not research_enabled():
+            return
+        client_key = _client_key(request)
+        salt = os.getenv("APP_SESSION_SECRET", "") or "vividwrite-research"
+        client_fingerprint = hashlib.sha256(
+            f"{salt}|{client_key}|{request.headers.get('user-agent', '')}".encode("utf-8")
+        ).hexdigest()
+        get_research_store().record_auth_event(
+            username,
+            event_type,
+            payload={
+                "client_fingerprint": client_fingerprint,
+                "user_agent": request.headers.get("user-agent", "")[:1_000],
+                "accept_language": request.headers.get("accept-language", "")[:500],
+            },
+            consent_version=consent_version,
+            consented_at=consented_at,
+        )
+    except Exception as exc:
+        print(f"Research authentication logging failed: {exc}")
+
+
 @router.get("/api/auth/config")
-def auth_config() -> dict[str, bool]:
-    return {"password_required": auth_enabled()}
+def auth_config() -> dict[str, bool | str]:
+    from research_data import (
+        research_consent_required,
+        research_consent_version,
+        research_enabled,
+    )
+
+    enabled = research_enabled()
+    return {
+        "password_required": auth_enabled(),
+        "research_enabled": enabled,
+        "consent_required": enabled and research_consent_required(),
+        "consent_version": research_consent_version(),
+    }
 
 
 @router.post("/api/auth/login")
 def login(payload: LoginRequest, request: Request, response: Response):
+    from research_data import (
+        research_consent_required,
+        research_consent_version,
+        research_enabled,
+    )
+
     username = payload.username.strip().lower()
     client_key = _client_key(request)
     now = time.time()
@@ -231,8 +285,23 @@ def login(payload: LoginRequest, request: Request, response: Response):
             content={"detail": "Incorrect username or password."},
         )
 
+    if research_enabled() and research_consent_required():
+        expected_version = research_consent_version()
+        if not payload.consent_granted or payload.consent_version != expected_version:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Research-session consent is required before signing in."},
+            )
+
     _clear_failed_logins(client_key)
     _set_session_cookie(response, username)
+    _record_research_auth_event(
+        username,
+        "auth_login_succeeded",
+        request,
+        consent_version=payload.consent_version,
+        consented_at=payload.consented_at,
+    )
     return {"authenticated": True, "username": username}
 
 
@@ -248,14 +317,21 @@ def current_user(request: Request):
 
 
 @router.post("/api/auth/logout")
-def logout(response: Response) -> dict[str, bool]:
+def logout(request: Request, response: Response) -> dict[str, bool]:
+    username = authenticated_username(request)
+    if username:
+        _record_research_auth_event(username, "auth_logout", request)
     response.delete_cookie(AUTH_COOKIE_NAME, path="/")
     return {"authenticated": False}
 
 
 async def authentication_middleware(request: Request, call_next):
     path = request.url.path
-    is_public = path == "/health" or path.startswith("/api/auth/")
+    is_public = (
+        path == "/health"
+        or path.startswith("/api/auth/")
+        or path.startswith("/api/research/admin/")
+    )
     is_protected = (
         path.startswith("/api/")
         or path.startswith("/charts/")

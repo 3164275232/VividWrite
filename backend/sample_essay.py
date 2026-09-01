@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 import re
 from typing import Optional, Dict, Any
@@ -61,8 +61,7 @@ def _generate_essay_text(client, model: str, system_prompt: str, user_prompt: st
     return content.strip()
 
 
-@router.post("/api/generate-sample-essay", response_model=SampleEssayResponse)
-def generate_sample_essay(req: SampleEssayRequest):
+def _generate_sample_essay(req: SampleEssayRequest):
     """Generate a full IELTS Task 1 sample essay from extracted chart data."""
     if not get_deepseek_api_key():
         return SampleEssayResponse(success=False, error="DEEPSEEK_API_KEY not configured")
@@ -257,3 +256,21 @@ def generate_sample_essay(req: SampleEssayRequest):
             "structure": "standard-ielts-task-1",
         },
     )
+
+
+def generate_sample_essay(req: SampleEssayRequest):
+    """Generate an essay without an HTTP context (kept for tests and internal callers)."""
+    return _generate_sample_essay(req)
+
+
+@router.post("/api/generate-sample-essay", response_model=SampleEssayResponse)
+def generate_sample_essay_route(request: Request, req: SampleEssayRequest):
+    from research_api import record_server_event_for_request
+
+    result = generate_sample_essay(req)
+    record_server_event_for_request(
+        request,
+        "sample_essay_completed" if result.success else "sample_essay_failed",
+        payload={"request": req.model_dump(), "response": result.model_dump()},
+    )
+    return result

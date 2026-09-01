@@ -1,13 +1,20 @@
 import { useState, useEffect } from "react";
-import { ArrowRight, Eye, EyeOff, LockKeyhole, UserRound } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, LockKeyhole, ShieldCheck, UserRound } from "lucide-react";
 import "./Login.css";
 
-export default function Login({ onLogin, passwordRequired = true }) {
+export default function Login({
+  onLogin,
+  passwordRequired = true,
+  researchEnabled = false,
+  consentRequired = false,
+  consentVersion = '',
+}) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [consentGranted, setConsentGranted] = useState(false);
 
   // Temporarily disable scrollbars while login screen is active
   useEffect(() => {
@@ -30,11 +37,19 @@ export default function Login({ onLogin, passwordRequired = true }) {
       setError("Password required");
       return;
     }
+    if (researchEnabled && consentRequired && !consentGranted) {
+      setError("Please confirm the research data notice to continue");
+      return;
+    }
 
     setError("");
     setIsSubmitting(true);
     try {
-      await onLogin(trimmed, password);
+      await onLogin(trimmed, password, {
+        consent_granted: consentGranted,
+        consent_version: consentVersion,
+        consented_at: new Date().toISOString(),
+      });
     } catch (loginError) {
       setError(loginError?.message || "Login failed");
     } finally {
@@ -116,6 +131,29 @@ export default function Login({ onLogin, passwordRequired = true }) {
             </div>
           )}
 
+          {researchEnabled && (
+            <label className="research-consent" htmlFor="research-consent-input">
+              <input
+                id="research-consent-input"
+                type="checkbox"
+                checked={consentGranted}
+                onChange={(event) => setConsentGranted(event.target.checked)}
+                required={consentRequired}
+              />
+              <span className="research-consent-icon" aria-hidden="true">
+                <ShieldCheck size={18} strokeWidth={1.8} />
+              </span>
+              <span>
+                <strong>Research data notice</strong>
+                <small>
+                  I understand that this study records my session timing, workspace actions,
+                  draft versions, task selections, feedback, and uploaded or generated images.
+                  I will not enter personal or confidential information.
+                </small>
+              </span>
+            </label>
+          )}
+
           <p
             id="login-error"
             className="error-msg"
@@ -133,7 +171,7 @@ export default function Login({ onLogin, passwordRequired = true }) {
           </div>
         </form>
         </section>
-        <p className="login-footnote">Your local project data stays in this research workspace.</p>
+        <p className="login-footnote">Study data is stored under your assigned test account.</p>
       </div>
     </main>
   );

@@ -10,6 +10,7 @@ import {
   generateSpatialSampleEssay,
   getAuthConfig,
   getCurrentUser,
+  API_BASE,
   login as loginUser,
   logout as logoutUser,
   prepareTaskImage,
@@ -49,6 +50,15 @@ import {
   locateMoveRange,
   withResolvedMoveVisualUrls,
 } from './moveFeedbackUtils.js';
+import {
+  abandonResearchSession,
+  archiveResearchArtifact,
+  configureResearchTelemetry,
+  endResearchSession,
+  snapshotEssay,
+  trackEssayEdit,
+  trackResearchEvent,
+} from './researchTelemetry.js';
 
 function formatFeedbackNumber(value) {
   const number = Number(value);
@@ -223,6 +233,9 @@ export default function App() {
 
   const [authReady, setAuthReady] = useState(false);
   const [passwordRequired, setPasswordRequired] = useState(true);
+  const [researchEnabled, setResearchEnabled] = useState(false);
+  const [researchConsentRequired, setResearchConsentRequired] = useState(false);
+  const [researchConsentVersion, setResearchConsentVersion] = useState('');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [username, setUsername] = useState(""); // NEW: current logged in user
   const [upperHeight, setUpperHeight] = useState(33.33); // Percentage height of the upper section
@@ -248,6 +261,9 @@ export default function App() {
         const config = await getAuthConfig();
         if (!cancelled) {
           setPasswordRequired(config?.password_required !== false);
+          setResearchEnabled(config?.research_enabled === true);
+          setResearchConsentRequired(config?.consent_required === true);
+          setResearchConsentVersion(config?.consent_version || '');
         }
       } catch (error) {
         console.warn('Could not load login settings', error);
@@ -272,6 +288,7 @@ export default function App() {
     };
 
     const handleUnauthorized = () => {
+      abandonResearchSession();
       setUsername("");
       setIsLoggedIn(false);
       setShowPostLoginTips(false);
@@ -327,6 +344,47 @@ export default function App() {
   const practiceSampleLoadRef = useRef(0);
   // Track background DePlot extraction task without showing UI
   const deplotTaskRef = useRef({ seq: 0, promise: null, key: null });
+  const researchContextRef = useRef({});
+  const previousResearchTextRef = useRef(text);
+
+  researchContextRef.current = {
+    stage: currentStage,
+    selected_chart_type: selectedChartType,
+    resolved_chart_type: resolvedChartType,
+    effective_chart_type: effectiveChartType,
+    practice_sample_id: selectedPracticeSampleId || null,
+    has_task_image: Boolean(uploadedImage),
+    has_generated_image: Boolean(chartUrl),
+    word_count: text.trim() ? text.trim().split(/\s+/).length : 0,
+    character_count: text.length,
+  };
+
+  useEffect(() => {
+    if (!isLoggedIn || !username || !researchEnabled) return;
+    configureResearchTelemetry({
+      enabled: true,
+      username,
+      apiBase: API_BASE,
+      consentVersion: researchConsentVersion,
+      getContext: () => researchContextRef.current,
+    });
+  }, [isLoggedIn, researchConsentVersion, researchEnabled, username]);
+
+  useEffect(() => {
+    const previousText = previousResearchTextRef.current;
+    if (previousText !== text) {
+      trackEssayEdit(previousText, text, 'workspace_editor');
+      previousResearchTextRef.current = text;
+    }
+  }, [text]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !researchEnabled) return undefined;
+    const interval = window.setInterval(() => {
+      snapshotEssay(previousResearchTextRef.current, 'periodic_30_seconds');
+    }, 30000);
+    return () => window.clearInterval(interval);
+  }, [isLoggedIn, researchEnabled]);
   // Helper to run DePlot extraction; if showOverlay=true, show analyzing modal while waiting
   const runDeplotExtraction = useCallback(async (
     file,
@@ -555,8 +613,8 @@ export default function App() {
   const [lastAddition, setLastAddition] = useState(null); // { start,end,prevText }
   const editorRef = useRef(null);
 
-  const handleLogin = async (uname, password) => {
-    const session = await loginUser(uname, password);
+  const handleLogin = async (uname, password, consent) => {
+    const session = await loginUser(uname, password, consent);
     setUsername(session.username);
     setIsLoggedIn(true);
     // Show tips modal right after login
@@ -564,13 +622,24 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    await logoutUser();
-    setUsername("");
-    setIsLoggedIn(false);
-    setShowPostLoginTips(false);
+    snapshotEssay(text, 'logout');
+    await endResearchSession('logout');
+    try {
+      await logoutUser();
+    } finally {
+      setUsername("");
+      setIsLoggedIn(false);
+      setShowPostLoginTips(false);
+      window.location.reload();
+    }
   };
 
   const handleNextStage = async () => {
+    trackResearchEvent('stage_advance_requested', {
+      from_stage: currentStage,
+      has_image: Boolean(uploadedImage),
+      has_text: Boolean(text.trim()),
+    });
     console.log('Next Stage clicked:', { stageIndex, currentStage, hasImage: !!uploadedImage, hasText: !!text.trim() });
     // If already at last stage do nothing
     if (stageIndex === stages.length - 1) {
@@ -606,6 +675,11 @@ export default function App() {
 
   const confirmStageAdvance = async () => {
     setShowStageConfirm(false);
+    snapshotEssay(text, 'stage_advance', { from_stage: currentStage });
+    trackResearchEvent('stage_advanced', {
+      from_stage: currentStage,
+      to_stage: stages[Math.min(stageIndex + 1, stages.length - 1)],
+    });
     
     // Save the task image when moving into revision (non-blocking)
     setDeplotError("");
@@ -640,6 +714,11 @@ export default function App() {
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
+      trackResearchEvent('custom_task_image_selected', { file });
+      void archiveResearchArtifact(file, 'original_task_image', {
+        source: 'custom_upload',
+        selected_chart_type: selectedChartType,
+      });
       practiceSampleLoadRef.current += 1;
       setSelectedPracticeSampleId("");
       setIsLoadingPracticeSample(false);
@@ -665,6 +744,10 @@ export default function App() {
   };
 
   const handleRemoveImage = () => {
+    trackResearchEvent('task_image_removed', {
+      practice_sample_id: selectedPracticeSampleId || null,
+      file: uploadedImage,
+    });
     practiceSampleLoadRef.current += 1;
     setSelectedPracticeSampleId("");
     setIsLoadingPracticeSample(false);
@@ -694,6 +777,7 @@ export default function App() {
 
   const handlePracticeSampleChange = async (event) => {
     const sampleId = event.target.value;
+    trackResearchEvent('practice_sample_selected', { sample_id: sampleId || null });
     if (!sampleId) {
       handleRemoveImage();
       setSelectedChartType("auto");
@@ -738,6 +822,12 @@ export default function App() {
         deplot_text: sample.deplotText,
       });
       setDeplotText(sample.deplotText);
+      void archiveResearchArtifact(file, 'original_task_image', {
+        source: 'practice_sample',
+        practice_sample_id: sampleId,
+        chart_type: sample.chartType,
+        preprocessed_deplot_text: sample.deplotText,
+      });
     } catch (error) {
       if (practiceSampleLoadRef.current !== loadSeq) return;
       setSelectedPracticeSampleId("");
@@ -773,6 +863,12 @@ export default function App() {
       return;
     }
     const analysisIsSpatial = SPATIAL_TASK_TYPES.has(taskTypeForAnalysis);
+    snapshotEssay(text, 'analysis_requested', { chart_type: taskTypeForAnalysis });
+    trackResearchEvent('analysis_requested', {
+      chart_type: taskTypeForAnalysis,
+      spatial: analysisIsSpatial,
+      deplot_available: Boolean(deplotText.trim()),
+    });
 
     // Persist revision full text snapshot
     if (currentStage === 'revision' && username) {
@@ -860,8 +956,12 @@ export default function App() {
       }
     } catch (error) {
       setAnalysisError(error.message);
+      trackResearchEvent('analysis_failed', { error: error.message });
     } finally {
       setIsAnalyzing(false);
+      trackResearchEvent('analysis_finished', {
+        chart_type: taskTypeForAnalysis,
+      });
     }
   };
 
@@ -938,6 +1038,12 @@ export default function App() {
   const handleSelectMove = useCallback((assessment) => {
     if (!assessment) return;
     const nextId = assessment.id === activeMoveId ? null : assessment.id;
+    trackResearchEvent('criterion_feedback_toggled', {
+      criterion_id: assessment.id,
+      criterion_title: assessment.title || assessment.name || null,
+      expanded: Boolean(nextId),
+      assessment,
+    });
     setActiveMoveId(nextId);
     setActiveSuggestionId(null);
     if (!editorRef.current) return;
@@ -1800,7 +1906,13 @@ export default function App() {
         </ErrorBoundary>
       ) : (
         <>
-          <Login onLogin={handleLogin} passwordRequired={passwordRequired} />
+          <Login
+            onLogin={handleLogin}
+            passwordRequired={passwordRequired}
+            researchEnabled={researchEnabled}
+            consentRequired={researchConsentRequired}
+            consentVersion={researchConsentVersion}
+          />
         </>
       )}
     </main>

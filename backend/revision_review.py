@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 import re
 from typing import Optional, Dict, List, Any
@@ -278,7 +278,16 @@ def call_llm_revision_review(payload: RevisionReviewIn) -> RevisionReviewOut:
         return RevisionReviewOut(success=False, error=f"LLM failed: {e}")
 
 @router.post("/api/revision-review", response_model=RevisionReviewOut)
-def revision_review(payload: RevisionReviewIn):
+def revision_review(request: Request, payload: RevisionReviewIn):
+    from research_api import record_server_event_for_request
+
     mode = (payload.mode or "auto").lower()
     # Always force LLM path; heuristic disabled.
-    return call_llm_revision_review(payload)
+    result = call_llm_revision_review(payload)
+    record_server_event_for_request(
+        request,
+        "revision_language_review_completed" if result.success else "revision_language_review_failed",
+        stage="revision",
+        payload={"request": payload.model_dump(), "response": result.model_dump()},
+    )
+    return result
