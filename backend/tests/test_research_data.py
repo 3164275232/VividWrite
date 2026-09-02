@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from research_data import ResearchStore
 
@@ -116,6 +117,43 @@ class ResearchStoreTests(unittest.TestCase):
                 json.loads(raw_event["payload_json"])["text"],
                 "=HYPERLINK(\"unsafe\")",
             )
+
+    def test_export_does_not_change_participant_activity(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ResearchStore(Path(temp_dir))
+            with patch("research_data.utc_now", return_value="2026-09-01T10:00:00.000+00:00"):
+                store.ensure_participant("tester01")
+
+            before = {
+                item["username"]: item
+                for item in store.participant_summaries(["tester01", "tester02"])
+            }
+            with patch("research_data.utc_now", return_value="2026-09-01T11:00:00.000+00:00"):
+                export_path = store.build_export(
+                    ["tester01", "tester02"],
+                    configured_usernames=["tester01", "tester02"],
+                )
+            after = {
+                item["username"]: item
+                for item in store.participant_summaries(["tester01", "tester02"])
+            }
+
+            self.assertEqual(
+                after["tester01"]["last_seen_at"],
+                before["tester01"]["last_seen_at"],
+            )
+            self.assertIsNone(after["tester02"]["last_seen_at"])
+            with store._connection() as connection:
+                usernames = {
+                    row["username"]
+                    for row in connection.execute("SELECT username FROM participants").fetchall()
+                }
+            self.assertEqual(usernames, {"tester01"})
+
+            with zipfile.ZipFile(export_path) as archive:
+                participants_csv = archive.read("participants.csv").decode("utf-8-sig")
+            self.assertIn("tester01", participants_csv)
+            self.assertIn("tester02", participants_csv)
 
 
 if __name__ == "__main__":

@@ -692,13 +692,32 @@ class ResearchStore:
         selected = sorted({safe_username(item) for item in usernames})
         if not selected:
             raise ValueError("at least one participant is required for export")
-        for username in selected:
-            self.ensure_participant(username)
         with self._connection() as connection:
             participant_rows = self._table_rows(connection, "participants", selected)
             session_rows = self._table_rows(connection, "sessions", selected)
             event_rows = self._table_rows(connection, "events", selected)
             artifact_rows = self._table_rows(connection, "artifacts", selected)
+
+        participant_by_username = {
+            row["username"]: row
+            for row in participant_rows
+        }
+        participant_rows = [
+            participant_by_username.get(
+                username,
+                {
+                    "username": username,
+                    "first_login_at": None,
+                    "last_login_at": None,
+                    "last_seen_at": None,
+                    "login_count": 0,
+                    "consent_version": None,
+                    "consented_at": None,
+                    "created_at": None,
+                },
+            )
+            for username in selected
+        ]
 
         export_dir = self.root / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
