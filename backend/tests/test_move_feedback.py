@@ -191,6 +191,24 @@ class MoveFeedbackTests(unittest.TestCase):
         self.assertEqual(assessment["status"], "developing")
         self.assertIn("housing", assessment["rationale"].casefold())
 
+    def test_move_4_does_not_treat_swapped_values_as_accurate_support(self):
+        essay = (
+            "The main feature was the dominance of housing over food. "
+            "Housing represented 21%, while food accounted for 32%."
+        )
+        feedback = build_move_feedback(
+            pie_chart_data(),
+            essay,
+            [{
+                "code": "move_4_elaborating_key_trends",
+                "status": "developing",
+                "excerpt": essay,
+                "rationale": "The values do not accurately support the key feature.",
+            }],
+        )
+
+        self.assertEqual(feedback["assessments"][3]["status"], "developing")
+
     def test_move_5_rejects_evidence_from_a_different_entity(self):
         essay = "North showed the main growth, supported by South falling from 18 to 16."
         feedback = build_move_feedback(
@@ -304,6 +322,65 @@ class MoveFeedbackTests(unittest.TestCase):
         )
 
         self.assertEqual(feedback["assessments"][4]["status"], "effective")
+
+    def test_supported_pie_focus_corrects_move_4_and_move_5_false_positives(self):
+        focus = (
+            "The clearest pattern was the concentration of expenditure in housing "
+            "and food, which together formed a majority."
+        )
+        evidence = (
+            "Housing led the distribution at 32%, while the next-largest category, "
+            "food, accounted for 21%."
+        )
+        essay = f"{focus} {evidence}"
+        feedback = build_move_feedback(
+            pie_chart_data(),
+            essay,
+            [
+                {
+                    "code": "move_4_elaborating_key_trends",
+                    "status": "developing",
+                    "excerpt": focus,
+                    "rationale": "The key feature needs clearer numerical support.",
+                    "hint": "Add figures for the key feature.",
+                },
+                {
+                    "code": "move_5_integrating_trend_and_detail",
+                    "status": "developing",
+                    "excerpt": evidence,
+                    "rationale": "The trend and detail could be connected more clearly.",
+                    "hint": "Connect the evidence to the trend.",
+                },
+            ],
+        )
+
+        self.assertEqual(feedback["assessments"][3]["status"], "effective")
+        self.assertEqual(feedback["assessments"][4]["status"], "effective")
+        self.assertEqual(feedback["assessments"][3]["hint"], "")
+        self.assertEqual(feedback["assessments"][4]["hint"], "")
+
+    def test_chart_salient_pie_focus_corrects_move_3_false_positive(self):
+        essay = (
+            "A key feature was the large housing segment, contrasted with the "
+            "relatively small utilities and other portions. Housing led the "
+            "distribution at 32%, while food accounted for 21%."
+        )
+        feedback = build_move_feedback(
+            pie_chart_data(),
+            essay,
+            [{
+                "code": "move_3_highlighting_key_trends",
+                "status": "developing",
+                "excerpt": essay.split(". ")[0] + ".",
+                "rationale": "The selected feature is not sufficiently prioritised.",
+                "hint": "Choose a stronger feature.",
+            }],
+        )
+
+        assessment = feedback["assessments"][2]
+        self.assertEqual(assessment["status"], "effective")
+        self.assertEqual(assessment["hint"], "")
+        self.assertFalse(assessment["visual_available"])
 
     def test_move_3_uses_explicit_local_values_and_chart_grounded_endpoints(self):
         essay = (

@@ -124,7 +124,6 @@ _DECLARED_FOCUS_RE = re.compile(
     r"(?:feature|pattern|trend|change|difference|gap|development)\b",
     re.IGNORECASE,
 )
-_REPETITION_RE = re.compile(r"\b(?:repeat(?:ed|ing|s)?|repetitive|redundan(?:t|cy)|consolidat(?:e|ing))\b", re.IGNORECASE)
 _SUPPORT_LINK_RE = re.compile(
     r"\b(?:supported\s+by|demonstrated\s+by|shown\s+by|as\s+shown\s+by|"
     r"as\s+demonstrated\s+by|as\s+evidenced\s+by|evidenced\s+by|because|,\s*as)\b",
@@ -427,6 +426,44 @@ def _entity_has_matching_value(records: list[dict], entity: str, text: str) -> b
         and _record_value_matches_numbers(record, numbers)
         for record in records
     )
+
+
+def _entity_has_accurate_value(records: list[dict], entity: str, text: str) -> bool:
+    mentions = _entity_mentions(text, _chart_entity_labels(records))
+    numbers: list[float] = []
+    for position, (start, _, mentioned_entity) in enumerate(mentions):
+        if _normalise(mentioned_entity) != _normalise(entity):
+            continue
+        end = mentions[position + 1][0] if position + 1 < len(mentions) else len(text)
+        numbers.extend(_meaningful_numbers(text[start:end], records))
+        leading_value = re.search(
+            r"([-+]?\d[\d,]*(?:\.\d+)?)\s*%?\s+(?:for|in|at|to)\s+$",
+            text[max(0, start - 80):start],
+            flags=re.IGNORECASE,
+        )
+        if leading_value:
+            numbers.append(float(leading_value.group(1).replace(",", "")))
+    return bool(numbers) and any(
+        _record_matches_entity(record, entity)
+        and (official := _official_value(record)) is not None
+        and any(abs(official - number) <= 1e-9 for number in numbers)
+        for record in records
+    )
+
+
+def _sentences_share_paragraph(
+    text: str,
+    first: tuple[int, int, str],
+    second: tuple[int, int, str],
+) -> bool:
+    return not re.search(r"(?:\r?\n)\s*(?:\r?\n)", text[first[1]:second[0]])
+
+
+def _mark_effective(assessment: dict, student_answer: str, excerpt: str, rationale: str) -> None:
+    assessment["status"] = "effective"
+    assessment["rationale"] = rationale
+    assessment["hint"] = ""
+    _replace_assessment_excerpt(assessment, student_answer, excerpt)
 
 
 def _relative_period_record_indices(
@@ -811,7 +848,7 @@ def _apply_local_quality_guards(
     declared_sentence, declared_current = _declared_focus_candidate(records, spans)
     declared_misaligned = False
     if declared_sentence and recommended:
-        aligned = any(index in recommended for index in declared_current)
+        aligned = all(index in declared_current for index in recommended)
         if not aligned:
             declared_misaligned = True
             assessment["status"] = "developing"
@@ -828,13 +865,13 @@ def _apply_local_quality_guards(
                 "recommended_record_indices": recommended,
             }
             assessment["visual_available"] = True
-        elif assessment["status"] == "developing" and _REPETITION_RE.search(
-            f'{assessment.get("rationale", "")} {assessment.get("hint", "")}'
-        ):
-            assessment["status"] = "effective"
-            assessment["rationale"] = "The draft explicitly prioritises a chart-salient feature."
-            assessment["hint"] = ""
-            _replace_assessment_excerpt(assessment, student_answer, declared_sentence)
+        elif assessment["status"] in {"developing", "not_detected"}:
+            _mark_effective(
+                assessment,
+                student_answer,
+                declared_sentence,
+                "The draft explicitly prioritises a chart-salient feature.",
+            )
 
     if assessment["status"] == "developing":
         excerpt = assessment.get("excerpt") or ""
@@ -850,17 +887,21 @@ def _apply_local_quality_guards(
 
     # Move 4: naming a priority trend is not elaboration unless that same chart
     # entity is supported somewhere with a concrete, non-period value.
-    priority_candidates: list[tuple[str, list[str]]] = []
-    for _, _, sentence in spans:
+    priority_candidates: list[tuple[int, str, list[str]]] = []
+    for span_index, (_, _, sentence) in enumerate(spans):
         entities = _mentioned_entities(sentence, entity_labels)
-        if entities and _PRIORITY_RE.search(sentence) and _TREND_RE.search(sentence):
-            priority_candidates.append((sentence, entities))
+        if (
+            entities
+            and _PRIORITY_RE.search(sentence)
+            and (_TREND_RE.search(sentence) or _OVERVIEW_SYNTHESIS_RE.search(sentence))
+        ):
+            priority_candidates.append((span_index, sentence, entities))
     unsupported = []
-    for sentence, entities in priority_candidates:
+    for _, sentence, entities in priority_candidates:
         for entity in entities:
             has_evidence = any(
                 _label_is_mentioned(other_sentence, entity)
-                and _entity_has_matching_value(records, entity, other_sentence)
+                and _entity_has_accurate_value(records, entity, other_sentence)
                 for _, _, other_sentence in spans
             )
             if not has_evidence:
@@ -875,6 +916,41 @@ def _apply_local_quality_guards(
         )
         assessment["hint"] = "Add a small amount of relevant evidence for the key feature already identified."
         _replace_assessment_excerpt(assessment, student_answer, sentence)
+    elif priority_candidates:
+        assessment = by_code["move_4_elaborating_key_trends"]
+        if assessment["status"] in {"developing", "not_detected"}:
+            _mark_effective(
+                assessment,
+                student_answer,
+                priority_candidates[0][1],
+                "The identified key feature is supported with relevant, accurate chart evidence.",
+            )
+
+    # Move 5 accepts an explicit priority statement whose chart-grounded evidence
+    # appears in the same sentence or the immediately following sentence in the
+    # same paragraph. A contradictory support link below still takes precedence.
+    for span_index, sentence, entities in priority_candidates:
+        evidence_text = sentence
+        if span_index + 1 < len(spans) and _sentences_share_paragraph(
+            student_answer,
+            spans[span_index],
+            spans[span_index + 1],
+        ):
+            evidence_text = f"{sentence} {spans[span_index + 1][2]}"
+        if not all(
+            _entity_has_accurate_value(records, entity, evidence_text)
+            for entity in entities
+        ):
+            continue
+        assessment = by_code["move_5_integrating_trend_and_detail"]
+        if assessment["status"] in {"developing", "not_detected"}:
+            _mark_effective(
+                assessment,
+                student_answer,
+                sentence,
+                "The key feature and its supporting chart evidence are connected coherently.",
+            )
+        break
 
     # Move 5: evidence after an explicit support link must belong to the trend
     # subject before the link. Different chart entities indicate a broken link.
