@@ -12,6 +12,8 @@ from move_visual_feedback import (
     RECOMMENDED_LABEL,
     _detect_bar_boxes,
     _draw_callout,
+    _line_data_bbox,
+    _record_boxes,
     render_move_visuals,
 )
 
@@ -904,6 +906,56 @@ class MoveFeedbackTests(unittest.TestCase):
             self.assertIn(tuple(int(CURRENT_COLOR[index:index + 2], 16) for index in (1, 3, 5)), colour_set)
             self.assertIn(tuple(int(RECOMMENDED_COLOR[index:index + 2], 16) for index in (1, 3, 5)), colour_set)
             self.assertEqual(assessment["visual"]["current_focus_labels"][0], "South · 2010 · 18")
+
+    def test_line_visual_ignores_right_legend_and_tracks_new_sample_points(self):
+        source_path = (
+            Path(__file__).resolve().parents[2]
+            / "frontend"
+            / "public"
+            / "practice-samples"
+            / "02_line_daily_passengers.png"
+        )
+        years = ("2010", "2012", "2014", "2016", "2018", "2020")
+        series_values = {
+            "Bus": (1.8, 1.9, 1.7, 1.6, 1.5, 1.3),
+            "Rail": (1.1, 1.3, 1.5, 1.8, 2.0, 2.2),
+            "Metro": (0.8, 1.0, 1.2, 1.5, 1.7, 1.9),
+        }
+        records = [
+            {
+                "period": year,
+                "series": series,
+                "value": series_values[series][year_index],
+                "official_value": series_values[series][year_index],
+            }
+            for year_index, year in enumerate(years)
+            for series in series_values
+        ]
+
+        with Image.open(source_path) as source:
+            bbox = _line_data_bbox(source)
+            boxes = _record_boxes("line", records, source)
+
+        self.assertIsNotNone(bbox)
+        self.assertLess(bbox[0], 205)
+        self.assertGreater(bbox[2], 1180)
+        self.assertLess(bbox[2], 1230)
+        self.assertLess(bbox[1], 100)
+        self.assertGreater(bbox[3], 745)
+
+        def center(index):
+            box = boxes[index]
+            return ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+
+        bus_2010 = center(0)
+        rail_2020 = center(16)
+        metro_2010 = center(2)
+        self.assertAlmostEqual(bus_2010[0], 192, delta=18)
+        self.assertAlmostEqual(bus_2010[1], 279, delta=18)
+        self.assertAlmostEqual(rail_2020[0], 1192, delta=18)
+        self.assertAlmostEqual(rail_2020[1], 86, delta=18)
+        self.assertAlmostEqual(metro_2010[0], 192, delta=18)
+        self.assertAlmostEqual(metro_2010[1], 761, delta=18)
 
     def test_bar_visual_uses_real_bar_bounds_and_teacher_callouts(self):
         source_path = (

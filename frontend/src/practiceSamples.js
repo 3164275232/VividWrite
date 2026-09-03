@@ -20,7 +20,7 @@ const PRACTICE_SAMPLE_LIST = [
     id: 'line-passengers',
     label: 'Line graph: public transport use',
     chartType: 'line',
-    imageUrl: '/practice-samples/02_line_daily_passengers.png',
+    imageUrl: '/practice-samples/02_line_daily_passengers.png?v=32b88ae2',
     fileName: '02_line_daily_passengers.png',
     deplotText: [
       'TITLE | Average daily passengers using public transport, 2010-2020',

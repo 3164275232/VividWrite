@@ -99,6 +99,46 @@ def _fallback_plot_bbox(image: Image.Image) -> tuple[int, int, int, int]:
     )
 
 
+def _line_data_bbox(image: Image.Image) -> tuple[int, int, int, int] | None:
+    """Find the continuous line-mark span without absorbing detached legend swatches."""
+    rgb = np.asarray(image.convert("RGB"))
+    height, width = rgb.shape[:2]
+    maximum = rgb.max(axis=2)
+    minimum = rgb.min(axis=2)
+    saturation = maximum - minimum
+    mask = (saturation >= 34) & (maximum <= 250) & (maximum >= 45)
+
+    crop = np.zeros_like(mask)
+    crop[
+        max(0, int(height * 0.04)) : min(height, int(height * 0.96)),
+        max(0, int(width * 0.03)) : min(width, int(width * 0.97)),
+    ] = True
+    mask &= crop
+
+    # A plotted line occupies a long, continuous run of x coordinates. Legend
+    # swatches form short detached runs, even when the legend sits beside the plot.
+    active_columns = mask.sum(axis=0) >= max(2, int(height * 0.002))
+    runs = sorted(
+        _contiguous_runs(active_columns),
+        key=lambda run: run[1] - run[0],
+        reverse=True,
+    )
+    for start, end in runs:
+        if end - start < width * 0.15:
+            continue
+        section = mask[:, start : end + 1]
+        y_values, x_values = np.nonzero(section)
+        if len(x_values) < max(40, int(width * height * 0.0001)):
+            continue
+        return (
+            int(start + x_values.min()),
+            int(y_values.min()),
+            int(start + x_values.max()),
+            int(y_values.max()),
+        )
+    return None
+
+
 def _unique(records: list[dict], field: str) -> list[str]:
     values: list[str] = []
     for record in records:
@@ -336,7 +376,10 @@ def _record_boxes(
     records: list[dict],
     image: Image.Image,
 ) -> dict[int, tuple[float, float, float, float]]:
-    bbox = _colour_data_bbox(image) or _fallback_plot_bbox(image)
+    if chart_type in {"line", "area"}:
+        bbox = _line_data_bbox(image) or _colour_data_bbox(image) or _fallback_plot_bbox(image)
+    else:
+        bbox = _colour_data_bbox(image) or _fallback_plot_bbox(image)
     if chart_type == "bar":
         detected = _detect_bar_boxes(image, len(records))
         if len(detected) == len(records):

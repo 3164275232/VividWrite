@@ -32,7 +32,7 @@ test('loads a practice image only from static assets and returns its saved DePlo
 
   const { sample, file } = await loadPracticeSample('line-passengers', fetchImpl);
 
-  assert.deepEqual(requestedUrls, ['/practice-samples/02_line_daily_passengers.png']);
+  assert.deepEqual(requestedUrls, ['/practice-samples/02_line_daily_passengers.png?v=32b88ae2']);
   assert.ok(requestedUrls.every((url) => !url.startsWith('/api/')));
   assert.equal(file.name, '02_line_daily_passengers.png');
   assert.equal(file.type, 'image/png');
