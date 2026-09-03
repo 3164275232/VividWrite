@@ -109,6 +109,26 @@ export function calculateTextDelta(previousText, nextText) {
   };
 }
 
+export function calculateLastActivityTimestamp(
+  wallClockMs,
+  currentMonotonicMs,
+  lastActivityMonotonicMs,
+) {
+  const elapsedSinceActivity = Math.max(
+    0,
+    Number(currentMonotonicMs) - Number(lastActivityMonotonicMs),
+  );
+  return new Date(Number(wallClockMs) - elapsedSinceActivity).toISOString();
+}
+
+function lastActivityIso() {
+  return calculateLastActivityTimestamp(
+    Date.now(),
+    performance.now(),
+    telemetry.lastActivityAt,
+  );
+}
+
 function wordCount(text) {
   const trimmed = String(text || '').trim();
   return trimmed ? trimmed.split(/\s+/).length : 0;
@@ -306,7 +326,7 @@ async function sendHeartbeat() {
         idle_ms: Math.round(telemetry.idleMs),
         visible: !document.hidden,
         stage: currentStage(),
-        last_activity_at: nowIso(),
+        last_activity_at: lastActivityIso(),
       }),
     });
   } catch {
@@ -427,7 +447,7 @@ function handleBeforeUnload() {
         idle_ms: Math.round(telemetry.idleMs),
         visible: !document.hidden,
         stage: currentStage(),
-        last_activity_at: nowIso(),
+        last_activity_at: lastActivityIso(),
         reason: 'page_unload',
       })], { type: 'application/json' }),
     );
@@ -495,7 +515,7 @@ export async function endResearchSession(reason = 'logout') {
         idle_ms: Math.round(telemetry.idleMs),
         visible: !document.hidden,
         stage: currentStage(),
-        last_activity_at: nowIso(),
+        last_activity_at: lastActivityIso(),
         reason,
       }),
     });

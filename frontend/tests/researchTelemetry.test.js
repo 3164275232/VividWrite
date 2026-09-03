@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  calculateLastActivityTimestamp,
   calculateTextDelta,
   serializeResearchValue,
 } from '../src/researchTelemetry.js';
@@ -27,6 +28,15 @@ test('captures a minimal essay insertion and deletion delta', () => {
       previous_character_count: 17,
       character_count: 9,
     },
+  );
+});
+
+
+test('records the last interaction time instead of the heartbeat time', () => {
+  const heartbeatAt = Date.parse('2026-09-03T10:01:30.000Z');
+  assert.equal(
+    calculateLastActivityTimestamp(heartbeatAt, 90_000, 30_000),
+    '2026-09-03T10:00:30.000Z',
   );
 });
 
