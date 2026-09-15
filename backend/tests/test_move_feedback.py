@@ -1059,8 +1059,13 @@ class MoveFeedbackTests(unittest.TestCase):
         pixels = overlay.convert("RGB")
         first_target = pixels.crop((200, 260, 240, 300))
         second_target = pixels.crop((610, 230, 650, 270))
-        self.assertIn(current_rgb, set(first_target.get_flattened_data()))
-        self.assertIn(current_rgb, set(second_target.get_flattened_data()))
+        for target in (first_target, second_target):
+            target_pixels = (
+                target.get_flattened_data()
+                if hasattr(target, "get_flattened_data")
+                else target.getdata()
+            )
+            self.assertIn(current_rgb, set(target_pixels))
 
 
 if __name__ == "__main__":
