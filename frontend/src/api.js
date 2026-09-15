@@ -158,6 +158,11 @@ export function prepareTaskImage(formData) {
   }, 'Task type detection failed', { retryTransient: true });
 }
 
+export function getRevisionHistory(taskId, before) {
+  const query = before ? `?before=${encodeURIComponent(before)}` : '';
+  return requestJson(`/api/revision-history/${encodeURIComponent(taskId)}${query}`, {}, 'Loading revision history failed');
+}
+
 export function requestNextSentence(payload) {
   return postJson('/api/next-sentence', payload, 'Next sentence generation failed');
 }

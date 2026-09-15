@@ -209,7 +209,7 @@ def parse_series_framework(text: str) -> list[tuple[str, str]]:
         (
             index
             for index, cells in enumerate(rows)
-            if len(cells) >= 3 and cells[0].casefold() not in {"title", "chart type"}
+            if len(cells) >= 2 and cells[0].casefold() not in {"title", "chart type"}
         ),
         None,
     )

@@ -44,6 +44,7 @@ LINE_ERROR_FILL = "#f9a8d4"
 LINE_ERROR_STROKE = "#be185d"
 LINE_ERROR_TEXT = "#701a3d"
 SEMANTIC_ALERT_COLOR = "#991b1b"
+ESTIMATE_STROKE = "#8a650a"
 PIE_PLOT_WIDTH = 600
 PIE_PLOT_HEIGHT = 420
 PIE_FALLBACK_PALETTE = [
@@ -1036,6 +1037,132 @@ def _prepare_line_feedback(spec: dict, records: list[dict]) -> tuple[dict, list[
     return prepared, render_records
 
 
+def _is_estimated_value(record: dict) -> bool:
+    value = record.get("value")
+    return (record.get("estimated") is True and not record.get("explicit_student_value")
+            and not record.get("missing") and isinstance(value, (int, float))
+            and not isinstance(value, bool) and math.isfinite(value))
+
+
+def _prepare_line_connections(spec: dict, records: list[dict]) -> tuple[dict, list[dict], int]:
+    """Separate stated adjacent points from system-drawn connections across uncertainty."""
+    encoding = spec["encoding"]
+    x_field = encoding["x"]["field"]
+    value_field = encoding["y"]["field"]
+    series_field = encoding.get("color", {}).get("field")
+    rendered = copy.deepcopy(records)
+    groups: dict[Any, list[dict]] = {}
+    for record in rendered:
+        groups.setdefault(record.get(series_field), []).append(record)
+    connection_count = 0
+    for group_index, group in enumerate(groups.values()):
+        previous = None
+        gap = False
+        run = 0
+        for record in group:
+            value = record.get(value_field)
+            record["_connection_value"] = None
+            record["_connection_from_value"] = None
+            record["_connection_from_x"] = None
+            if record.get("missing") or not isinstance(value, (int, float)) or not math.isfinite(value):
+                gap = True
+                continue
+            if previous is not None and (gap or _is_estimated_value(previous) or _is_estimated_value(record)):
+                run += 1
+                record["_connection_value"] = value
+                record["_connection_from_value"] = previous[value_field]
+                record["_connection_from_x"] = previous[x_field]
+                connection_count += 1
+            record["_line_run"] = f"{group_index}:{run}"
+            previous = record
+            gap = False
+    if not connection_count:
+        return spec, records, 0
+    base = copy.deepcopy(spec)
+    base["encoding"]["detail"] = {"field": "_line_run", "type": "nominal"}
+    connection_encoding = copy.deepcopy(encoding)
+    connection_encoding["x2"] = {"field": "_connection_from_x"}
+    connection_encoding["y"]["field"] = "_connection_value"
+    connection_encoding["y2"] = {"field": "_connection_from_value"}
+    connector = {
+        "mark": {"type": "rule", "strokeDash": [6, 4], "strokeWidth": 2, "opacity": 0.65},
+        "encoding": connection_encoding,
+    }
+    return {"layer": [base, connector]}, rendered, connection_count
+
+
+def _prepare_inference_marks(spec: dict, records: list[dict], chart_type: str | None):
+    """Mark inference provenance without changing values or error overlays."""
+    count = sum(_is_estimated_value(record) for record in records)
+    if not count:
+        return spec, records, 0
+    prepared = copy.deepcopy(spec)
+    rendered = copy.deepcopy(records)
+    stack_mode = None
+    if chart_type == "pie":
+        theta_scale = prepared["layer"][0]["encoding"]["theta"]["scale"]
+        total = theta_scale["domain"][1]
+        for record in rendered:
+            mid = record.get("_label_mid")
+            visible = _is_estimated_value(record) and isinstance(mid, (int, float))
+            angle = 2 * math.pi * mid / total if visible else 0
+            record["_estimate_x"] = PIE_PLOT_WIDTH / 2 + 126 * math.sin(angle) if visible else None
+            record["_estimate_y"] = PIE_PLOT_HEIGHT / 2 - 126 * math.cos(angle) if visible else None
+        encoding = {
+            "x": {"field": "_estimate_x", "type": "quantitative", "axis": None,
+                  "scale": {"domain": [0, PIE_PLOT_WIDTH]}},
+            "y": {"field": "_estimate_y", "type": "quantitative", "axis": None,
+                  "scale": {"domain": [PIE_PLOT_HEIGHT, 0]}},
+        }
+    else:
+        source = _find_bar_encoding(prepared) if chart_type == "bar" else _first_encoding(prepared)
+        value_channel = _bar_value_channel(source or {})
+        if not value_channel:
+            raise InvalidChartSpec("Estimated values need a traceable numeric chart axis.")
+        encoding = {key: copy.deepcopy(value) for key, value in source.items()
+                    if key in {"x", "y", "xOffset", "yOffset", "row", "column"}}
+        # Bar/area marks can stack by default; points do not. Preserve all values
+        # for the same stack, then hide non-estimate points using opacity. Dropping
+        # those values would place the diamond on a different series' segment.
+        stack_field = source.get("color", {}).get("field")
+        position_fields = {definition.get("field") for definition in encoding.values()
+                           if isinstance(definition, dict)}
+        if chart_type in {"bar", "area"} and stack_field and stack_field not in position_fields:
+            numeric_scale = source[value_channel].get("scale") or {}
+            default_stack = ("zero" if numeric_scale.get("type", "linear") == "linear"
+                             and len(_unique_field_values(records, stack_field)) > 1 else None)
+            stack_mode = source[value_channel].get("stack", default_stack)
+        if stack_mode:
+            encoding[value_channel]["stack"] = stack_mode
+            encoding["detail"] = copy.deepcopy(source.get("color"))
+            for key in ("scale", "legend", "sort"):
+                encoding["detail"].pop(key, None)
+            stack_order = _unique_field_values(records, stack_field)
+            encoding["order"] = copy.deepcopy(source.get("order") or {
+                "field": "_estimate_stack_order", "type": "quantitative", "sort": "descending",
+            })
+            encoding["opacity"] = {"field": "_estimate_opacity", "type": "quantitative", "scale": None}
+        for record in rendered:
+            record["_estimate_value"] = record.get("value") if stack_mode or _is_estimated_value(record) else None
+            if stack_mode:
+                record["_estimate_stack_order"] = stack_order.index(record[stack_field]) if record.get(stack_field) in stack_order else 0
+                record["_estimate_opacity"] = 1 if _is_estimated_value(record) else 0
+        encoding[value_channel]["field"] = "_estimate_value"
+        encoding[value_channel].setdefault("title", source[value_channel].get("field", "Value"))
+    overlay = {
+        "mark": {"type": "point", "shape": "diamond", "filled": True, "color": "white",
+                 "stroke": ESTIMATE_STROKE, "strokeWidth": 2.5, "size": 130},
+        "encoding": encoding,
+    }
+    if isinstance(prepared.get("layer"), list):
+        prepared["layer"].append(overlay)
+    else:
+        base = {key: value for key, value in prepared.items()
+                if key not in {"data", "title", "width", "height", "autosize", "config", "$schema"}}
+        prepared = {"layer": [base, overlay]}
+    return prepared, rendered, count
+
+
 def prepare_vega_lite_spec(
     spec: dict,
     records: list[dict],
@@ -1048,6 +1175,7 @@ def prepare_vega_lite_spec(
 ) -> dict:
     if not records:
         raise InvalidChartSpec("No chart records were produced from the student answer.")
+    connection_count = 0
     if chart_type == "pie":
         prepared, render_records = _prepare_pie_chart(records, unit, palette)
     else:
@@ -1063,7 +1191,9 @@ def prepare_vega_lite_spec(
             prepared, render_records = _prepare_bar_feedback(prepared, records)
         elif chart_type == "line":
             prepared = _prepare_line_chart(prepared, records)
-            prepared, render_records = _prepare_line_feedback(prepared, records)
+            prepared, render_records, connection_count = _prepare_line_connections(prepared, records)
+            prepared, render_records = _prepare_line_feedback(prepared, render_records)
+    prepared, render_records, estimated_count = _prepare_inference_marks(prepared, render_records, chart_type)
     _validate_tree(prepared)
     _remove_text_outlines(prepared)
     if chart_type == "line":
@@ -1074,11 +1204,20 @@ def prepare_vega_lite_spec(
     prepared["data"] = {"values": render_records}
     chart_title = title or "Student answer visualisation"
     visible_alerts = [str(alert).strip() for alert in (semantic_alerts or []) if str(alert).strip()]
-    if visible_alerts:
+    subtitles = visible_alerts[:3]
+    if estimated_count:
+        subtitles.append('Outlined diamonds: system estimates, not exact figures stated in your report.')
+    if connection_count:
+        subtitles.append('Dashed lines: system connections; the exact intermediate path is not stated.')
+    prepared["usermeta"] = {"vividwrite": {
+        "estimated_value_count": estimated_count,
+        "inferred_connection_count": connection_count,
+    }}
+    if subtitles:
         prepared["title"] = {
             "text": chart_title,
-            "subtitle": visible_alerts[:3],
-            "subtitleColor": SEMANTIC_ALERT_COLOR,
+            "subtitle": subtitles,
+            "subtitleColor": GUIDE_LABEL_COLOR if estimated_count else SEMANTIC_ALERT_COLOR,
             "subtitleFont": CHART_FONT,
             "subtitleFontSize": 11,
             "subtitleFontWeight": "bold",

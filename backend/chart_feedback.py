@@ -1547,6 +1547,35 @@ def _supports_continuous_trend(student_answer: str, series: str) -> bool:
     )
 
 
+def _attach_explicit_record_evidence(result: dict, deplot_text: str, student_answer: str) -> None:
+    """Keep verbatim sentence evidence only when the existing parser confirms the cell.
+
+    Ambiguous contextual claims retain their values but no invented source quote.
+    This metadata never changes the extracted facts or their accuracy status.
+    """
+    chart_type = result.get("chart_type")
+    if chart_type not in {"bar", "line", "pie"}:
+        return
+    records = result.get("records", [])
+    official = parse_numeric_chart_table(deplot_text) if chart_type != "pie" else []
+    labels = [_pie_record_label(record) for record in records] if chart_type == "pie" else []
+    precision = infer_deplot_value_precision(deplot_text, chart_type)
+    for sentence in re.split(r"(?<=[.!?;])\s+|[\r\n]+", student_answer):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        claims = (_collect_explicit_pie_percentages(sentence, labels) if chart_type == "pie"
+                  else _collect_explicit_cartesian_values(sentence, official))
+        for record in records:
+            if not record.get("explicit_student_value") or record.get("missing"):
+                continue
+            key = (_pie_record_label(record) if chart_type == "pie"
+                   else (record.get("category"), record.get("series")))
+            if any(quantize_chart_value(value, precision) == record.get("value")
+                   for value in claims.get(key, [])):
+                record["student_evidence"] = sentence
+
+
 def _period_coordinate(period: str, fallback: int) -> float:
     match = re.search(r"-?\d+(?:\.\d+)?", str(period))
     return float(match.group()) if match else float(fallback)
@@ -1576,11 +1605,15 @@ def _interpolate_supported_temporal_gaps(
     for series in series_names:
         if not _supports_continuous_trend(student_answer, series):
             continue
+        trend_evidence = next((sentence.strip() for sentence in
+            re.split(r"(?<=[.!?])\s+|[\r\n]+", student_answer)
+            if _sentence_has_series(sentence, series) and _CONTINUOUS_TREND_RE.search(sentence)), "")
         series_records = [_matching_record(records, period, series) for period in periods]
         known_indices = [
             index
             for index, record in enumerate(series_records)
             if record is not None and isinstance(record.get("value"), (int, float))
+            and not record.get("estimated") and not record.get("missing")
         ]
         if len(known_indices) < 2:
             continue
@@ -1609,6 +1642,13 @@ def _interpolate_supported_temporal_gaps(
             record["value"] = round(left_value + (right_value - left_value) * ratio, 6)
             record["missing"] = False
             record["estimated"] = True
+            record["inference"] = {
+                "method": "linear_interpolation",
+                "student_evidence": trend_evidence,
+                "explanation": "A straight-line estimate between stated values. The report's trend wording does not specify this exact intermediate value.",
+                "from": {"period": periods[left_index], "value": left_value},
+                "to": {"period": periods[right_index], "value": right_value},
+            }
             record["confidence"] = min(
                 0.6,
                 float(left_record.get("confidence") or 0.5),
@@ -1768,6 +1808,7 @@ class ChartFeedbackService:
                 _validate_temporal_record_coverage(result, deplot_text, student_answer)
                 _interpolate_supported_temporal_gaps(result, deplot_text, student_answer)
                 _annotate_line_accuracy(result, deplot_text)
+                _attach_explicit_record_evidence(result, deplot_text, student_answer)
                 # The former five-class checker remains an internal factual guard for
                 # chart rendering. The user-facing framework is the seven rhetorical moves.
                 content_checks = build_error_taxonomy(copy.deepcopy(result), student_answer)
@@ -1786,6 +1827,7 @@ class ChartFeedbackService:
                 result["style"] = {
                     "color_palette": palette,
                     "renderer": "vega-lite",
+                    "analysis_model": get_deepseek_model(),
                     "semantic_alert_count": len(semantic_alerts),
                 }
                 result["vega_lite_spec"] = render_vega_lite_png(

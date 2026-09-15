@@ -20,6 +20,7 @@ from research_api import (
     router as research_router,
 )
 from revision_review import router as revision_review_router
+from revision_history import RevisionHistoryStore, history_username, router as revision_history_router
 from sample_essay import SampleEssayResponse, router as sample_essay_router
 from spatial_sample_essay import generate_spatial_sample_essay
 from storage import (
@@ -48,6 +49,7 @@ app = FastAPI(title="VividWrite API", version="0.2.0")
 app.include_router(auth_router)
 app.include_router(sample_essay_router)
 app.include_router(revision_review_router)
+app.include_router(revision_history_router)
 app.include_router(research_router)
 app.middleware("http")(authentication_middleware)
 app.middleware("http")(research_request_middleware)
@@ -68,6 +70,8 @@ class ChartAnalysisResponse(BaseModel):
     chart_data: Optional[dict] = None
     chart_url: Optional[str] = None
     revision_suggestions: Optional[list] = None
+    analysis_revision: Optional[dict] = None
+    history_warning: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -401,6 +405,22 @@ async def analyze_chart_with_image(
             if visual_artifact:
                 archived_artifacts.append(visual_artifact)
         revision_suggestions = generate_revision_suggestions(result, student_answer)
+        analysis_revision = None
+        history_warning = None
+        username = history_username(request)
+        if username:
+            try:
+                analysis_revision = await run_in_threadpool(
+                    RevisionHistoryStore().save,
+                    username, image_path.read_bytes(), result.get("chart_type") or chart_type,
+                    extracted_text, student_answer, result, f"/charts/{filename}",
+                    f"/uploads/{image_path.name}",
+                )
+            except Exception:
+                # A storage failure must not discard an otherwise successful review.
+                history_warning = "This review could not be saved to your revision history."
+        else:
+            history_warning = "Sign in to save reviews and compare revisions."
         record_server_event_for_request(
             request,
             "chart_analysis_completed",
@@ -421,6 +441,8 @@ async def analyze_chart_with_image(
             chart_data=result,
             chart_url=f"/charts/{filename}",
             revision_suggestions=revision_suggestions,
+            analysis_revision=analysis_revision,
+            history_warning=history_warning,
         )
     except Exception as exc:
         record_server_event_for_request(

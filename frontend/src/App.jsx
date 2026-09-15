@@ -50,6 +50,7 @@ import {
   locateMoveRange,
   withResolvedMoveVisualUrls,
 } from './moveFeedbackUtils.js';
+import { sameDraftText } from './revisionHistoryUtils.js';
 import {
   abandonResearchSession,
   archiveResearchArtifact,
@@ -304,6 +305,8 @@ export default function App() {
 
   const [chartUrl, setChartUrl] = useState(null);
   const [chartData, setChartData] = useState(null);
+  const [analysisSnapshot, setAnalysisSnapshot] = useState(null);
+  const analysisSequenceRef = useRef(0);
   // New revision review data (vocabulary / grammar / coherence / overall) with mapped suggestions
   const [revisionReview, setRevisionReview] = useState(null); // {overall:{...}, suggestions:[...]}
   const [reviewSuggestions, setReviewSuggestions] = useState([]); // normalized list with id, category, message, severity, ranges
@@ -327,6 +330,15 @@ export default function App() {
     : selectedChartType;
   const isSpatialTask = SPATIAL_TASK_TYPES.has(effectiveChartType);
   const isStatisticalTask = STATISTICAL_TASK_TYPES.has(effectiveChartType);
+  useEffect(() => {
+    analysisSequenceRef.current += 1;
+    setAnalysisSnapshot(null);
+    setChartData(null);
+    setChartUrl(null);
+    setIsAnalyzing(false);
+    setReviewSuggestions([]);
+    setRevisionReview(null);
+  }, [uploadedImage, username, selectedChartType]);
   const [isNextSentenceLoading, setIsNextSentenceLoading] = useState(false);
   const [isSampleEssayLoading, setIsSampleEssayLoading] = useState(false); // separate loading state
   const [nextSentenceError, setNextSentenceError] = useState("");
@@ -855,10 +867,22 @@ export default function App() {
       return;
     }
 
+    const requestSequence = ++analysisSequenceRef.current;
+    const acceptAnalysis = (result) => {
+      setChartUrl(resolveBackendUrl(result.chart_url));
+      setChartData(withResolvedMoveVisualUrls(result.chart_data || null, resolveBackendUrl));
+      setAnalysisSnapshot({
+        revision: result.analysis_revision || null,
+        warning: result.history_warning || '',
+        essay: text,
+      });
+    };
     let taskTypeForAnalysis;
     try {
       taskTypeForAnalysis = await resolveTaskTypeForAction();
+      if (requestSequence !== analysisSequenceRef.current) return;
     } catch (error) {
+      if (requestSequence !== analysisSequenceRef.current) return;
       setAnalysisError(error.message);
       return;
     }
@@ -875,10 +899,9 @@ export default function App() {
       try { await saveRevisionText(username, text); } catch (e) { console.warn('Failed to save revision text', e); }
     }
 
+    if (requestSequence !== analysisSequenceRef.current) return;
     setIsAnalyzing(true);
     setAnalysisError("");
-    setChartUrl(null);
-    setChartData(null);
     setActiveMoveId(null);
     setActiveSuggestionId(null);
 
@@ -890,11 +913,14 @@ export default function App() {
           chartTypeOverride: taskTypeForAnalysis,
         });
       } catch {
-        setDeplotError("Automatic DePlot extraction failed, continuing with placeholder text");
+        if (requestSequence === analysisSequenceRef.current) {
+          setDeplotError("Automatic DePlot extraction failed, continuing with placeholder text");
+        }
       }
     }
 
     try {
+      if (requestSequence !== analysisSequenceRef.current) return;
       if (currentStage === 'revision') {
         // Run BOTH: LLM revision review + chart analysis for visual feedback.
         if (!deplotForAnalysis.trim()) deplotForAnalysis = '(No DePlot data extracted)';
@@ -909,6 +935,7 @@ export default function App() {
         formData.append('deplot_text', deplotForAnalysis);
         const chartPromise = analyzeChartWithImage(formData);
         const [reviewRes, chartRes] = await Promise.allSettled([reviewPromise, chartPromise]);
+        if (requestSequence !== analysisSequenceRef.current) return;
         // helper to normalize chart URL (backend returns /charts/.. relative to backend origin)
         if (reviewRes.status === 'fulfilled' && reviewRes.value.success) {
           console.log('Revision review response:', reviewRes.value);
@@ -922,11 +949,7 @@ export default function App() {
           setAnalysisError(reviewRes.reason?.message || 'Revision review failed');
         }
         if (chartRes.status === 'fulfilled' && chartRes.value.success) {
-          setChartUrl(resolveBackendUrl(chartRes.value.chart_url));
-          setChartData(withResolvedMoveVisualUrls(
-            chartRes.value.chart_data || null,
-            resolveBackendUrl,
-          ));
+          acceptAnalysis(chartRes.value);
         } else if (chartRes.status === 'fulfilled') {
           setAnalysisError(prev => prev ? prev + '; ' + (chartRes.value.error || 'Chart analysis failed') : (chartRes.value.error || 'Chart analysis failed'));
         } else {
@@ -944,21 +967,19 @@ export default function App() {
         if (!deplotForAnalysis.trim()) deplotForAnalysis = '(No DePlot data extracted)';
         formData.append('deplot_text', deplotForAnalysis);
         const result = await analyzeChartWithImage(formData);
+        if (requestSequence !== analysisSequenceRef.current) return;
         if (result.success) {
-          setChartUrl(resolveBackendUrl(result.chart_url));
-          setChartData(withResolvedMoveVisualUrls(
-            result.chart_data || null,
-            resolveBackendUrl,
-          ));
+          acceptAnalysis(result);
         } else {
           setAnalysisError(result.error || "分析失败");
         }
       }
     } catch (error) {
+      if (requestSequence !== analysisSequenceRef.current) return;
       setAnalysisError(error.message);
       trackResearchEvent('analysis_failed', { error: error.message });
     } finally {
-      setIsAnalyzing(false);
+      if (requestSequence === analysisSequenceRef.current) setIsAnalyzing(false);
       trackResearchEvent('analysis_finished', {
         chart_type: taskTypeForAnalysis,
       });
@@ -1037,6 +1058,7 @@ export default function App() {
 
   const handleSelectMove = useCallback((assessment) => {
     if (!assessment) return;
+    if (analysisSnapshot && !sameDraftText(analysisSnapshot.essay, text)) return;
     const nextId = assessment.id === activeMoveId ? null : assessment.id;
     trackResearchEvent('criterion_feedback_toggled', {
       criterion_id: assessment.id,
@@ -1053,7 +1075,17 @@ export default function App() {
     if (range) {
       editorRef.current.highlightRange(range.start, range.end, false);
     }
-  }, [activeMoveId, editorRef, text]);
+  }, [activeMoveId, analysisSnapshot, editorRef, text]);
+
+  const handleLocateRevisionEvidence = useCallback((assessment) => {
+    const range = locateMoveRange(assessment, text);
+    if (!range || !editorRef.current) return;
+    setActiveMoveId(null);
+    setActiveSuggestionId(null);
+    editorRef.current.clearHighlights();
+    editorRef.current.highlightRange(range.start, range.end, false);
+    trackResearchEvent('revision_evidence_located', { excerpt: assessment.excerpt });
+  }, [text]);
 
   const handleNextSentence = async (e) => {
     try {
@@ -1479,6 +1511,8 @@ export default function App() {
               imagePreview={imagePreview}
               chartUrl={chartUrl}
               chartData={chartData}
+              analysisSnapshot={analysisSnapshot}
+              onLocateRevision={handleLocateRevisionEvidence}
               chartFeedbackDetails={(
                 <ChartFeedbackDetails
                   chartData={chartData}

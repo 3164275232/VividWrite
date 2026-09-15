@@ -7,9 +7,15 @@ import {
   Minus,
   Plus,
   RefreshCw,
+  Diamond,
+  LocateFixed,
 } from 'lucide-react';
 import CmEditor from './CmEditor.jsx';
 import { CriteriaAnalysisProgress } from './MoveFeedback.jsx';
+import RevisionProgress from './RevisionProgress.jsx';
+import { inferredRecords, inferenceGroups, sameDraftText } from './revisionHistoryUtils.js';
+import { locateMoveRange } from './moveFeedbackUtils.js';
+import { trackResearchEvent } from './researchTelemetry.js';
 
 function FeedbackStatus({ chartUrl, chartData }) {
   if (!chartUrl) {
@@ -161,6 +167,8 @@ export default function RevisionWorkspace({
   chartUrl,
   chartData,
   chartFeedbackDetails,
+  analysisSnapshot,
+  onLocateRevision,
   activeMoveAssessment,
   text,
   onTextChange,
@@ -178,7 +186,11 @@ export default function RevisionWorkspace({
   const [zoom, setZoom] = useState(100);
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
   const suggestionCount = reviewSuggestions.length;
-  const activeMoveVisual = activeMoveAssessment?.visual?.image_url || null;
+  const stale = Boolean(analysisSnapshot && !sameDraftText(analysisSnapshot.essay, text));
+  const activeMoveVisual = !stale && activeMoveAssessment?.visual?.image_url || null;
+  const estimates = inferredRecords(chartData);
+  const estimateGroups = inferenceGroups(chartData);
+  const connectionCount = chartData?.vega_lite_spec?.usermeta?.vividwrite?.inferred_connection_count || 0;
 
   const changeZoom = (delta) => {
     setZoom((current) => Math.min(180, Math.max(70, current + delta)));
@@ -275,7 +287,50 @@ export default function RevisionWorkspace({
             />
           </figure>
         </div>
+        {chartUrl && isAnalyzing && <p role="status">Analysis in progress. The displayed image is from the last completed review.</p>}
+        {chartUrl && stale && !analysisSnapshot?.revision && <p className="revision-progress-notice" role="status">
+          <AlertCircle size={15} /> Draft changed since this analysis. The image and feedback describe the submitted version; compare again to review your edits.
+        </p>}
+        {chartUrl && (estimates.length > 0 || connectionCount > 0) && <p className="revision-inference-legend">
+          {estimates.length > 0 && <><Diamond size={15} /> Outlined diamonds mark system estimates. </>}
+          {connectionCount > 0 && <>Dashed lines connect points where the exact intermediate path is not stated. </>}
+          Check the original chart before using an estimated number in your writing.
+        </p>}
+        {chartUrl && estimates.length > 0 && (
+          <details className="revision-inference-note" onToggle={(event) => {
+            if (event.currentTarget.open) trackResearchEvent('estimate_explanation_viewed', {
+              analysis_id: analysisSnapshot?.revision?.id || null, estimated_count: estimates.length,
+            });
+          }}>
+            <summary><Diamond size={15} /> {estimates.length} system-estimated {estimates.length === 1 ? 'value' : 'values'} in the generated chart</summary>
+            <p>Diamond markers identify estimates, not exact figures stated in your report. They are not errors by themselves.
+              Check the original chart before adding a number; you do not need to report every data point.</p>
+            <ul>{estimateGroups.map(({ key, label, record, records }) => <li key={key}>
+              <strong>{label}</strong>
+              <p>{records.map((item) => `${records.length > 1 ? `${item.period || item.category}: ` : ''}approximately ${Number(item.value.toPrecision(4))} ${chartData.axes?.unit || ''}`).join(' · ')}</p>
+              {record.inference?.method === 'linear_interpolation' && record.inference.from && record.inference.to
+                ? <p>Interpolated between {record.inference.from.period} ({record.inference.from.value}) and {record.inference.to.period} ({record.inference.to.value}).
+                  This assumes a straight-line change. Your wording does not specify this exact intermediate figure.</p>
+                : <p>The system inferred this number from the report; it was not explicitly stated. Its precise derivation is unavailable in this review.</p>}
+              {record.inference?.student_evidence && <blockquote>{record.inference.student_evidence}</blockquote>}
+              {locateMoveRange({ excerpt: record.inference?.student_evidence }, analysisSnapshot?.essay || '') &&
+                <button type="button" disabled={stale || isAnalyzing}
+                  onClick={() => onLocateRevision({ excerpt: record.inference.student_evidence })}>
+                  <LocateFixed size={14} /> Locate trend description
+                </button>}
+            </li>)}</ul>
+          </details>
+        )}
       </section>
+
+      <RevisionProgress
+        key={analysisSnapshot?.revision?.id || 'no-review'}
+        current={analysisSnapshot?.revision}
+        warning={analysisSnapshot?.warning}
+        text={text}
+        isAnalyzing={isAnalyzing}
+        onLocate={onLocateRevision}
+      />
 
       <section className="revision-editing-grid">
         <div className="revision-editor-panel">

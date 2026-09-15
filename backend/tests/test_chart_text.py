@@ -36,6 +36,10 @@ ISOLATED_PLOT_TEXT = (
 
 
 class ChartTextTests(unittest.TestCase):
+    def test_temporal_framework_includes_a_single_series(self):
+        self.assertEqual(parse_series_framework("TITLE | Travel\nYear | Rail\n2010 | 10\n2015 | 15\n2020 | 20"),
+                         [("2010", "Rail"), ("2015", "Rail"), ("2020", "Rail")])
+
     def test_deplot_values_use_conventional_integer_rounding(self):
         rounded = round_deplot_table_values(
             "TITLE | Recycling<0x0A>Year | City A | City B<0x0A>"

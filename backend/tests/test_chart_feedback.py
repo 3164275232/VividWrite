@@ -12,14 +12,55 @@ from chart_feedback import (
     _annotate_bar_accuracy,
     _annotate_line_accuracy,
     _annotate_pie_accuracy,
+    _attach_explicit_record_evidence,
     _collect_explicit_cartesian_values,
     _collect_explicit_pie_percentages,
     _enforce_explicit_cartesian_values,
     _enforce_explicit_pie_values,
+    _interpolate_supported_temporal_gaps,
     _normalise_result,
     _remove_unsupported_pie_values,
 )
 from chart_renderer import InvalidChartSpec, extract_image_palette, prepare_vega_lite_spec
+
+
+class RecordEvidenceTests(unittest.TestCase):
+    def test_explicit_value_evidence_uses_the_same_cell_parser_and_an_exact_sentence(self):
+        table = "City | 2015 | 2020\nBristol | 42 | 55\nLeeds | 35 | 48"
+        essay = "Bristol recorded 47% in 2015. Leeds reached 48% in 2020."
+        result = {"chart_type": "bar", "records": []}
+        _enforce_explicit_cartesian_values(result, table, essay)
+        _attach_explicit_record_evidence(result, table, essay)
+        rows = {(row["category"], row["series"]): row for row in result["records"]}
+        self.assertEqual(rows[("Bristol", "2015")]["student_evidence"], "Bristol recorded 47% in 2015.")
+        self.assertNotIn("student_evidence", rows[("Bristol", "2020")])
+        self.assertEqual(rows[("Bristol", "2015")]["value"], 47)
+
+    def test_pie_evidence_preserves_the_student_sentence(self):
+        table = "Category | Percentage\nHousing | 60%\nFood | 40%"
+        essay = "Housing accounted for 60%, while food represented 40%."
+        result = {"chart_type": "pie", "records": [
+            {"category": "Housing", "value": 60, "explicit_student_value": True},
+            {"category": "Food", "value": 40, "explicit_student_value": True}]}
+        _attach_explicit_record_evidence(result, table, essay)
+        self.assertEqual([row["student_evidence"] for row in result["records"]], [essay, essay])
+
+    def test_interpolation_records_the_trend_quote_and_never_uses_estimated_anchors(self):
+        table = "Year | Rail\n2010 | 10\n2015 | 15\n2020 | 20"
+        essay = "Rail rose steadily from 10 in 2010 to 20 in 2020."
+        def result():
+            return {"chart_type": "line", "records": [
+                {"category": "2010", "series": "Rail", "value": 10},
+                {"category": "2015", "series": "Rail", "value": None, "missing": True},
+                {"category": "2020", "series": "Rail", "value": 20}]}
+        chart = result()
+        _interpolate_supported_temporal_gaps(chart, table, essay)
+        self.assertEqual(chart["records"][1]["inference"]["student_evidence"], essay)
+        self.assertEqual(chart["records"][1]["value"], 15)
+        chart = result()
+        chart["records"][0]["estimated"] = True
+        _interpolate_supported_temporal_gaps(chart, table, essay)
+        self.assertIsNone(chart["records"][1]["value"])
 
 
 def _model_payload(chart_type="bar"):
@@ -1590,7 +1631,7 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(prepared["encoding"]["color"]["field"], "series")
         self.assertEqual(prepared["encoding"]["color"]["scale"]["domain"], ["Bus", "Rail"])
 
-    def test_line_chart_connects_known_points_across_unmentioned_periods(self):
+    def test_line_chart_marks_connections_across_unmentioned_periods_as_inferred(self):
         periods = ["2010", "2012", "2014", "2016", "2018", "2020"]
         endpoint_values = {
             "Bus": {"2010": 1.8, "2020": 1.3},
@@ -1623,9 +1664,9 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
             chart_type="line",
         )
 
-        self.assertEqual(prepared["mark"]["type"], "line")
-        self.assertEqual(prepared["mark"]["invalid"], "filter")
-        self.assertEqual(prepared["encoding"]["x"]["sort"], periods)
+        self.assertEqual(prepared["layer"][0]["mark"]["type"], "line")
+        self.assertEqual(prepared["layer"][0]["encoding"]["x"]["sort"], periods)
+        self.assertEqual(prepared["usermeta"]["vividwrite"]["inferred_connection_count"], 3)
         self.assertEqual(sum(record["value"] is not None for record in records), 6)
 
     def test_line_chart_restores_series_grouping_when_model_uses_wrong_mark(self):

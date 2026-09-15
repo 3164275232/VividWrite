@@ -40,6 +40,12 @@ export function locateMoveRange(assessment, text) {
     return { start: range.start, end: range.end };
   }
   if (!excerpt) return null;
-  const index = text.indexOf(excerpt);
-  return index >= 0 ? { start: index, end: index + excerpt.length } : null;
+  let index = text.indexOf(excerpt);
+  let matchedExcerpt = excerpt;
+  if (index < 0) {
+    // Multipart forms use CRLF; CodeMirror keeps LF in the editable draft.
+    matchedExcerpt = excerpt.replace(/\r\n?/g, '\n');
+    index = text.indexOf(matchedExcerpt);
+  }
+  return index >= 0 ? { start: index, end: index + matchedExcerpt.length } : null;
 }
