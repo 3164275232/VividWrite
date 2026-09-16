@@ -131,7 +131,6 @@ export default function MoveFeedback({ chartData, activeMoveId, onSelectMove }) 
               : 'All criteria are currently clear'}
           </span>
         </div>
-        <small>Criteria review · v{feedback.version || '1.0'}</small>
       </div>
 
       <div className="move-feedback-list" aria-label="Seven writing criteria">
@@ -161,7 +160,7 @@ export default function MoveFeedback({ chartData, activeMoveId, onSelectMove }) 
                   <span className="move-number">{assessment.number}</span>
                   <span className="move-trigger-copy">
                     <strong>{assessment.label}</strong>
-                    <small>{assessment.purpose}</small>
+                    {isActive && <small>{assessment.purpose}</small>}
                   </span>
                   {isRevealed ? (
                     <span
@@ -183,20 +182,7 @@ export default function MoveFeedback({ chartData, activeMoveId, onSelectMove }) 
                     </span>
                   )}
                 </button>
-                {hasVisual && isRevealed ? (
-                  <button
-                    className="move-visual-button"
-                    type="button"
-                    onClick={() => onSelectMove(assessment)}
-                    aria-label={`View visual feedback for criterion ${assessment.number}`}
-                    aria-expanded={isActive}
-                    title="View visual feedback"
-                  >
-                    <Eye size={17} aria-hidden="true" />
-                  </button>
-                ) : (
-                  <span className="move-visual-placeholder" aria-hidden="true" />
-                )}
+                {hasVisual && isRevealed && <span className="move-visual-indicator" title="Includes a chart cue"><Eye size={15} aria-hidden="true" /></span>}
               </div>
 
               {isActive && (

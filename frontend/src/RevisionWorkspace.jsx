@@ -4,10 +4,7 @@ import {
   BarChart3,
   CheckCircle2,
   FileText,
-  Minus,
-  Plus,
   RefreshCw,
-  Diamond,
   LocateFixed,
 } from 'lucide-react';
 import CmEditor from './CmEditor.jsx';
@@ -192,49 +189,23 @@ export default function RevisionWorkspace({
   const estimateGroups = inferenceGroups(chartData);
   const connectionCount = chartData?.vega_lite_spec?.usermeta?.vividwrite?.inferred_connection_count || 0;
 
-  const changeZoom = (delta) => {
-    setZoom((current) => Math.min(180, Math.max(70, current + delta)));
-  };
+  const statedCount = (chartData?.records || []).filter((record) => record.explicit_student_value
+    && !record.missing && typeof record.value === 'number' && Number.isFinite(record.value)).length;
+  const showProvenance = chartUrl && ['bar', 'line', 'pie', 'area'].includes(chartData?.chart_type);
 
   return (
     <div className="revision-workspace">
       <section className="revision-comparison">
         <header className="revision-comparison-header">
           <div>
-            <span className="panel-eyebrow">Revision workspace</span>
-            <h1>Compare what the task shows with what your report communicates</h1>
+            <span className="panel-eyebrow">Compare · Notice · Revise</span>
+            <h1>Review your writing</h1>
           </div>
           <div className="revision-comparison-actions">
-            <div className="revision-zoom-controls" aria-label="Comparison zoom">
-              <button
-                className="icon-button"
-                type="button"
-                onClick={() => changeZoom(-10)}
-                aria-label="Zoom out"
-                title="Zoom out"
-                disabled={zoom <= 70}
-              >
-                <Minus size={15} />
-              </button>
-              <button
-                className="revision-zoom-value"
-                type="button"
-                onClick={() => setZoom(100)}
-                title="Reset zoom"
-              >
-                {zoom}%
-              </button>
-              <button
-                className="icon-button"
-                type="button"
-                onClick={() => changeZoom(10)}
-                aria-label="Zoom in"
-                title="Zoom in"
-                disabled={zoom >= 180}
-              >
-                <Plus size={15} />
-              </button>
-            </div>
+            <select className="revision-zoom-select" aria-label="Chart zoom" value={zoom}
+              onChange={(event) => setZoom(Number(event.target.value))}>
+              {[70, 85, 100, 125, 150, 180].map((value) => <option key={value} value={value}>{value}%</option>)}
+            </select>
             <button
               className="revision-primary-action"
               type="button"
@@ -272,7 +243,7 @@ export default function RevisionWorkspace({
             <figcaption>
               <span>
                 <small>Your report</small>
-                Image generated from your text
+                From your report
               </span>
               <FeedbackStatus chartUrl={chartUrl} chartData={chartData} />
             </figcaption>
@@ -291,32 +262,33 @@ export default function RevisionWorkspace({
         {chartUrl && stale && !analysisSnapshot?.revision && <p className="revision-progress-notice" role="status">
           <AlertCircle size={15} /> Draft changed since this analysis. The image and feedback describe the submitted version; compare again to review your edits.
         </p>}
-        {chartUrl && (estimates.length > 0 || connectionCount > 0) && <p className="revision-inference-legend">
-          {estimates.length > 0 && <><Diamond size={15} /> Outlined diamonds mark system estimates. </>}
-          {connectionCount > 0 && <>Dashed lines connect points where the exact intermediate path is not stated. </>}
-          Check the original chart before using an estimated number in your writing.
-        </p>}
+        {showProvenance && <div className="revision-provenance-bar" aria-label="Chart data sources">
+          <span><i className="provenance-swatch" aria-hidden="true" /><strong>{statedCount}</strong> stated in your report</span>
+          <span><i className="provenance-swatch provenance-swatch--inferred" aria-hidden="true" /><strong>{estimates.length}</strong> system-inferred</span>
+          {estimates.length === 0 && <small>No inferred values in this review.</small>}
+        </div>}
         {chartUrl && estimates.length > 0 && (
-          <details className="revision-inference-note" onToggle={(event) => {
+          <details key={analysisSnapshot?.revision?.id || chartUrl} className="revision-inference-note" onToggle={(event) => {
             if (event.currentTarget.open) trackResearchEvent('estimate_explanation_viewed', {
               analysis_id: analysisSnapshot?.revision?.id || null, estimated_count: estimates.length,
             });
           }}>
-            <summary><Diamond size={15} /> {estimates.length} system-estimated {estimates.length === 1 ? 'value' : 'values'} in the generated chart</summary>
-            <p>Diamond markers identify estimates, not exact figures stated in your report. They are not errors by themselves.
-              Check the original chart before adding a number; you do not need to report every data point.</p>
+            <summary>How were these values inferred?</summary>
+            <p>Striped shapes show values derived from your description. Solid shapes keep the stated values.
+              You do not need to report every data point.</p>
+            {connectionCount > 0 && <p>Dashed lines connect points where the exact intermediate path was not stated.</p>}
             <ul>{estimateGroups.map(({ key, label, record, records }) => <li key={key}>
               <strong>{label}</strong>
               <p>{records.map((item) => `${records.length > 1 ? `${item.period || item.category}: ` : ''}approximately ${Number(item.value.toPrecision(4))} ${chartData.axes?.unit || ''}`).join(' · ')}</p>
               {record.inference?.method === 'linear_interpolation' && record.inference.from && record.inference.to
                 ? <p>Interpolated between {record.inference.from.period} ({record.inference.from.value}) and {record.inference.to.period} ({record.inference.to.value}).
                   This assumes a straight-line change. Your wording does not specify this exact intermediate figure.</p>
-                : <p>The system inferred this number from the report; it was not explicitly stated. Its precise derivation is unavailable in this review.</p>}
+                : <p>{record.inference?.explanation || 'This value was inferred; its derivation is unavailable in this review.'}</p>}
               {record.inference?.student_evidence && <blockquote>{record.inference.student_evidence}</blockquote>}
               {locateMoveRange({ excerpt: record.inference?.student_evidence }, analysisSnapshot?.essay || '') &&
                 <button type="button" disabled={stale || isAnalyzing}
                   onClick={() => onLocateRevision({ excerpt: record.inference.student_evidence })}>
-                  <LocateFixed size={14} /> Locate trend description
+                  <LocateFixed size={14} /> Show source sentence
                 </button>}
             </li>)}</ul>
           </details>

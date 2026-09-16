@@ -81,25 +81,31 @@ function responseFor(sequence, essay) {
     await page.getByRole('button', { name: 'Next Stage', exact: true }).click();
     await page.getByRole('button', { name: 'Confirm', exact: true }).click();
     await page.getByRole('button', { name: 'Analyze report', exact: true }).click();
-    await page.getByText('Your first saved review for this task.', { exact: false }).waitFor();
-    await page.getByText('8 system-estimated values in the generated chart').click();
+    await page.getByText('Your first review.', { exact: false }).waitFor();
+    await page.getByText('How were these values inferred?').click();
     await page.getByText('Interpolated between 2010 (1.1) and 2020 (2.2)', { exact: false }).first().waitFor();
-    await page.getByRole('button', { name: 'Locate trend description', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Show source sentence', exact: true }).first().click();
     await page.locator('.cm-hl-yellow').first().waitFor();
     await editor.fill(secondEssay);
     await page.getByText('Draft changed since Review 1.', { exact: false }).waitFor();
     await page.getByRole('button', { name: 'Compare again', exact: true }).click();
+    await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+    assert.equal(await page.locator('.revision-inference-note').evaluate(node => node.open), false,
+      'A new review starts with inference details collapsed');
     await page.locator('details.revision-change--addressed').waitFor();
     await page.locator('.revision-change--addressed summary').click();
-    await page.getByRole('button', { name: 'Locate current passage', exact: true }).click();
+    await page.getByRole('button', { name: 'Show in draft', exact: true }).click();
     await page.locator('.cm-hl-yellow').first().waitFor();
     await page.getByText('Seven writing criteria reviewed', { exact: true }).waitFor();
-    assert.equal(await page.locator('.revision-change--addressed').count(), 2); // one count and one detail
+    assert.equal(await page.locator('.revision-change--addressed').count(), 1);
     await page.locator('.revision-workspace').evaluate((node) => { node.scrollTop = 0; });
+    await page.getByRole('button', { name: 'Hide changes', exact: true }).click();
     await page.screenshot({ path: path.join(output, 'revision-desktop.png'), fullPage: true });
+    assert.ok(await page.locator('.revision-progress').evaluate(node => node.getBoundingClientRect().height < 160), 'Default progress stays compact');
     await editor.fill(thirdEssay);
     await page.getByRole('button', { name: 'Compare again', exact: true }).click();
-    await page.getByText('No flagged criteria in either review.', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+    await page.getByText('No flagged changes between these reviews.', { exact: false }).waitFor();
     const draftBeforeSelection = await editor.innerText();
     await page.getByLabel('Compare with earlier review').selectOption('review-1');
     await page.locator('details.revision-change--addressed').waitFor();
@@ -123,20 +129,23 @@ function responseFor(sequence, essay) {
     await page.setViewportSize({ width: 1440, height: 1080 });
     await editor.fill(thirdEssay.replace('Bus use declined from 1.8', 'Bus use declined from 1.4'));
     await page.getByRole('button', { name: 'Compare again', exact: true }).click();
-    await page.locator('.revision-value-changes details.revision-change--new').waitFor();
+    await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+    await page.locator('details.revision-change--new[data-change-kind="value"]').waitFor();
     await editor.fill(thirdEssay);
     await page.getByRole('button', { name: 'Compare again', exact: true }).click();
-    const correctedValue = page.locator('.revision-value-changes details.revision-change--addressed');
+    await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+    const correctedValue = page.locator('details.revision-change--addressed[data-change-kind="value"]');
     await correctedValue.waitFor();
     await correctedValue.locator('summary').click();
     await correctedValue.getByText('Reported value: 1.4', { exact: true }).waitFor();
     await correctedValue.getByText('Reported value: 1.8', { exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Locate revised value', exact: true }).click();
+    await page.getByRole('button', { name: 'Show in draft', exact: true }).click();
     assert.match(await page.locator('.cm-hl-yellow').first().innerText(), /Bus use declined from 1\.8/);
-    assert.equal(await page.locator('details.revision-change--continuing').count(), 1,
-      'The remaining criterion concern does not hide a corrected value');
     await page.locator('.revision-progress').scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(output, 'revision-value-progress.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Needs attention 1', exact: true }).click();
+    assert.equal(await page.locator('details.revision-change--continuing').count(), 1,
+      'The remaining criterion concern stays accessible in its filter');
     failNextAnalysis = true;
     await page.getByRole('button', { name: 'Compare again', exact: true }).click();
     await page.getByText('Synthetic analysis failure', { exact: true }).waitFor();
@@ -151,6 +160,6 @@ function responseFor(sequence, essay) {
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1), false);
     assert.deepEqual(failures, []);
-    console.log(JSON.stringify({ result: 'PASS', checks: ['first review', 'stale draft', 'addressed evidence', 'sentence highlight', 'earlier baseline', 'draft preservation', 'estimated details and source quote', 'specific value correction with continuing criterion', 'failed reanalysis', 'stale notice without saved history', 'desktop/mobile layout'], output }, null, 2));
+    console.log(JSON.stringify({ result: 'PASS', checks: ['first review', 'stale draft', 'addressed evidence', 'sentence highlight', 'earlier baseline', 'draft preservation', 'estimated details and source quote', 'specific value correction with continuing criterion', 'failed reanalysis', 'stale notice without saved history', 'compact summary and change filters', 'desktop/mobile layout'], output }, null, 2));
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, History, LocateFixed, RefreshCw, AlertCircle } from 'lucide-react';
+import { useEffect, useId, useMemo, useState } from 'react';
+import { CheckCircle2, ChevronDown, History, LocateFixed, RefreshCw, AlertCircle } from 'lucide-react';
 import { getRevisionHistory, resolveBackendUrl } from './api.js';
 import { comparableRevisions, compareRevisions, compareRecordValues, REVISION_STATES, sameDraftText } from './revisionHistoryUtils.js';
 import { locateMoveRange } from './moveFeedbackUtils.js';
@@ -28,6 +28,9 @@ function ReportedValue({ record, label }) {
 }
 
 export default function RevisionProgress({ current, text, isAnalyzing, warning, onLocate }) {
+  const [expanded, setExpanded] = useState(false);
+  const [activeGroup, setActiveGroup] = useState('improved');
+  const panelId = useId();
   const [revisions, setRevisions] = useState([]);
   const [selectedId, setSelectedId] = useState('');
   const [nextBefore, setNextBefore] = useState(null);
@@ -72,120 +75,131 @@ export default function RevisionProgress({ current, text, isAnalyzing, warning, 
     finally { setLoadingMore(false); }
   };
 
+  const changes = [
+    ...valueComparison.items.map((item) => ({ ...item, kind: 'value', title: item.label })),
+    ...comparison.items.map((item) => ({ ...item, kind: 'criterion',
+      key: item.code, title: item.after?.label || item.before?.label })),
+  ];
+  const groups = [
+    { id: 'improved', label: 'Improved', items: changes.filter((item) => item.state === 'addressed') },
+    { id: 'attention', label: 'Needs attention', items: changes.filter((item) => ['new', 'continuing'].includes(item.state)) },
+    { id: 'other', label: 'Other changes', items: changes.filter((item) => !['addressed', 'new', 'continuing'].includes(item.state)) },
+  ].filter((group) => group.items.length);
+  const selectedGroup = groups.find((group) => group.id === activeGroup) || groups[0];
+  const improved = changes.filter((item) => item.state === 'addressed');
+  const attention = changes.filter((item) => ['new', 'continuing'].includes(item.state));
+  const shortState = { addressed: 'Improved', continuing: 'Still needs attention', new: 'New concern',
+    reassessed: 'Review changed', optional: 'Now optional', unverified: 'Not verified' };
+
   if (!current && !warning) return null;
   return (
     <section className="revision-progress" aria-label="Revision progress">
       <header className="revision-progress-heading">
-        <h2><History size={17} /> Revision progress</h2>
-        {current && <span>Review {current.sequence} · {new Date(current.created_at).toLocaleString()}</span>}
-        {previous && (
-          <label>
-            Compare with
-            <select aria-label="Compare with earlier review" value={previous.id}
-              disabled={isAnalyzing || loading}
-              onChange={(event) => {
-                setSelectedId(event.target.value);
-                trackResearchEvent('revision_baseline_selected', {
-                  analysis_id: current.id, baseline_id: event.target.value,
-                });
-              }}>
-              {candidates.map((item) => <option value={item.id} key={item.id}>
-                Review {item.sequence} · {new Date(item.created_at).toLocaleString()}
-              </option>)}
-            </select>
-          </label>
-        )}
+        <div className="revision-progress-overview">
+          <div className="revision-progress-title">
+            <h2>This revision</h2>
+            {current && <span>Review {current.sequence}</span>}
+            {previous && <span className="revision-baseline-caption">since Review {previous.sequence}</span>}
+          </div>
+          {previous && !comparison.warning && <p className="revision-progress-preview" aria-live="polite">
+            {improved.length ? <><CheckCircle2 size={16} /><span><strong>Improved:</strong>{' '}
+              {improved.slice(0, 2).map((item) => item.kind === 'value'
+                ? `${item.title} (${item.before.value} → ${item.after.value})` : item.title).join(' · ')}
+              {improved.length > 2 && ` +${improved.length - 2} more`}</span></>
+              : <span>{attention.length ? 'Keep revising the areas below.' : 'No verified improvements in this comparison.'}</span>}
+            {attention.length > 0 && <span className="revision-attention-count">{attention.length} to revisit</span>}
+          </p>}
+          {current && !previous && !loading && !error && <p>Your first review. Revise your report, then compare again.</p>}
+          {loading && <p role="status">Loading earlier reviews…</p>}
+        </div>
+        {previous && <button type="button" className="revision-disclosure" aria-expanded={expanded}
+          aria-controls={panelId} onClick={() => setExpanded((value) => !value)}>
+          {expanded ? 'Hide changes' : 'Review changes'}<ChevronDown size={15} />
+        </button>}
       </header>
       {warning && <p className="revision-progress-notice" role="status">{warning}</p>}
       {error && <p className="revision-progress-notice" role="alert">History could not be loaded.
         <button type="button" onClick={() => setReload((value) => value + 1)}><RefreshCw size={14} /> Retry</button>
       </p>}
-      {loading && <p role="status">Loading earlier reviews...</p>}
       {current && stale && <p className="revision-progress-notice" role="status">
-        <AlertCircle size={15} /> Draft changed since Review {current.sequence}. Compare again to check your latest edits.
-      </p>}
-      {current && !previous && !loading && !error && <p>
-        Your first saved review for this task. After revising, compare again to see what changed.
+        <AlertCircle size={15} /> Draft changed since Review {current.sequence}. Compare again to check your edits.
       </p>}
       {comparison.warning && <p className="revision-progress-notice">{comparison.warning}</p>}
-      {previous && !comparison.warning && <>
-        <p>Comparing Review {current.sequence} with Review {previous.sequence}. These are review outcomes for this task, not a measure of lasting mastery.</p>
-        {valueComparison.warning && <p>{valueComparison.warning}</p>}
-        {valueComparison.items.length > 0 && <section className="revision-value-changes" aria-label="Changes to reported values">
-          <h3>What changed in your reported values</h3>
-          <p>Only previously or currently flagged values are compared. Unreported details are not automatically writing errors.</p>
-          {valueComparison.items.map((item) => (
-            <details className={`revision-change revision-change--${item.state}`} key={item.key}
-              onToggle={(event) => {
-                if (event.currentTarget.open) trackResearchEvent('revision_value_evidence_viewed', {
-                  analysis_id: current.id, baseline_id: previous.id, record_key: item.key, state: item.state,
-                });
+      {previous && <div className="revision-progress-body" id={panelId} hidden={!expanded}>
+        <div className="revision-progress-toolbar">
+          <div className="revision-change-filters" role="group" aria-label="Filter revision changes">
+            {groups.map((group) => <button key={group.id} type="button"
+              aria-pressed={selectedGroup?.id === group.id} onClick={() => setActiveGroup(group.id)}>
+              {group.label}<span>{group.items.length}</span>
+            </button>)}
+          </div>
+          <label className="revision-baseline-select">Compare with
+            <select aria-label="Compare with earlier review" value={previous.id} disabled={isAnalyzing || loading}
+              onChange={(event) => {
+                setSelectedId(event.target.value);
+                trackResearchEvent('revision_baseline_selected', { analysis_id: current.id, baseline_id: event.target.value });
               }}>
-              <summary><span>{item.label}</span><strong>{REVISION_STATES[item.state]}</strong></summary>
-              <p>{item.message}</p>
-              <p>Reference value: <strong>{item.after.official_value} {current.unit || ''}</strong>
-                {' · '}Accepted tolerance: ±{item.tolerance} {current.unit || ''}</p>
-              <div className="revision-evidence-grid">
-                <ReportedValue record={item.before} label={`Review ${previous.sequence}`} />
-                <ReportedValue record={item.after} label={`Review ${current.sequence}`} />
-              </div>
-              {locateMoveRange({ excerpt: item.after.student_evidence }, current.essay) &&
-                <button type="button" disabled={stale || isAnalyzing}
-                  onClick={() => onLocate({ excerpt: item.after.student_evidence })}>
-                  <LocateFixed size={14} /> Locate revised value
-                </button>}
-            </details>
-          ))}
-        </section>}
-        <h3>Changes in writing criteria</h3>
-        <div className="revision-progress-counts" aria-live="polite">
-          {['addressed', 'continuing', 'new', 'reassessed'].map((state) => (
-            <span className={`revision-change--${state}`} key={state}>
-              {state === 'addressed' ? <CheckCircle2 size={15} /> : state === 'reassessed' ? <RefreshCw size={15} /> : <AlertCircle size={15} />}
-              <strong>{comparison.items.filter((item) => item.state === state).length}</strong> {REVISION_STATES[state]}
-            </span>
-          ))}
+              {candidates.map((item) => <option value={item.id} key={item.id}>
+                Review {item.sequence} · {new Date(item.created_at).toLocaleDateString()}
+              </option>)}
+            </select>
+          </label>
         </div>
-        {!comparison.items.length && <p>No flagged criteria in either review. This is not a guarantee that the report is error-free.</p>}
-        {comparison.items.map((item) => (
-          <details className={`revision-change revision-change--${item.state}`} key={item.code}
+        {valueComparison.warning && <p className="revision-comparison-note">{valueComparison.warning}</p>}
+        {selectedGroup?.items.map((item) => {
+          const excerpt = item.kind === 'value' ? item.after.student_evidence : item.after?.excerpt;
+          return <details name={panelId + '-evidence'} className={`revision-change revision-change--${item.state}`}
+            key={item.kind + item.key} data-change-kind={item.kind}
             onToggle={(event) => {
-              if (event.currentTarget.open) trackResearchEvent('revision_criterion_evidence_viewed', {
-                analysis_id: current.id, baseline_id: previous.id, criterion_code: item.code, state: item.state,
+              if (event.currentTarget.open) trackResearchEvent(`revision_${item.kind}_evidence_viewed`, {
+                analysis_id: current.id, baseline_id: previous.id, item_key: item.key, state: item.state,
               });
             }}>
-            <summary>
-              <span>Criterion {item.after?.number || item.before?.number}: {item.after?.label || item.before?.label}</span>
-              <strong>{REVISION_STATES[item.state]}</strong>
-            </summary>
-            <p>{item.message}</p>
-            <div className="revision-evidence-grid">
-              <ReviewEvidence assessment={item.before} label={`Review ${previous.sequence}`} />
-              <ReviewEvidence assessment={item.after} label={`Review ${current.sequence}`} />
+            <summary><span><small>{item.kind === 'value' ? 'Reported value' : 'Writing'}</small>{item.title}</span>
+              <strong>{shortState[item.state] || REVISION_STATES[item.state]}</strong><ChevronDown size={15} /></summary>
+            <div className="revision-change-detail">
+              <p>{item.message}</p>
+              <div className="revision-evidence-grid">
+                {item.kind === 'value' ? <>
+                  <ReportedValue record={item.before} label={`Before · Review ${previous.sequence}`} />
+                  <ReportedValue record={item.after} label={`Now · Review ${current.sequence}`} />
+                </> : <>
+                  <ReviewEvidence assessment={item.before} label={`Before · Review ${previous.sequence}`} />
+                  <ReviewEvidence assessment={item.after} label={`Now · Review ${current.sequence}`} />
+                </>}
+              </div>
+              <div className="revision-evidence-actions">
+                {item.kind === 'value' && <span>Reference: {item.after.official_value} {current.unit || ''}
+                  {' · '}Tolerance: ±{item.tolerance}</span>}
+                {locateMoveRange({ excerpt }, current.essay) && <button type="button" disabled={stale || isAnalyzing}
+                  onClick={() => onLocate({ excerpt })}><LocateFixed size={14} /> Show in draft</button>}
+              </div>
             </div>
-            {locateMoveRange(item.after, current.essay) && <button type="button" disabled={stale || isAnalyzing}
-              onClick={() => onLocate(item.after)}><LocateFixed size={14} /> Locate current passage</button>}
-          </details>
-        ))}
-        {[...comparison.items, ...valueComparison.items].some((item) => item.state === 'addressed') &&
-          <p className="revision-learning-prompt">Before your next task, explain which change helped your reader and how you could use that approach with a new chart.</p>}
-      </>}
-      {previous && <details className="revision-history-archive">
-        <summary>Earlier report and images · Review {previous.sequence}</summary>
-        <div className="revision-history-images">
-          {[['Original task', previous.original_url], ['Generated from the earlier report', previous.chart_url]].map(([label, url]) => (
-            url && <figure key={label}><img src={resolveBackendUrl(url)} alt={label} loading="lazy" /><figcaption>{label}</figcaption></figure>
-          ))}
-          {(previous.assessments || []).filter((item) => item.visual?.image_url).map((item) => (
-            <figure key={item.code}><img src={resolveBackendUrl(item.visual.image_url)} alt={`Earlier criterion ${item.number} annotation`} loading="lazy" />
-              <figcaption>Criterion {item.number} · Earlier annotation</figcaption></figure>
-          ))}
-        </div>
-        <div className="revision-history-essay">{previous.essay}</div>
-      </details>}
-      {nextBefore && <button type="button" disabled={loadingMore} onClick={loadMore}>
-        <History size={14} /> {loadingMore ? 'Loading...' : 'Load earlier reviews'}
-      </button>}
+          </details>;
+        })}
+        {!changes.length && !comparison.warning && <p>No flagged changes between these reviews.</p>}
+        {selectedGroup?.id === 'improved' && <p className="revision-learning-prompt">
+          What made this revision clearer? Try the same approach with your next chart.
+        </p>}
+        <details className="revision-history-archive">
+          <summary><History size={14} /> Earlier draft & images · Review {previous.sequence}</summary>
+          <div className="revision-history-images">
+            {[['Original task', previous.original_url], ['Generated from the earlier report', previous.chart_url]].map(([label, url]) => (
+              url && <figure key={label}><img src={resolveBackendUrl(url)} alt={label} loading="lazy" /><figcaption>{label}</figcaption></figure>
+            ))}
+            {(previous.assessments || []).filter((item) => item.visual?.image_url).map((item) => (
+              <figure key={item.code}><img src={resolveBackendUrl(item.visual.image_url)} alt={`Earlier criterion ${item.number} annotation`} loading="lazy" />
+                <figcaption>Criterion {item.number} · Earlier annotation</figcaption></figure>
+            ))}
+          </div>
+          <div className="revision-history-essay">{previous.essay}</div>
+        </details>
+        {nextBefore && <button type="button" disabled={loadingMore} onClick={loadMore}>
+          {loadingMore ? 'Loading…' : 'Load earlier reviews'}
+        </button>}
+        <p className="revision-comparison-note">Changes refer to these two drafts. They do not measure lasting mastery or require you to report every data point.</p>
+      </div>}
+      {!previous && nextBefore && <button type="button" disabled={loadingMore} onClick={loadMore}>Load earlier reviews</button>}
     </section>
   );
 }

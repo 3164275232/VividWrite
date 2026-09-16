@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from chart_detection import detect_chart_type
+from chart_inference import finalise_provenance, infer_supported_comparisons, is_asserted_claim
 from chart_renderer import InvalidChartSpec, extract_image_palette, render_vega_lite_png
 from chart_text import (
     InvalidExtractedChartData,
@@ -985,7 +986,7 @@ def _merge_explicit_cartesian_values(
 ) -> None:
     """Make explicit essay values authoritative for bar and line chart records."""
     chart_type = result.get("chart_type")
-    if chart_type not in {"bar", "line"}:
+    if chart_type not in {"bar", "line", "area"}:
         return
     official_records = parse_numeric_chart_table(deplot_text)
     if not official_records:
@@ -1058,7 +1059,7 @@ def _remove_unsupported_cartesian_values(
     student_answer: str,
 ) -> None:
     """Remove model values that cannot be traced to an explicit essay claim."""
-    if result.get("chart_type") not in {"bar", "line"}:
+    if result.get("chart_type") not in {"bar", "line", "area"}:
         return
     official_records = parse_numeric_chart_table(deplot_text)
     if not official_records:
@@ -1104,7 +1105,7 @@ def _enforce_explicit_cartesian_values(
 ) -> None:
     """Make the local text parser authoritative before chart annotation/rendering."""
     chart_type = result.get("chart_type")
-    if chart_type not in {"bar", "line"}:
+    if chart_type not in {"bar", "line", "area"}:
         return
     official_records = parse_numeric_chart_table(deplot_text)
     if not official_records:
@@ -1208,8 +1209,11 @@ def _annotate_pie_accuracy(result: dict, deplot_text: str, tolerance: float = 0.
             record["error_delta"] = round(delta, 6)
             conflicting_values = record.get("conflicting_values")
             has_conflict = isinstance(conflicting_values, list) and len(conflicting_values) > 1
-            record["incorrect"] = has_conflict or abs(delta) > tolerance
-            if has_conflict:
+            is_inferred = bool(record.get("estimated")) and not record.get("explicit_student_value")
+            record["incorrect"] = not is_inferred and (has_conflict or abs(delta) > tolerance)
+            if is_inferred:
+                record["feedback_status"] = "estimated"
+            elif has_conflict:
                 record["feedback_status"] = "conflicting"
                 value_list = " and ".join(f"{float(value):g}%" for value in conflicting_values)
                 accuracy_issues.append(
@@ -1361,7 +1365,7 @@ def _annotate_cartesian_accuracy(
 ) -> None:
     """Compare explicit bar/line values with the official DePlot table locally."""
     chart_type = result.get("chart_type")
-    if chart_type not in {"bar", "line"}:
+    if chart_type not in {"bar", "line", "area"}:
         return
     official_records = parse_numeric_chart_table(deplot_text)
     if not official_records:
@@ -1423,14 +1427,14 @@ def _annotate_cartesian_accuracy(
             delta = float(student_value) - official_value
             record["missing"] = False
             record["error_delta"] = round(delta, 6)
-            is_estimated_line_point = chart_type == "line" and bool(record.get("estimated"))
+            is_inferred_value = bool(record.get("estimated")) and not record.get("explicit_student_value")
             exceeds_tolerance = abs(delta) > accepted_tolerance + 1e-9
             conflicting_values = record.get("conflicting_values")
             has_conflict = isinstance(conflicting_values, list) and len(conflicting_values) > 1
-            record["incorrect"] = not is_estimated_line_point and (
+            record["incorrect"] = not is_inferred_value and (
                 has_conflict or exceeds_tolerance
             )
-            if is_estimated_line_point:
+            if is_inferred_value:
                 record["feedback_status"] = "estimated"
             elif has_conflict:
                 record["feedback_status"] = "conflicting"
@@ -1496,7 +1500,7 @@ def _annotate_line_accuracy(
     deplot_text: str,
     tolerance: float | None = None,
 ) -> None:
-    if result.get("chart_type") == "line":
+    if result.get("chart_type") in {"line", "area"}:
         _annotate_cartesian_accuracy(result, deplot_text, tolerance)
 
 
@@ -1539,12 +1543,12 @@ _CONTINUOUS_TREND_RE = re.compile(
 )
 
 
-def _supports_continuous_trend(student_answer: str, series: str) -> bool:
+def _continuous_trend_evidence(student_answer: str, series: str) -> str:
     sentences = re.split(r"(?<=[.!?])\s+|[\r\n]+", student_answer)
-    return any(
-        _sentence_has_series(sentence, series) and _CONTINUOUS_TREND_RE.search(sentence)
+    return next((sentence.strip()
         for sentence in sentences
-    )
+        if is_asserted_claim(sentence) and _sentence_has_series(sentence, series)
+        and _CONTINUOUS_TREND_RE.search(sentence)), "")
 
 
 def _attach_explicit_record_evidence(result: dict, deplot_text: str, student_answer: str) -> None:
@@ -1554,7 +1558,7 @@ def _attach_explicit_record_evidence(result: dict, deplot_text: str, student_ans
     This metadata never changes the extracted facts or their accuracy status.
     """
     chart_type = result.get("chart_type")
-    if chart_type not in {"bar", "line", "pie"}:
+    if chart_type not in {"bar", "line", "area", "pie"}:
         return
     records = result.get("records", [])
     official = parse_numeric_chart_table(deplot_text) if chart_type != "pie" else []
@@ -1586,8 +1590,8 @@ def _interpolate_supported_temporal_gaps(
     deplot_text: str,
     student_answer: str,
 ) -> None:
-    """Fill internal line gaps only when the student's wording supports continuity."""
-    if result.get("chart_type") not in {"line", "area"}:
+    """Fill temporal gaps only when the student's wording supports continuity."""
+    if result.get("chart_type") not in {"line", "area", "bar"}:
         return
     framework = parse_series_framework(deplot_text)
     records = result.get("records") if isinstance(result.get("records"), list) else []
@@ -1595,6 +1599,8 @@ def _interpolate_supported_temporal_gaps(
         return
 
     periods = list(dict.fromkeys(period for period, _ in framework))
+    if result.get("chart_type") == "bar" and not all(re.fullmatch(r"(?:19|20)\d{2}", period) for period in periods):
+        return
     series_names = list(dict.fromkeys(series for _, series in framework))
     comparison = result.get("comparison")
     if not isinstance(comparison, dict):
@@ -1603,11 +1609,9 @@ def _interpolate_supported_temporal_gaps(
     uncertain_items = comparison.setdefault("uncertain_items", [])
 
     for series in series_names:
-        if not _supports_continuous_trend(student_answer, series):
+        trend_evidence = _continuous_trend_evidence(student_answer, series)
+        if not trend_evidence:
             continue
-        trend_evidence = next((sentence.strip() for sentence in
-            re.split(r"(?<=[.!?])\s+|[\r\n]+", student_answer)
-            if _sentence_has_series(sentence, series) and _CONTINUOUS_TREND_RE.search(sentence)), "")
         series_records = [_matching_record(records, period, series) for period in periods]
         known_indices = [
             index
@@ -1642,6 +1646,7 @@ def _interpolate_supported_temporal_gaps(
             record["value"] = round(left_value + (right_value - left_value) * ratio, 6)
             record["missing"] = False
             record["estimated"] = True
+            record["explicit_student_value"] = False
             record["inference"] = {
                 "method": "linear_interpolation",
                 "student_evidence": trend_evidence,
@@ -1803,12 +1808,14 @@ class ChartFeedbackService:
                 _merge_explicit_cartesian_values(result, deplot_text, student_answer)
                 _remove_unsupported_cartesian_values(result, deplot_text, student_answer)
                 _enforce_explicit_cartesian_values(result, deplot_text, student_answer)
+                infer_supported_comparisons(result, student_answer)
                 _annotate_pie_accuracy(result, deplot_text)
-                _annotate_bar_accuracy(result, deplot_text)
                 _validate_temporal_record_coverage(result, deplot_text, student_answer)
                 _interpolate_supported_temporal_gaps(result, deplot_text, student_answer)
+                _annotate_bar_accuracy(result, deplot_text)
                 _annotate_line_accuracy(result, deplot_text)
                 _attach_explicit_record_evidence(result, deplot_text, student_answer)
+                finalise_provenance(result)
                 # The former five-class checker remains an internal factual guard for
                 # chart rendering. The user-facing framework is the seven rhetorical moves.
                 content_checks = build_error_taxonomy(copy.deepcopy(result), student_answer)

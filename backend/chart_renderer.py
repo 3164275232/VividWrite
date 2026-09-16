@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import xml.etree.ElementTree as ET
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -496,72 +497,6 @@ def _prepare_line_chart(spec: dict, records: list[dict]) -> dict:
     }
 
 
-def _pie_hatch_segments(
-    records: list[dict],
-    angle_total: float,
-    *,
-    width: int = PIE_PLOT_WIDTH,
-    height: int = PIE_PLOT_HEIGHT,
-    radius: int = 145,
-    spacing: int = 14,
-) -> list[dict]:
-    """Generate diagonal line segments clipped to the erroneous pie sectors."""
-    sectors = [
-        (float(record["_error_start"]), float(record["_error_end"]))
-        for record in records
-        if isinstance(record.get("_error_start"), (int, float))
-        and isinstance(record.get("_error_end"), (int, float))
-    ]
-    if not sectors or angle_total <= 0:
-        return []
-
-    center_x = width / 2
-    center_y = height / 2
-
-    def is_inside_error(local_x: float, local_y: float) -> bool:
-        if local_x * local_x + local_y * local_y > radius * radius:
-            return False
-        angle = math.atan2(local_x, -local_y)
-        if angle < 0:
-            angle += 2 * math.pi
-        value_angle = angle / (2 * math.pi) * angle_total
-        return any(start <= value_angle <= end for start, end in sectors)
-
-    segments: list[dict] = []
-    for offset in range(-2 * radius, 2 * radius + 1, spacing):
-        run_start: tuple[int, int] | None = None
-        previous: tuple[int, int] | None = None
-        for local_x in range(-radius, radius + 1):
-            local_y = local_x + offset
-            point = (local_x, local_y)
-            if is_inside_error(local_x, local_y):
-                if run_start is None:
-                    run_start = point
-                previous = point
-                continue
-            if run_start is not None and previous is not None:
-                segments.append(
-                    {
-                        "_hatch_x": center_x + run_start[0],
-                        "_hatch_y": center_y + run_start[1],
-                        "_hatch_x2": center_x + previous[0],
-                        "_hatch_y2": center_y + previous[1],
-                    }
-                )
-            run_start = None
-            previous = None
-        if run_start is not None and previous is not None:
-            segments.append(
-                {
-                    "_hatch_x": center_x + run_start[0],
-                    "_hatch_y": center_y + run_start[1],
-                    "_hatch_x2": center_x + previous[0],
-                    "_hatch_y2": center_y + previous[1],
-                }
-            )
-    return segments
-
-
 def _prepare_pie_chart(
     records: list[dict], unit: str, palette: list[str] | None
 ) -> tuple[dict, list[dict]]:
@@ -759,35 +694,6 @@ def _prepare_pie_chart(
                         "scale": {"domain": [0, angle_total]},
                     },
                     "theta2": {"field": "_error_end"},
-                },
-            }
-        )
-        hatch_records = _pie_hatch_segments(labelled_records, angle_total)
-        labelled_records.extend(hatch_records)
-        layers.append(
-            {
-                "mark": {
-                    "type": "rule",
-                    "stroke": PIE_ERROR_STROKE,
-                    "strokeWidth": 1.5,
-                    "opacity": 0.52,
-                    "clip": True,
-                },
-                "encoding": {
-                    "x": {
-                        "field": "_hatch_x",
-                        "type": "quantitative",
-                        "scale": {"domain": [0, PIE_PLOT_WIDTH]},
-                        "axis": None,
-                    },
-                    "y": {
-                        "field": "_hatch_y",
-                        "type": "quantitative",
-                        "scale": {"domain": [PIE_PLOT_HEIGHT, 0]},
-                        "axis": None,
-                    },
-                    "x2": {"field": "_hatch_x2"},
-                    "y2": {"field": "_hatch_y2"},
                 },
             }
         )
@@ -1093,41 +999,49 @@ def _prepare_line_connections(spec: dict, records: list[dict]) -> tuple[dict, li
 
 def _prepare_inference_marks(spec: dict, records: list[dict], chart_type: str | None):
     """Mark inference provenance without changing values or error overlays."""
+    if chart_type not in {"bar", "line", "area", "pie"}:
+        return spec, records, 0
     count = sum(_is_estimated_value(record) for record in records)
     if not count:
         return spec, records, 0
     prepared = copy.deepcopy(spec)
     rendered = copy.deepcopy(records)
-    stack_mode = None
+    for record in rendered:
+        label = " / ".join(str(record[field]) for field in ("category", "series") if record.get(field))
+        record["_provenance_description"] = (
+            "System-inferred: " if _is_estimated_value(record) else "Stated in report: "
+        ) + label
+    description = {"field": "_provenance_description", "type": "nominal"}
     if chart_type == "pie":
-        theta_scale = prepared["layer"][0]["encoding"]["theta"]["scale"]
-        total = theta_scale["domain"][1]
-        for record in rendered:
-            mid = record.get("_label_mid")
-            visible = _is_estimated_value(record) and isinstance(mid, (int, float))
-            angle = 2 * math.pi * mid / total if visible else 0
-            record["_estimate_x"] = PIE_PLOT_WIDTH / 2 + 126 * math.sin(angle) if visible else None
-            record["_estimate_y"] = PIE_PLOT_HEIGHT / 2 - 126 * math.cos(angle) if visible else None
-        encoding = {
-            "x": {"field": "_estimate_x", "type": "quantitative", "axis": None,
-                  "scale": {"domain": [0, PIE_PLOT_WIDTH]}},
-            "y": {"field": "_estimate_y", "type": "quantitative", "axis": None,
-                  "scale": {"domain": [PIE_PLOT_HEIGHT, 0]}},
-        }
-    else:
-        source = _find_bar_encoding(prepared) if chart_type == "bar" else _first_encoding(prepared)
+        prepared["layer"][0]["encoding"]["description"] = description
+        for layer in prepared["layer"]:
+            if _mark_type(layer.get("mark")) == "text":
+                layer["encoding"]["description"] = copy.deepcopy(description)
+        return prepared, rendered, count
+    if chart_type == "bar":
+        def annotate_bars(node, inherited=None):
+            encoding = {**(inherited or {}), **node.get("encoding", {})}
+            if _mark_type(node.get("mark")) == "bar" and _bar_value_channel(encoding):
+                node.setdefault("encoding", {})["description"] = copy.deepcopy(description)
+            for layer in node.get("layer", []):
+                annotate_bars(layer, encoding)
+        annotate_bars(prepared)
+        return prepared, rendered, count
+    stack_mode = None
+    if chart_type in {"line", "area"}:
+        source = _first_encoding(prepared)
         value_channel = _bar_value_channel(source or {})
         if not value_channel:
             raise InvalidChartSpec("Estimated values need a traceable numeric chart axis.")
         encoding = {key: copy.deepcopy(value) for key, value in source.items()
-                    if key in {"x", "y", "xOffset", "yOffset", "row", "column"}}
-        # Bar/area marks can stack by default; points do not. Preserve all values
+                    if key in {"x", "y", "xOffset", "yOffset", "row", "column", "color"}}
+        # Area marks can stack by default; points do not. Preserve all values
         # for the same stack, then hide non-estimate points using opacity. Dropping
-        # those values would place the diamond on a different series' segment.
+        # those values would place the circle on a different series' segment.
         stack_field = source.get("color", {}).get("field")
-        position_fields = {definition.get("field") for definition in encoding.values()
-                           if isinstance(definition, dict)}
-        if chart_type in {"bar", "area"} and stack_field and stack_field not in position_fields:
+        position_fields = {definition.get("field") for channel, definition in encoding.items()
+                           if channel != "color" and isinstance(definition, dict)}
+        if chart_type == "area" and stack_field and stack_field not in position_fields:
             numeric_scale = source[value_channel].get("scale") or {}
             default_stack = ("zero" if numeric_scale.get("type", "linear") == "linear"
                              and len(_unique_field_values(records, stack_field)) > 1 else None)
@@ -1149,9 +1063,10 @@ def _prepare_inference_marks(spec: dict, records: list[dict], chart_type: str | 
                 record["_estimate_opacity"] = 1 if _is_estimated_value(record) else 0
         encoding[value_channel]["field"] = "_estimate_value"
         encoding[value_channel].setdefault("title", source[value_channel].get("field", "Value"))
+    encoding["description"] = description
     overlay = {
-        "mark": {"type": "point", "shape": "diamond", "filled": True, "color": "white",
-                 "stroke": ESTIMATE_STROKE, "strokeWidth": 2.5, "size": 130},
+        "mark": {"type": "point", "shape": "circle", "filled": True, "opacity": 1,
+                 "stroke": ESTIMATE_STROKE, "strokeWidth": 1.2, "size": 210},
         "encoding": encoding,
     }
     if isinstance(prepared.get("layer"), list):
@@ -1206,11 +1121,12 @@ def prepare_vega_lite_spec(
     visible_alerts = [str(alert).strip() for alert in (semantic_alerts or []) if str(alert).strip()]
     subtitles = visible_alerts[:3]
     if estimated_count:
-        subtitles.append('Outlined diamonds: system estimates, not exact figures stated in your report.')
+        subtitles.append('Solid fill: stated in your report. Diagonal stripes: system-inferred values.')
     if connection_count:
         subtitles.append('Dashed lines: system connections; the exact intermediate path is not stated.')
     prepared["usermeta"] = {"vividwrite": {
         "estimated_value_count": estimated_count,
+        "provenance_rendering": "diagonal-hatching-v1",
         "inferred_connection_count": connection_count,
     }}
     if subtitles:
@@ -1277,6 +1193,58 @@ def prepare_vega_lite_spec(
     return prepared
 
 
+def render_prepared_svg(prepared: dict) -> str:
+    """Hatch the exact rendered shapes, so offsets, stacks and pie angles stay intact.
+
+    Vega-Lite's description channel identifies the marks in SVG. Patterns are
+    added only to inferred marks; the underlying category colour is retained.
+    See https://vega.github.io/vega-lite/docs/encoding.html#description.
+    """
+    svg = vlc.vegalite_to_svg(json.dumps(prepared))
+    if not prepared.get("usermeta", {}).get("vividwrite", {}).get("estimated_value_count"):
+        return svg
+    namespace = "http://www.w3.org/2000/svg"
+    ET.register_namespace("", namespace)
+    root = ET.fromstring(svg)
+    tag = lambda name: "{" + namespace + "}" + name
+    defs = ET.Element(tag("defs"))
+    pattern = ET.SubElement(defs, tag("pattern"), {
+        "id": "vividwrite-inference-hatch", "width": "7", "height": "7",
+        "patternUnits": "userSpaceOnUse",
+    })
+    diagonal = "M-2,2 L2,-2 M0,7 L7,0 M5,9 L9,5"
+    for colour, width, opacity in (("white", "3", "0.85"), ("#28323d", "1.1", "0.75")):
+        ET.SubElement(pattern, tag("path"), {
+            "d": diagonal, "stroke": colour, "stroke-width": width,
+            "stroke-opacity": opacity, "fill": "none",
+        })
+    root.insert(0, defs)
+    for parent in list(root.iter()):
+        for shape in list(parent):
+            if not shape.get("aria-label", "").startswith("System-inferred: "):
+                continue
+            if shape.tag == tag("text"):
+                # Give inferred sector labels a halo so stripes do not obscure numbers.
+                shape.set("fill", "white")
+                shape.set("stroke", "#28323d")
+                shape.set("stroke-width", "1.8")
+                shape.set("stroke-opacity", "1")
+                shape.set("stroke-linejoin", "round")
+                shape.set("paint-order", "stroke")
+                continue
+            if shape.tag not in {tag("path"), tag("rect"), tag("circle")}:
+                continue
+            overlay = copy.deepcopy(shape)
+            overlay.attrib.pop("aria-label", None)
+            overlay.attrib.pop("role", None)
+            overlay.set("aria-hidden", "true")
+            overlay.set("data-vividwrite-inferred", "true")
+            overlay.set("fill", "url(#vividwrite-inference-hatch)")
+            overlay.set("stroke", "none")
+            parent.insert(list(parent).index(shape) + 1, overlay)
+    return ET.tostring(root, encoding="unicode")
+
+
 def render_vega_lite_png(
     spec: dict,
     records: list[dict],
@@ -1299,6 +1267,6 @@ def render_vega_lite_png(
     )
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    png = vlc.vegalite_to_png(json.dumps(prepared), scale=2)
+    png = vlc.svg_to_png(render_prepared_svg(prepared), scale=2)
     path.write_bytes(png)
     return prepared

@@ -149,6 +149,37 @@ class SequenceClient:
 
 
 class UnifiedChartFeedbackTests(unittest.TestCase):
+    def test_full_pipeline_recovers_supported_inference_without_copying_reference(self):
+        for chart_type in ('bar', 'pie'):
+            with self.subTest(chart_type=chart_type), tempfile.TemporaryDirectory() as folder:
+                payload = _model_payload(chart_type)
+                payload['axes'] = {'x_label': 'Category', 'y_label': 'Percentage', 'unit': '%'}
+                payload['records'] = [
+                    {'category': 'Housing', 'series': '2020' if chart_type == 'bar' else None,
+                     'value': 40, 'estimated': False},
+                    # A leaked reference value must be removed before deriving the student's 20.
+                    {'category': 'Food', 'series': '2020' if chart_type == 'bar' else None,
+                     'value': 30, 'estimated': False},
+                ]
+                if chart_type == 'pie':
+                    payload['vega_lite_spec'] = {'mark': 'arc', 'encoding': {}}
+                result, filename = ChartFeedbackService(folder, client=FakeClient(payload)).generate(
+                    chart_type=chart_type, requirement='Summarise the chart.',
+                    student_answer='Housing accounted for 40% in 2020. Food was half of Housing in 2020.',
+                    deplot_text=('Category | 2020\nHousing | 42\nFood | 30' if chart_type == 'bar'
+                                 else 'Category | Percentage\nHousing | 42%\nFood | 30%\nOther | 28%'),
+                )
+                food = next(record for record in result['records'] if record['category'] == 'Food')
+                self.assertEqual(food['value'], 20)
+                self.assertEqual(food['data_source'], 'inferred')
+                self.assertEqual(food['inference']['method'], 'stated_ratio')
+                self.assertFalse(food['incorrect'])
+                meta = result['vega_lite_spec']['usermeta']['vividwrite']
+                self.assertEqual(meta['estimated_value_count'], 1)
+                self.assertEqual(meta['provenance_rendering'], 'diagonal-hatching-v1')
+                with Image.open(Path(folder) / filename) as image:
+                    self.assertGreater(image.width, 500)
+
     def test_line_ordered_series_values_map_to_all_official_periods(self):
         official_records = [
             {"category": period, "series": "Bus"}
@@ -1126,21 +1157,13 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
 
         self.assertEqual(
             [layer["mark"]["type"] for layer in prepared["layer"]],
-            ["arc", "arc", "rule", "text"],
+            ["arc", "arc", "text"],
         )
         error_layer = prepared["layer"][1]
-        hatch_layer = prepared["layer"][2]
         self.assertEqual(error_layer["mark"]["color"], "#f9a8d4")
         self.assertEqual(error_layer["mark"]["stroke"], "#be185d")
         self.assertEqual(error_layer["mark"]["opacity"], 1)
-        self.assertEqual(hatch_layer["mark"]["type"], "rule")
-        self.assertEqual(hatch_layer["mark"]["stroke"], "#be185d")
-        self.assertEqual(hatch_layer["encoding"]["x"]["scale"]["domain"], [0, 600])
-        self.assertEqual(hatch_layer["encoding"]["y"]["scale"]["domain"], [420, 0])
-        self.assertGreater(
-            len([record for record in prepared["data"]["values"] if record.get("_hatch_x") is not None]),
-            0,
-        )
+        self.assertFalse(any(record.get("_hatch_x") is not None for record in prepared["data"]["values"]))
         self.assertEqual(
             prepared["data"]["values"][0]["_display_label"],
             "Housing\nYOU: 30%\nCORRECT: 32%",
@@ -1183,10 +1206,10 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(excess["_legend_label"], "Excess over 100%: 10%")
         self.assertEqual(
             [layer["mark"]["type"] for layer in prepared["layer"]],
-            ["arc", "arc", "rule", "arc", "text"],
+            ["arc", "arc", "arc", "text"],
         )
         error_layer = prepared["layer"][1]
-        excess_layer = prepared["layer"][3]
+        excess_layer = prepared["layer"][2]
         self.assertEqual(error_layer["mark"]["outerRadius"], 145)
         self.assertEqual(error_layer["mark"]["stroke"], "#be185d")
         self.assertEqual((excess_layer["mark"]["innerRadius"], excess_layer["mark"]["outerRadius"]), (165, 177))

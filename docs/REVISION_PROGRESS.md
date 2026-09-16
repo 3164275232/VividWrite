@@ -3,11 +3,14 @@
 ## Local workflow
 
 1. Sign in, select or upload a task image, and analyse a report.
-2. Edit the report and choose **Compare again**. **Revision progress** compares
-   the latest successful review with the previous review for that user and image.
-3. Choose an earlier baseline in **Compare with**. Expand a criterion to read
-   its previous and current evidence, then locate the current passage in the editor.
-4. **Earlier report and images** retains the earlier essay, generated chart and
+2. Edit the report and choose **Compare again**. **This revision** shows a compact
+   summary of verified improvements and remaining concerns, compared with the
+   previous successful review for that user and image.
+3. Open **Review changes** to filter **Improved**, **Needs attention** or **Other
+   changes**. Expand one finding to compare its old and new evidence, then choose
+   **Show in draft** to locate the current passage. **Compare with** selects an
+   earlier baseline without changing the editable draft.
+4. **Earlier draft & images** retains the earlier essay, generated chart and
    original-image annotations when those annotations exist.
 
 History starts with analyses performed after this feature is installed. Older
@@ -43,8 +46,8 @@ previously undetected move. This remains a criterion-level review: arbitrary
 semantic rewrites and multiple concerns within a criterion require learner or
 teacher judgement.
 
-**What changed in your reported values** separately compares the same
-category/series/period/region record. For example, a student value changing from
+**Reported value** findings compare the same category/series/period/region
+record, alongside writing-criterion findings in the same filters. For example, a student value changing from
 47 to 42 against a reference of 42 can be shown as addressed even while Criterion
 4 still needs work. The card retains the old and new values, verbatim source
 sentences when locally traceable, the reference value and the accepted tolerance.
@@ -70,26 +73,40 @@ is stated. Selecting historical evidence never replaces the editable essay.
 
 ## Estimated values
 
-The PNG renderer adds outlined amber diamonds to drawable records where
+The PNG renderer adds **diagonal stripes** to drawable records where
 `estimated=true`, `missing=false`, and `explicit_student_value` is not true.
-The exported PNG itself includes an explanatory subtitle. Explicit values and
-missing values are not relabelled as estimates; error overlays remain separate.
-The same encoding works for bar, line and pie charts (and Cartesian area charts).
-Stacked bar and area markers use the same stack grouping, order and offset as the
-underlying marks, including normalized and centered stacks. All values participate
-in positioning, while only estimated points are visible. This follows Vega-Lite's
-[stacking rules](https://vega.github.io/vega-lite/docs/stack.html); simply plotting
-an estimated raw value on a stacked axis would put its diamond on the wrong segment.
+Bars and pie sectors retain their original category colours, with a stripe pattern
+covering the exact inferred shape. Line and area estimates use striped circular
+points. Explicit values keep their existing style; missing values stay missing.
+The exported PNG itself includes an explanatory subtitle, so provenance remains
+visible outside the application. Numerical-error outlines, fills and labels remain
+separate; pie-error hatching was removed so stripes have only one meaning.
 
-The generated-chart details list these values. Locally interpolated line values
-also include the surrounding periods and numbers. This feature annotates
-existing inference; it does not introduce new estimates or change the extraction
-rules for supported multi-series charts. The framework parser also supports a
-single temporal series, and estimated points cannot be used as interpolation
-anchors. Currently the normal bar/pie workflow enforces explicit essay values,
-so estimates are most commonly encountered in supported continuous line trends.
+Vega-Lite's [description channel](https://vega.github.io/vega-lite/docs/encoding.html#description)
+identifies each inferred SVG mark. The renderer copies its actual geometry into
+a transparent SVG pattern overlay before PNG conversion. This preserves grouped,
+horizontal, stacked, normalized and centered bar geometry and pie angles. Area
+points retain the original stack order and offset; all values participate in
+positioning while only inferred points are shown.
+
+Explicit-value enforcement still removes unsupported model values before
+reconstruction. A conservative local pass then supports exact-label comparisons
+(half, twice, triple and compatible-unit differences) against an explicitly stated
+student value. Pie remainders are derived only when the student explicitly names
+the remaining category and states every other share. These calculations never
+read official values. Multiple series require an unambiguous series reference;
+conflicting, negated or hypothetical claims remain unfilled. Estimates cannot
+become anchors for more estimates, and an explicit value always takes precedence.
+
+Continuous temporal trends with stated endpoints can support straight-line
+interpolation for line, area and year-based bar charts. Bars with unordered
+categories are never interpolated across categories. Every inferred record stores
+its method, student source sentence and anchor values. This is a possible rendering
+of the description: words such as "steadily" do not specify exact intermediate
+figures. Unbounded qualitative descriptions alone do not establish numeric heights.
 An estimate is not automatically an essay error, and not every chart value needs
-to be included in a Task 1 report.
+to be included in a Task 1 report. A report explicitly stating every plotted value
+correctly has zero inferred marks.
 
 The exported line chart also uses **dashed connections** where a segment touches
 an estimated point or crosses an unreported period. Explicit adjacent points retain
@@ -97,8 +114,10 @@ solid connections. A dashed connector never fills a missing record with a number
 Its subtitle explains that the exact intermediate path was not stated in the essay.
 Thus a gap bridged for display cannot silently appear to be a fully specified trend.
 
-The interface shows a visible provenance legend and groups repeated interpolation
-explanations by series and endpoints, retaining every estimated period and value.
+The interface shows a small provenance legend with stated and inferred counts.
+**How were these values inferred?** is collapsed for each new review and groups
+repeated interpolation explanations by series and endpoints, retaining every
+estimated period and value.
 Each group explains the straight-line assumption and, where available, quotes the
 student's trend wording with a button to locate it. An estimate is a possible
 rendering of the description, not the official value to copy into the report.
@@ -122,8 +141,9 @@ new task would be needed to evaluate that educational outcome.
   explanations and locating their evidence; they do not infer understanding from a click.
 - `GET /api/revision-history/{task_id}?before={sequence}` returns at most 30
   earlier reviews belonging to the caller; the UI can fetch earlier pages.
-- Backend unit/integration tests: `test_revision_history.py` and
-  `test_estimated_chart_marks.py`.
+- Backend unit/integration tests: `test_revision_history.py`,
+  `test_estimated_chart_marks.py`, `test_chart_inference.py` and
+  `test_chart_feedback.py` (including the complete extraction-to-PNG pipeline).
 - Frontend comparisons: `frontend/tests/revisionHistory.test.js`.
 - Deterministic rendering fixtures: run
   `backend\venv\Scripts\python.exe deploy\verify_revision_features.py`.
