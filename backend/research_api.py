@@ -19,7 +19,7 @@ from research_data import (
     research_enabled,
     safe_username,
     sanitize_payload,
-    utc_now,
+    beijing_now,
 )
 
 
@@ -216,7 +216,7 @@ def start_research_session(request: Request, payload: ResearchSessionStart):
         client_started_at=payload.client_started_at,
         metadata=metadata,
     )
-    return {"success": True, "session_id": session_id, "server_started_at": utc_now()}
+    return {"success": True, "session_id": session_id, "server_started_at": beijing_now()}
 
 
 @router.post("/events")
@@ -253,7 +253,7 @@ def research_heartbeat(request: Request, payload: ResearchHeartbeat):
             "last_activity_at": payload.last_activity_at,
         },
     )
-    return {"success": True, "server_received_at": utc_now()}
+    return {"success": True, "server_received_at": beijing_now()}
 
 
 @router.post("/sessions/end")
@@ -272,7 +272,7 @@ def end_research_session(request: Request, payload: ResearchSessionEnd):
             "last_activity_at": payload.last_activity_at,
         },
     )
-    return {"success": True, "server_received_at": utc_now()}
+    return {"success": True, "server_received_at": beijing_now()}
 
 
 @router.post("/artifacts")

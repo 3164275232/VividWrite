@@ -4,13 +4,13 @@ import hashlib
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
 from auth import authenticated_username
 from paths import USER_DATA_DIR
+from record_time import beijing_now, normalise_record_times
 
 
 router = APIRouter(prefix="/api/revision-history")
@@ -41,7 +41,7 @@ class RevisionHistoryStore:
             "id": uuid.uuid4().hex,
             "task_id": task_id,
             "reference_id": reference_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": beijing_now(),
             "essay": essay,
             "chart_type": chart_type,
             "title": chart_data.get("title", ""),
@@ -81,7 +81,7 @@ class RevisionHistoryStore:
                 "AND sequence < ? ORDER BY sequence DESC LIMIT ?",
                 (username, task_id, before or 2**63 - 1, min(max(limit, 1), 30)),
             ).fetchall()
-            return [json.loads(row["snapshot"]) for row in rows]
+            return [normalise_record_times(json.loads(row["snapshot"])) for row in rows]
         finally:
             connection.close()
 

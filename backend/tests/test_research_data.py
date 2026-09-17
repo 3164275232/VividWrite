@@ -121,14 +121,14 @@ class ResearchStoreTests(unittest.TestCase):
     def test_export_does_not_change_participant_activity(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = ResearchStore(Path(temp_dir))
-            with patch("research_data.utc_now", return_value="2026-09-01T10:00:00.000+00:00"):
+            with patch("research_data.beijing_now", return_value="2026-09-01T10:00:00.000+00:00"):
                 store.ensure_participant("tester01")
 
             before = {
                 item["username"]: item
                 for item in store.participant_summaries(["tester01", "tester02"])
             }
-            with patch("research_data.utc_now", return_value="2026-09-01T11:00:00.000+00:00"):
+            with patch("research_data.beijing_now", return_value="2026-09-01T11:00:00.000+00:00"):
                 export_path = store.build_export(
                     ["tester01", "tester02"],
                     configured_usernames=["tester01", "tester02"],

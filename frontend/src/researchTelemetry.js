@@ -1,3 +1,5 @@
+import { beijingTimestamp } from './timeUtils.js';
+
 const SESSION_STORAGE_KEY = 'vividwrite_research_session_v1';
 const FLUSH_INTERVAL_MS = 2500;
 const HEARTBEAT_INTERVAL_MS = 30000;
@@ -27,7 +29,7 @@ const telemetry = {
 };
 
 function nowIso() {
-  return new Date().toISOString();
+  return beijingTimestamp();
 }
 
 function createId(prefix) {
@@ -118,7 +120,7 @@ export function calculateLastActivityTimestamp(
     0,
     Number(currentMonotonicMs) - Number(lastActivityMonotonicMs),
   );
-  return new Date(Number(wallClockMs) - elapsedSinceActivity).toISOString();
+  return beijingTimestamp(Number(wallClockMs) - elapsedSinceActivity);
 }
 
 function lastActivityIso() {

@@ -140,7 +140,7 @@ export default function RevisionProgress({ current, text, isAnalyzing, warning, 
                 trackResearchEvent('revision_baseline_selected', { analysis_id: current.id, baseline_id: event.target.value });
               }}>
               {candidates.map((item) => <option value={item.id} key={item.id}>
-                Review {item.sequence} · {new Date(item.created_at).toLocaleDateString()}
+                Review {item.sequence} · {new Date(item.created_at).toLocaleDateString(undefined, { timeZone: 'Asia/Shanghai' })}
               </option>)}
             </select>
           </label>

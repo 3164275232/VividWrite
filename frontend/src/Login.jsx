@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { beijingTimestamp } from './timeUtils.js';
 import { ArrowRight, Eye, EyeOff, LockKeyhole, ShieldCheck, UserRound } from "lucide-react";
 import "./Login.css";
 
@@ -48,7 +49,7 @@ export default function Login({
       await onLogin(trimmed, password, {
         consent_granted: consentGranted,
         consent_version: consentVersion,
-        consented_at: new Date().toISOString(),
+        consented_at: beijingTimestamp(),
       });
     } catch (loginError) {
       setError(loginError?.message || "Login failed");

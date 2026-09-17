@@ -14,11 +14,11 @@ import threading
 import uuid
 import zipfile
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
 from paths import USER_DATA_DIR
+from record_time import beijing_now, beijing_timestamp, normalise_record_times
 
 
 RESEARCH_SCHEMA_VERSION = "1.0"
@@ -52,10 +52,6 @@ def research_consent_required() -> bool:
 
 def research_consent_version() -> str:
     return os.getenv("APP_RESEARCH_CONSENT_VERSION", "2026-09-01-v1").strip()
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 def safe_username(username: str) -> str:
@@ -102,7 +98,7 @@ def sanitize_payload(value: Any, *, key: str = "", depth: int = 0) -> Any:
 
 def _json(value: Any) -> str:
     return json.dumps(
-        sanitize_payload(value),
+        normalise_record_times(sanitize_payload(value)),
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -231,7 +227,7 @@ class ResearchStore:
 
     def ensure_participant(self, username: str) -> str:
         username = safe_username(username)
-        now = utc_now()
+        now = beijing_now()
         with self._write_lock, self._connection() as connection:
             connection.execute(
                 """
@@ -253,7 +249,7 @@ class ResearchStore:
         consented_at: str | None = None,
     ) -> None:
         username = safe_username(username)
-        now = utc_now()
+        now = beijing_now()
         login_event = event_type == "auth_login_succeeded"
         with self._write_lock, self._connection() as connection:
             connection.execute(
@@ -277,7 +273,7 @@ class ResearchStore:
                     now,
                     1 if login_event else 0,
                     consent_version,
-                    consented_at,
+                    beijing_timestamp(consented_at),
                     now,
                 ),
             )
@@ -301,8 +297,8 @@ class ResearchStore:
     ) -> str:
         username = safe_username(username)
         session_id = safe_session_id(requested_session_id)
-        now = utc_now()
-        started_at = str(client_started_at or now)[:64]
+        now = beijing_now()
+        started_at = beijing_timestamp(str(client_started_at or now)[:64])
         with self._write_lock, self._connection() as connection:
             connection.execute(
                 """
@@ -368,7 +364,7 @@ class ResearchStore:
     ) -> int:
         username = safe_username(username)
         session_id = safe_session_id(session_id)
-        now = utc_now()
+        now = beijing_now()
         accepted = 0
         with self._write_lock, self._connection() as connection:
             self._assert_session(connection, username, session_id)
@@ -376,7 +372,7 @@ class ResearchStore:
                 event_id = str(event.get("event_id") or uuid.uuid4().hex)[:128]
                 event_type = str(event.get("event_type") or "unknown")[:120]
                 source = str(event.get("source") or "frontend")[:40]
-                occurred_at = str(event.get("occurred_at") or now)[:64]
+                occurred_at = beijing_timestamp(str(event.get("occurred_at") or now)[:64])
                 stage = str(event.get("stage") or "")[:40] or None
                 cursor = connection.execute(
                     """
@@ -418,7 +414,7 @@ class ResearchStore:
         payload: dict[str, Any] | None = None,
     ) -> None:
         username = self.ensure_participant(username)
-        now = utc_now()
+        now = beijing_now()
         normalized_session = None
         if session_id:
             try:
@@ -463,7 +459,7 @@ class ResearchStore:
     ) -> None:
         username = safe_username(username)
         session_id = safe_session_id(session_id)
-        now = utc_now()
+        now = beijing_now()
         active_ms = max(0, int(active_ms or 0))
         idle_ms = max(0, int(idle_ms or 0))
         with self._write_lock, self._connection() as connection:
@@ -506,7 +502,7 @@ class ResearchStore:
             active_ms=active_ms,
             idle_ms=idle_ms,
         )
-        now = utc_now()
+        now = beijing_now()
         with self._write_lock, self._connection() as connection:
             connection.execute(
                 """
@@ -556,7 +552,7 @@ class ResearchStore:
         destination = directory / filename
         destination.write_bytes(content)
         digest = hashlib.sha256(content).hexdigest()
-        created_at = utc_now()
+        created_at = beijing_now()
         relative_path = destination.relative_to(self.root).as_posix()
         with self._write_lock, self._connection() as connection:
             connection.execute(
@@ -662,7 +658,7 @@ class ResearchStore:
                 "active_seconds": round(int(sessions.get("active_ms") or 0) / 1000, 3),
                 "idle_seconds": round(int(sessions.get("idle_ms") or 0) / 1000, 3),
             })
-        return result
+        return normalise_record_times(result)
 
     def _table_rows(
         self,
@@ -677,11 +673,13 @@ class ResearchStore:
             "events": "received_at",
             "artifacts": "created_at",
         }[table]
+        # Old rows use UTC, new rows +08:00: lexical sorting would mix their order.
+        order_by = order_column if table == 'participants' else f'julianday({order_column}), {order_column}'
         rows = connection.execute(
-            f"SELECT * FROM {table} WHERE username IN ({placeholders}) ORDER BY {order_column}",
+            f"SELECT * FROM {table} WHERE username IN ({placeholders}) ORDER BY {order_by}",
             usernames,
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [normalise_record_times(dict(row)) for row in rows]
 
     def build_export(
         self,
@@ -776,7 +774,7 @@ class ResearchStore:
             for item in self.participant_summaries(configured_usernames)
             if item["username"] in selected
         ]
-        generated_at = utc_now()
+        generated_at = beijing_now()
         html_rows = "".join(
             "<tr>"
             + "".join(
@@ -793,6 +791,7 @@ class ResearchStore:
 <html lang="en"><head><meta charset="utf-8"><title>VividWrite research export</title>
 <style>body{{font:14px system-ui;margin:32px;color:#1d1d1f}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #ddd;padding:8px;text-align:left}}th{{background:#f4f4f5}}code{{background:#f4f4f5;padding:2px 4px}}</style></head>
 <body><h1>VividWrite research export</h1><p>Generated: {html.escape(generated_at)}</p>
+<p>All recorded timestamps use Beijing time (UTC+08:00 / Asia/Shanghai).</p>
 <p>Open the CSV files in Excel for analysis. Exact chronological events are also available in <code>raw/events.jsonl</code>.</p>
 <table><thead><tr><th>Username</th><th>Logins</th><th>Sessions</th><th>Events</th><th>Artifacts</th><th>Active seconds</th><th>Idle seconds</th><th>Last seen</th></tr></thead>
 <tbody>{html_rows}</tbody></table></body></html>"""
@@ -801,6 +800,8 @@ class ResearchStore:
             "VividWrite research data export\n"
             f"Schema version: {RESEARCH_SCHEMA_VERSION}\n"
             f"Generated at: {generated_at}\n\n"
+            "Time zone: Beijing time (UTC+08:00 / Asia/Shanghai). Legacy UTC records are converted on export.\n"
+            "Durations (active_ms, idle_ms) remain milliseconds.\n\n"
             "participants.csv: account-level login and consent metadata\n"
             "sessions.csv: session start/end, active time, idle time, and device metadata\n"
             "events.csv: full chronological event timeline with JSON payloads\n"

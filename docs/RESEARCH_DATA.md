@@ -97,6 +97,13 @@ essay-version, and artifact CSV files for analysis; JSON/JSONL raw records; and
 the archived image files. A participant can also download only their own data
 while signed in from `/api/research/me/export`.
 
+All collection and export timestamps use **Beijing time (UTC+08:00)**, including
+CSV files, JSON/JSONL, nested event metadata and the HTML summary. Historical UTC
+records are converted when read or exported, without rewriting their stored
+contents. Export ordering compares actual instants across both time zones.
+Durations such as `active_ms` and `idle_ms` remain milliseconds, not clock times.
+Previously downloaded ZIP files are unchanged; export again to obtain Beijing times.
+
 The participant site and administrator endpoints should be placed behind HTTPS
 before external data collection begins.
 

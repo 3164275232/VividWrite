@@ -36,7 +36,7 @@ test('records the last interaction time instead of the heartbeat time', () => {
   const heartbeatAt = Date.parse('2026-09-03T10:01:30.000Z');
   assert.equal(
     calculateLastActivityTimestamp(heartbeatAt, 90_000, 30_000),
-    '2026-09-03T10:00:30.000Z',
+    '2026-09-03T18:00:30.000+08:00',
   );
 });
 
