@@ -34,11 +34,12 @@ class RevisionHistoryStore:
         return connection
 
     def save(self, username, image_bytes, chart_type, reference_text, essay, chart_data,
-             chart_url, original_url):
+             chart_url, original_url, submission_id=None):
         task_id = hashlib.sha256(image_bytes + b"\0" + chart_type.encode()).hexdigest()
         reference_id = hashlib.sha256(" ".join(reference_text.split()).encode()).hexdigest()
         snapshot = {
             "id": uuid.uuid4().hex,
+            "submission_id": submission_id,
             "task_id": task_id,
             "reference_id": reference_id,
             "created_at": beijing_now(),

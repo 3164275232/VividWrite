@@ -887,8 +887,10 @@ export default function App() {
       return;
     }
     const analysisIsSpatial = SPATIAL_TASK_TYPES.has(taskTypeForAnalysis);
-    snapshotEssay(text, 'analysis_requested', { chart_type: taskTypeForAnalysis });
+    const submissionId = `submission-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+    snapshotEssay(text, 'analysis_requested', { chart_type: taskTypeForAnalysis, submission_id: submissionId });
     trackResearchEvent('analysis_requested', {
+      submission_id: submissionId,
       chart_type: taskTypeForAnalysis,
       spatial: analysisIsSpatial,
       deplot_available: Boolean(deplotText.trim()),
@@ -924,7 +926,7 @@ export default function App() {
       if (currentStage === 'revision') {
         // Run BOTH: LLM revision review + chart analysis for visual feedback.
         if (!deplotForAnalysis.trim()) deplotForAnalysis = '(No DePlot data extracted)';
-        const reviewPromise = reviewRevision({ text, deplot_text: deplotForAnalysis, mode: 'llm' });
+        const reviewPromise = reviewRevision({ text, deplot_text: deplotForAnalysis, mode: 'llm' }, submissionId);
         // prepare chart form data (reuse existing logic)
         const formData = new FormData();
         formData.append('image', uploadedImage);
@@ -933,7 +935,7 @@ export default function App() {
         formData.append('requirement', requirement);
         formData.append('student_answer', text);
         formData.append('deplot_text', deplotForAnalysis);
-        const chartPromise = analyzeChartWithImage(formData);
+        const chartPromise = analyzeChartWithImage(formData, submissionId);
         const [reviewRes, chartRes] = await Promise.allSettled([reviewPromise, chartPromise]);
         if (requestSequence !== analysisSequenceRef.current) return;
         // helper to normalize chart URL (backend returns /charts/.. relative to backend origin)
@@ -966,7 +968,7 @@ export default function App() {
         formData.append('student_answer', text);
         if (!deplotForAnalysis.trim()) deplotForAnalysis = '(No DePlot data extracted)';
         formData.append('deplot_text', deplotForAnalysis);
-        const result = await analyzeChartWithImage(formData);
+        const result = await analyzeChartWithImage(formData, submissionId);
         if (requestSequence !== analysisSequenceRef.current) return;
         if (result.success) {
           acceptAnalysis(result);

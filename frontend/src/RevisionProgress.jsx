@@ -62,6 +62,14 @@ export default function RevisionProgress({ current, text, isAnalyzing, warning, 
   const previous = candidates.find((item) => item.id === selectedId) || candidates[0];
   const comparison = useMemo(() => compareRevisions(previous, current), [previous, current]);
   const valueComparison = useMemo(() => compareRecordValues(previous, current), [previous, current]);
+  useEffect(() => {
+    if (!previous || !current || loading) return;
+    trackResearchEvent('revision_comparison_ready', {
+      submission_id: current.submission_id || null, analysis_id: current.id,
+      baseline_id: previous.id, essay: current.essay,
+      criteria: comparison, reported_values: valueComparison,
+    });
+  }, [current, previous, loading, comparison, valueComparison]);
   const stale = Boolean(current && !sameDraftText(current.essay, text));
 
   const loadMore = async () => {

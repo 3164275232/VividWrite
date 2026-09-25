@@ -104,6 +104,38 @@ contents. Export ordering compares actual instants across both time zones.
 Durations such as `active_ms` and `idle_ms` remain milliseconds, not clock times.
 Previously downloaded ZIP files are unchanged; export again to obtain Beijing times.
 
+## Feedback for each submission
+
+Open **feedback.html** in the extracted ZIP to read the submitted essay, recorded
+chart and seven-criterion feedback, language review (including excerpts and
+replacement suggestions), inferred-value explanations, linked feedback images,
+sample essays, continuation suggestions, and any recorded failures. The summary
+page links to this view. **feedback.csv** provides a filterable index and readable
+feedback text; **feedback/** contains complete stored JSON for each response.
+**raw/feedback.jsonl** is the combined machine-readable version, and
+**raw/revision_history.json** includes only the selected participants' historical
+snapshots. No shared database containing other participants is included.
+
+New analysis requests use one submission ID for the parallel chart and language
+reviews. Both components remain separate records within the same submission,
+including when one fails. Earlier records without a shared ID remain individually
+listed with their original time, essay and source event; identical essay text is
+not used to guess a pairing. Record counts therefore are not submission counts.
+Redundant browser copies of recorded server responses are suppressed in the
+feedback view; the original event timeline remains unchanged. Browser responses
+without a corresponding recorded server output are retained as recovery records.
+
+Displayed revision comparisons are also recorded from this release onward;
+these are system-calculated outcomes, not new AI responses. Older comparisons
+that were never saved cannot be reconstructed as if they had been observed.
+Historical feedback remains readable from its snapshots. No model is called
+during export. Previously unrecorded or truncated content cannot be recovered.
+
+The exporter includes archived feedback images and, for trusted history snapshots,
+recovers available referenced images from the uploads/charts volumes when needed.
+**feedback_manifest.json** lists any unavailable historical images instead of
+silently claiming they were exported. Keep those volumes for full historical media.
+
 The participant site and administrator endpoints should be placed behind HTTPS
 before external data collection begins.
 

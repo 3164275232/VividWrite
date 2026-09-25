@@ -1,10 +1,22 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 
-import { generateSampleEssay } from '../src/api.js';
+import { generateSampleEssay, analyzeChartWithImage, reviewRevision } from '../src/api.js';
 
 
 const originalFetch = globalThis.fetch;
+
+test('one submission ID links parallel chart and language feedback without reusing it for the next draft', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, id: options.headers['X-VividWrite-Submission'] });
+    return Response.json({ success: true });
+  };
+  await Promise.all([analyzeChartWithImage(new FormData(), 'submission-one'),
+    reviewRevision({ text: 'Draft one' }, 'submission-one')]);
+  await analyzeChartWithImage(new FormData(), 'submission-two');
+  assert.deepEqual(calls.map(call => call.id), ['submission-one', 'submission-one', 'submission-two']);
+});
 
 afterEach(() => {
   globalThis.fetch = originalFetch;

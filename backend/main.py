@@ -16,6 +16,7 @@ from paths import CHARTS_DIR, UPLOADS_DIR, ensure_runtime_directories
 from research_api import (
     archive_file_for_request,
     record_server_event_for_request,
+    research_submission_id,
     research_request_middleware,
     router as research_router,
 )
@@ -415,6 +416,7 @@ async def analyze_chart_with_image(
                     username, image_path.read_bytes(), result.get("chart_type") or chart_type,
                     extracted_text, student_answer, result, f"/charts/{filename}",
                     f"/uploads/{image_path.name}",
+                    submission_id=research_submission_id(request),
                 )
             except Exception:
                 # A storage failure must not discard an otherwise successful review.
@@ -433,6 +435,7 @@ async def analyze_chart_with_image(
                 "chart_data": result,
                 "chart_url": f"/charts/{filename}",
                 "revision_suggestions": revision_suggestions,
+                "analysis_revision_id": analysis_revision.get('id') if analysis_revision else None,
                 "artifacts": archived_artifacts,
             },
         )

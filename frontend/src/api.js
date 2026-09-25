@@ -49,6 +49,7 @@ async function requestJson(path, options, action, { retryTransient = false } = {
         path,
         method: options?.method || 'GET',
         requestPayload,
+        submissionId: options?.headers?.['X-VividWrite-Submission'],
         durationMs: performance.now() - startedAt,
         attempt,
         error: error?.message || String(error),
@@ -75,6 +76,7 @@ async function requestJson(path, options, action, { retryTransient = false } = {
       method: options?.method || 'GET',
       status: response.status,
       requestPayload,
+      submissionId: options?.headers?.['X-VividWrite-Submission'],
       responsePayload: data,
       durationMs: performance.now() - startedAt,
       attempt,
@@ -109,10 +111,10 @@ function parseJsonBody(body) {
   }
 }
 
-function postJson(path, payload, action, requestPolicy) {
+function postJson(path, payload, action, requestPolicy, headers = {}) {
   return requestJson(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify(payload),
   }, action, requestPolicy);
 }
@@ -144,10 +146,11 @@ export function logout() {
   return postJson('/api/auth/logout', {}, 'Logout failed');
 }
 
-export function analyzeChartWithImage(formData) {
+export function analyzeChartWithImage(formData, submissionId) {
   return requestJson('/api/analyze-chart-with-image', {
     method: 'POST',
     body: formData,
+    headers: submissionId ? { 'X-VividWrite-Submission': submissionId } : {},
   }, 'Chart analysis failed');
 }
 
@@ -209,6 +212,7 @@ export function generateSpatialSampleEssay(payload) {
   }, 'Spatial sample essay generation failed', { retryTransient: true });
 }
 
-export function reviewRevision(payload) {
-  return postJson('/api/revision-review', payload, 'Revision review failed');
+export function reviewRevision(payload, submissionId) {
+  return postJson('/api/revision-review', payload, 'Revision review failed', undefined,
+    submissionId ? { 'X-VividWrite-Submission': submissionId } : {});
 }

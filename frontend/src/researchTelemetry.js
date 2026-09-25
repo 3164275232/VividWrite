@@ -554,6 +554,7 @@ export function getResearchRequestHeaders() {
 }
 
 export function captureApiCall({
+  submissionId,
   path,
   method,
   durationMs,
@@ -565,6 +566,7 @@ export function captureApiCall({
 }) {
   if (path.startsWith('/api/auth/') || path.startsWith('/api/research/')) return;
   trackResearchEvent(error ? 'api_call_failed' : 'api_call_completed', {
+    submission_id: submissionId || null,
     path,
     method,
     duration_ms: Math.round(durationMs * 1000) / 1000,

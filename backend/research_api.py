@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -81,6 +82,11 @@ def research_session_id(request: Request) -> str | None:
     return request.headers.get(RESEARCH_SESSION_HEADER) or None
 
 
+def research_submission_id(request: Request) -> str | None:
+    value = request.headers.get('x-vividwrite-submission', '')
+    return value if re.fullmatch(r'[A-Za-z0-9_-]{8,128}', value) else None
+
+
 def _client_fingerprint(request: Request) -> str:
     forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
     client_ip = forwarded or (request.client.host if request.client else "unknown")
@@ -135,7 +141,7 @@ def record_server_event_for_request(
             event_type,
             session_id=research_session_id(request),
             stage=stage,
-            payload=payload,
+            payload={**(payload or {}), 'submission_id': research_submission_id(request)},
         )
     except Exception as exc:
         print(f"Research event logging failed: {exc}")

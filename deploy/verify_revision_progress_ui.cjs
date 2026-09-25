@@ -41,6 +41,9 @@ function responseFor(sequence, essay) {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1080 } });
     const failures = [];
     const saved = [];
+    const chartSubmissions = [];
+    const languageSubmissions = [];
+    const researchEvents = [];
     let failNextAnalysis = false;
     let failHistorySave = false;
     page.on('pageerror', (error) => failures.push(error.message));
@@ -53,13 +56,18 @@ function responseFor(sequence, essay) {
     await page.route('**/api/**', async (route) => {
       const url = new URL(route.request().url());
       let payload = { success: true };
-      if (url.pathname === '/api/auth/config') payload = { password_required: false, research_enabled: false };
+      if (url.pathname === '/api/auth/config') payload = { password_required: false, research_enabled: true };
+      if (url.pathname === '/api/research/events') researchEvents.push(...route.request().postDataJSON().events);
       if (url.pathname === '/api/auth/me') payload = { authenticated: true, username: 'ui-fixture' };
       if (url.pathname === '/api/analyze-chart-with-image') {
+        const submissionId = route.request().headers()['x-vividwrite-submission'];
+        assert.ok(submissionId, 'Every analysis has a submission ID');
+        chartSubmissions.push(submissionId);
         const sequence = saved.length + 1;
         const form = await new Request(route.request().url(), { method: 'POST',
           headers: route.request().headers(), body: route.request().postDataBuffer() }).formData();
         payload = responseFor(sequence, form.get('student_answer'));
+        payload.analysis_revision.submission_id = submissionId;
         if (failNextAnalysis) {
           payload = { success: false, error: 'Synthetic analysis failure' };
           failNextAnalysis = false;
@@ -71,7 +79,10 @@ function responseFor(sequence, essay) {
       if (url.pathname.startsWith('/api/revision-history/')) payload = {
         revisions: saved.filter((item) => item.sequence < Number(url.searchParams.get('before'))), next_before: null,
       };
-      if (url.pathname === '/api/revision-review') payload = { success: true, overall: null, suggestions: [] };
+      if (url.pathname === '/api/revision-review') {
+        languageSubmissions.push(route.request().headers()['x-vividwrite-submission']);
+        payload = { success: true, overall: null, suggestions: [] };
+      }
       await route.fulfill({ json: payload });
     });
     await page.goto('http://127.0.0.1:5173/');
@@ -159,6 +170,13 @@ function responseFor(sequence, essay) {
     await page.getByText('Draft changed since this analysis.', { exact: false }).waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1), false);
+    await page.waitForTimeout(2700);
+    assert.equal(chartSubmissions.length, 7, 'Every analysis has a submission ID');
+    assert.deepEqual(chartSubmissions, languageSubmissions, 'Chart and language feedback share submission IDs');
+    assert.equal(new Set(chartSubmissions).size, 7, 'Each reanalysis uses a new submission ID');
+    assert.ok(researchEvents.some(event => event.event_type === 'revision_comparison_ready'
+      && event.payload?.submission_id && event.payload?.analysis_id && event.payload?.baseline_id
+      && event.payload?.criteria && event.payload?.reported_values), 'Version comparison is collected');
     assert.deepEqual(failures, []);
     console.log(JSON.stringify({ result: 'PASS', checks: ['first review', 'stale draft', 'addressed evidence', 'sentence highlight', 'earlier baseline', 'draft preservation', 'estimated details and source quote', 'specific value correction with continuing criterion', 'failed reanalysis', 'stale notice without saved history', 'compact summary and change filters', 'desktop/mobile layout'], output }, null, 2));
   } finally { await browser.close(); }

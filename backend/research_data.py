@@ -19,6 +19,7 @@ from typing import Any, Iterable
 
 from paths import USER_DATA_DIR
 from record_time import beijing_now, beijing_timestamp, normalise_record_times
+from feedback_export import load_history, write_feedback_export
 
 
 RESEARCH_SCHEMA_VERSION = "1.0"
@@ -695,6 +696,7 @@ class ResearchStore:
             session_rows = self._table_rows(connection, "sessions", selected)
             event_rows = self._table_rows(connection, "events", selected)
             artifact_rows = self._table_rows(connection, "artifacts", selected)
+        histories = load_history(self.root.parent / 'revision_history.sqlite3', selected)
 
         participant_by_username = {
             row["username"]: row
@@ -792,6 +794,7 @@ class ResearchStore:
 <style>body{{font:14px system-ui;margin:32px;color:#1d1d1f}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #ddd;padding:8px;text-align:left}}th{{background:#f4f4f5}}code{{background:#f4f4f5;padding:2px 4px}}</style></head>
 <body><h1>VividWrite research export</h1><p>Generated: {html.escape(generated_at)}</p>
 <p>All recorded timestamps use Beijing time (UTC+08:00 / Asia/Shanghai).</p>
+<p><a href="feedback.html">查看每次作答的完整反馈 / Feedback for each submission</a></p>
 <p>Open the CSV files in Excel for analysis. Exact chronological events are also available in <code>raw/events.jsonl</code>.</p>
 <table><thead><tr><th>Username</th><th>Logins</th><th>Sessions</th><th>Events</th><th>Artifacts</th><th>Active seconds</th><th>Idle seconds</th><th>Last seen</th></tr></thead>
 <tbody>{html_rows}</tbody></table></body></html>"""
@@ -807,12 +810,19 @@ class ResearchStore:
             "events.csv: full chronological event timeline with JSON payloads\n"
             "essay_versions.csv: essay snapshots and exact edit deltas\n"
             "artifacts.csv: image/file manifest with SHA-256 checksums\n"
+            "feedback.html: readable feedback, essays and linked images; open this first for AI feedback\n"
+            "feedback.csv: feedback index, readable feedback text and links to complete JSON\n"
+            "feedback/: complete recorded feedback for each response\n"
+            "raw/revision_history.json: selected participants' full historical review snapshots\n"
+            "feedback_manifest.json: counts and any unavailable historical images\n"
+            "Legacy responses without a shared submission ID are listed separately; no guessed pairing.\n"
             "raw/events.jsonl: one lossless JSON record per event\n"
             "artifacts/: uploaded task images, generated charts, and annotated originals\n\n"
             "Passwords, cookies, API keys, and authorization headers are never recorded.\n"
         )
 
         with zipfile.ZipFile(export_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            write_feedback_export(archive, event_rows, histories, artifact_rows, self.root, _csv_bytes)
             archive.writestr("README.txt", readme.encode("utf-8"))
             archive.writestr("summary.html", summary_html.encode("utf-8"))
             archive.writestr("summary.json", json.dumps(summaries, ensure_ascii=False, indent=2))
