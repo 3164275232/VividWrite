@@ -39,145 +39,103 @@ function responseFor(sequence, essay) {
   const browser = await chromium.launch({ headless: true, channel: process.env.BROWSER_CHANNEL || 'chrome' });
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1080 } });
-    const failures = [];
-    const saved = [];
-    const chartSubmissions = [];
-    const languageSubmissions = [];
-    const researchEvents = [];
-    let failNextAnalysis = false;
-    let failHistorySave = false;
-    page.on('pageerror', (error) => failures.push(error.message));
-    await page.route('**/practice-samples/**', (route) => route.fulfill({
-      path: path.join(root, 'frontend/public/practice-samples', path.basename(new URL(route.request().url()).pathname)),
-      contentType: 'image/png',
-    }));
-    await page.route('**/charts/line_estimates.png', (route) => route.fulfill({ path: path.join(output, 'line_estimates.png'), contentType: 'image/png' }));
-    await page.route('**/charts/line_wrong_value.png', (route) => route.fulfill({ path: path.join(output, 'line_wrong_value.png'), contentType: 'image/png' }));
-    await page.route('**/api/**', async (route) => {
+    const errors = [], saved = [], chartIds = [], languageIds = [], coachingIds = [], events = [];
+    let failAnalysis = false, failHistory = false, failGuidance = false;
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route('**/practice-samples/**', route => route.fulfill({ path: path.join(root, 'frontend/public/practice-samples', path.basename(new URL(route.request().url()).pathname)), contentType: 'image/png' }));
+    await page.route('**/charts/**', route => route.fulfill({ path: path.join(output, 'line_estimates.png'), contentType: 'image/png' }));
+    await page.route('**/api/**', async route => {
       const url = new URL(route.request().url());
+      const submissionId = route.request().headers()['x-vividwrite-submission'];
       let payload = { success: true };
       if (url.pathname === '/api/auth/config') payload = { password_required: false, research_enabled: true };
-      if (url.pathname === '/api/research/events') researchEvents.push(...route.request().postDataJSON().events);
       if (url.pathname === '/api/auth/me') payload = { authenticated: true, username: 'ui-fixture' };
+      if (url.pathname === '/api/research/events') events.push(...route.request().postDataJSON().events);
       if (url.pathname === '/api/analyze-chart-with-image') {
-        const submissionId = route.request().headers()['x-vividwrite-submission'];
-        assert.ok(submissionId, 'Every analysis has a submission ID');
-        chartSubmissions.push(submissionId);
-        const sequence = saved.length + 1;
-        const form = await new Request(route.request().url(), { method: 'POST',
-          headers: route.request().headers(), body: route.request().postDataBuffer() }).formData();
-        payload = responseFor(sequence, form.get('student_answer'));
+        assert.ok(submissionId);
+        chartIds.push(submissionId);
+        const form = await new Request(route.request().url(), { method: 'POST', headers: route.request().headers(), body: route.request().postDataBuffer() }).formData();
+        payload = responseFor(saved.length + 1, form.get('student_answer'));
         payload.analysis_revision.submission_id = submissionId;
-        if (failNextAnalysis) {
-          payload = { success: false, error: 'Synthetic analysis failure' };
-          failNextAnalysis = false;
-        } else if (failHistorySave) {
-          payload.analysis_revision = null;
-          payload.history_warning = 'This review could not be saved to your revision history.';
-        } else saved.unshift(payload.analysis_revision);
+        if (failAnalysis) { payload = { success: false, error: 'Synthetic analysis failure' }; failAnalysis = false; }
+        else if (failHistory) { payload.analysis_revision = null; payload.history_warning = 'This review could not be saved to your revision history.'; }
+        else saved.unshift(payload.analysis_revision);
       }
-      if (url.pathname.startsWith('/api/revision-history/')) payload = {
-        revisions: saved.filter((item) => item.sequence < Number(url.searchParams.get('before'))), next_before: null,
-      };
       if (url.pathname === '/api/revision-review') {
-        languageSubmissions.push(route.request().headers()['x-vividwrite-submission']);
+        languageIds.push(submissionId);
         payload = { success: true, overall: null, suggestions: [] };
+      }
+      if (url.pathname.endsWith('/guidance')) {
+        const review = saved.find(item => url.pathname.includes('/' + item.id + '/'));
+        assert.ok(review);
+        assert.equal(submissionId, review.submission_id);
+        coachingIds.push(submissionId);
+        if (failGuidance) { failGuidance = false; await route.fulfill({ status: 500, json: { detail: 'Synthetic connection failure' } }); return; }
+        const improved = review.sequence === 2;
+        const quote = review.essay.split('\n')[0];
+        const item = { fact_ids: ['criterion:introduction'], title: improved ? 'A clear introduction' : 'Make the subject clear',
+          explanation: improved ? 'You replaced a vague opening with the transport modes, years and unit, addressing the previous review.' : 'A reader needs the subject and time span before following the trends.',
+          action: improved ? 'Introduce the subject and scope together in future tasks.' : 'Name the transport modes, years and measurement unit.',
+          self_check: 'Can your reader tell what is measured without looking at the chart?' };
+        payload = { guidance: { analysis_revision_id: review.id, source: 'ai',
+          based_on: saved.filter(item => item.sequence < review.sequence).slice(0, 3).map(item => ({ id: item.id, sequence: item.sequence })),
+          unchanged_since_latest: review.sequence === 3,
+          summary: improved ? 'Your opening now gives the reader a clear frame for the comparison.' : 'Start with the one change that makes the report easier to follow.',
+          improvements: improved ? [item] : [], priorities: improved ? [] : [item],
+          facts: [{ id: 'criterion:introduction', excerpt: quote }] } };
       }
       await route.fulfill({ json: payload });
     });
     await page.goto('http://127.0.0.1:5173/');
     await page.getByLabel('Practice sample').selectOption('line-passengers');
     const editor = page.locator('.cm-content[contenteditable="true"]');
+    const coaching = page.getByRole('region', { name: 'Revision guidance' });
     await editor.fill(firstEssay);
     await page.getByRole('button', { name: 'Next Stage', exact: true }).click();
     await page.getByRole('button', { name: 'Confirm', exact: true }).click();
     await page.getByRole('button', { name: 'Analyze report', exact: true }).click();
-    await page.getByText('Your first review.', { exact: false }).waitFor();
+    await coaching.getByText('Focus on next', { exact: true }).waitFor();
+    assert.equal(await coaching.locator('select').count(), 0);
+    assert.equal(await coaching.getByText('Try this:', { exact: true }).count(), 1);
+    await coaching.getByText('Passage in your report').click();
+    await coaching.getByRole('button', { name: 'Show in draft', exact: true }).click();
+    await page.locator('.cm-hl-yellow').first().waitFor();
     await page.getByText('How were these values inferred?').click();
     await page.getByText('Interpolated between 2010 (1.1) and 2020 (2.2)', { exact: false }).first().waitFor();
-    await page.getByRole('button', { name: 'Show source sentence', exact: true }).first().click();
-    await page.locator('.cm-hl-yellow').first().waitFor();
     await editor.fill(secondEssay);
-    await page.getByText('Draft changed since Review 1.', { exact: false }).waitFor();
+    await coaching.getByText('Draft changed since Review 1.', { exact: false }).waitFor();
+    assert.equal(await coaching.getByRole('button', { name: 'Show in draft', exact: true }).isDisabled(), true);
     await page.getByRole('button', { name: 'Compare again', exact: true }).click();
-    await page.getByRole('button', { name: 'Review changes', exact: true }).click();
-    assert.equal(await page.locator('.revision-inference-note').evaluate(node => node.open), false,
-      'A new review starts with inference details collapsed');
-    await page.locator('details.revision-change--addressed').waitFor();
-    await page.locator('.revision-change--addressed summary').click();
-    await page.getByRole('button', { name: 'Show in draft', exact: true }).click();
-    await page.locator('.cm-hl-yellow').first().waitFor();
-    await page.getByText('Seven writing criteria reviewed', { exact: true }).waitFor();
-    assert.equal(await page.locator('.revision-change--addressed').count(), 1);
-    await page.locator('.revision-workspace').evaluate((node) => { node.scrollTop = 0; });
-    await page.getByRole('button', { name: 'Hide changes', exact: true }).click();
-    await page.screenshot({ path: path.join(output, 'revision-desktop.png'), fullPage: true });
-    assert.ok(await page.locator('.revision-progress').evaluate(node => node.getBoundingClientRect().height < 160), 'Default progress stays compact');
-    await editor.fill(thirdEssay);
+    await coaching.getByText('What improved', { exact: true }).waitFor();
+    await coaching.getByText('Automatically informed by 1 recent draft', { exact: false }).waitFor();
+    assert.equal(await coaching.locator('.revision-evidence-grid').count(), 0);
+    await coaching.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(output, 'guidance-desktop.png'), fullPage: true });
+    failGuidance = true;
     await page.getByRole('button', { name: 'Compare again', exact: true }).click();
-    await page.getByRole('button', { name: 'Review changes', exact: true }).click();
-    await page.getByText('No flagged changes between these reviews.', { exact: false }).waitFor();
-    const draftBeforeSelection = await editor.innerText();
-    await page.getByLabel('Compare with earlier review').selectOption('review-1');
-    await page.locator('details.revision-change--addressed').waitFor();
-    assert.equal(await editor.innerText(), draftBeforeSelection);
-    await page.locator('.revision-history-archive summary').click();
-    await page.locator('.revision-history-essay').getByText('The figure shows some numbers.', { exact: false }).waitFor();
-    // Request a historical asset from the dev server, not the API origin used in production.
-    await page.route('**/practice-samples/02_line_daily_passengers.png', (route) => route.fulfill({
-      path: path.join(root, 'frontend/public/practice-samples/02_line_daily_passengers.png'), contentType: 'image/png',
-    }));
+    await coaching.getByRole('alert').waitFor();
+    assert.equal(await coaching.getByText('What improved', { exact: true }).count(), 0, 'No stale coaching from the prior review');
+    await coaching.getByRole('button', { name: 'Retry', exact: true }).click();
+    await coaching.getByText('This draft is unchanged', { exact: false }).waitFor();
+    assert.equal(await coaching.locator('select').count(), 0);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.locator('.revision-workspace').evaluate((node) => { node.scrollTop = 0; });
-    await page.screenshot({ path: path.join(output, 'revision-mobile.png'), fullPage: true });
-    await page.locator('.revision-progress').scrollIntoViewIfNeeded();
-    await page.screenshot({ path: path.join(output, 'revision-mobile-progress.png'), fullPage: true });
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
-    assert.equal(overflow, false, 'No viewport-level horizontal overflow');
-    assert.equal(await page.locator('.revision-progress').evaluate((node) => node.scrollWidth > node.clientWidth + 1), false);
-    const brokenImages = await page.locator('.revision-history-images img').evaluateAll((images) => images.filter((image) => !image.complete || image.naturalWidth === 0).length);
-    assert.equal(brokenImages, 0, 'All historical images render');
-    await page.setViewportSize({ width: 1440, height: 1080 });
-    await editor.fill(thirdEssay.replace('Bus use declined from 1.8', 'Bus use declined from 1.4'));
-    await page.getByRole('button', { name: 'Compare again', exact: true }).click();
-    await page.getByRole('button', { name: 'Review changes', exact: true }).click();
-    await page.locator('details.revision-change--new[data-change-kind="value"]').waitFor();
-    await editor.fill(thirdEssay);
-    await page.getByRole('button', { name: 'Compare again', exact: true }).click();
-    await page.getByRole('button', { name: 'Review changes', exact: true }).click();
-    const correctedValue = page.locator('details.revision-change--addressed[data-change-kind="value"]');
-    await correctedValue.waitFor();
-    await correctedValue.locator('summary').click();
-    await correctedValue.getByText('Reported value: 1.4', { exact: true }).waitFor();
-    await correctedValue.getByText('Reported value: 1.8', { exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Show in draft', exact: true }).click();
-    assert.match(await page.locator('.cm-hl-yellow').first().innerText(), /Bus use declined from 1\.8/);
-    await page.locator('.revision-progress').scrollIntoViewIfNeeded();
-    await page.screenshot({ path: path.join(output, 'revision-value-progress.png'), fullPage: true });
-    await page.getByRole('button', { name: 'Needs attention 1', exact: true }).click();
-    assert.equal(await page.locator('details.revision-change--continuing').count(), 1,
-      'The remaining criterion concern stays accessible in its filter');
-    failNextAnalysis = true;
+    await coaching.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(output, 'guidance-mobile.png'), fullPage: true });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1), false);
+    failAnalysis = true;
     await page.getByRole('button', { name: 'Compare again', exact: true }).click();
     await page.getByText('Synthetic analysis failure', { exact: true }).waitFor();
-    assert.equal(saved.length, 5, 'Failure does not create a review');
-    assert.equal(await page.getByAltText('Visual interpretation generated from the report').count(), 1,
-      'The last successful image survives a failed reanalysis');
-    failHistorySave = true;
+    assert.equal(saved.length, 3);
+    assert.equal(await page.getByAltText('Visual interpretation generated from the report').count(), 1);
+    failHistory = true;
     await page.getByRole('button', { name: 'Compare again', exact: true }).click();
     await page.getByText('This review could not be saved to your revision history.', { exact: true }).waitFor();
-    await editor.fill(`${thirdEssay} A new sentence.`);
-    await page.getByText('Draft changed since this analysis.', { exact: false }).waitFor();
-    await page.setViewportSize({ width: 390, height: 844 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1), false);
     await page.waitForTimeout(2700);
-    assert.equal(chartSubmissions.length, 7, 'Every analysis has a submission ID');
-    assert.deepEqual(chartSubmissions, languageSubmissions, 'Chart and language feedback share submission IDs');
-    assert.equal(new Set(chartSubmissions).size, 7, 'Each reanalysis uses a new submission ID');
-    assert.ok(researchEvents.some(event => event.event_type === 'revision_comparison_ready'
-      && event.payload?.submission_id && event.payload?.analysis_id && event.payload?.baseline_id
-      && event.payload?.criteria && event.payload?.reported_values), 'Version comparison is collected');
-    assert.deepEqual(failures, []);
-    console.log(JSON.stringify({ result: 'PASS', checks: ['first review', 'stale draft', 'addressed evidence', 'sentence highlight', 'earlier baseline', 'draft preservation', 'estimated details and source quote', 'specific value correction with continuing criterion', 'failed reanalysis', 'stale notice without saved history', 'compact summary and change filters', 'desktop/mobile layout'], output }, null, 2));
+    assert.deepEqual(chartIds, languageIds);
+    assert.equal(new Set(chartIds).size, chartIds.length);
+    assert.equal(coachingIds.length, 4, 'Three reviews plus one explicitly retried request');
+    assert.ok(events.some(event => event.event_type === 'revision_guidance_viewed'));
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ result: 'PASS', checks: ['automatic history guidance', 'no version selector or parallel reviews', 'action and self-check', 'traceable passage', 'stale draft protection', 'loading error and retry', 'unchanged draft', 'shared submission IDs', 'research telemetry', 'inference details', 'failed analysis preservation', 'desktop and mobile'], output }, null, 2));
   } finally { await browser.close(); }
-})().catch((error) => { console.error(error); process.exitCode = 1; });
+})().catch(error => { console.error(error); process.exitCode = 1; });

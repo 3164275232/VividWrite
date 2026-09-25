@@ -31,7 +31,37 @@ class RevisionHistoryStore:
                 UNIQUE (username, task_id, sequence)
             )
         """)
+        connection.execute("""CREATE TABLE IF NOT EXISTS revision_guidance (
+            revision_id TEXT PRIMARY KEY, username TEXT NOT NULL, guidance TEXT NOT NULL
+        )""")
         return connection
+
+    def get(self, username, revision_id):
+        connection = self._connect()
+        try:
+            row = connection.execute('SELECT snapshot FROM analysis_revisions WHERE username = ? AND id = ?',
+                                     (username, revision_id)).fetchone()
+            return normalise_record_times(json.loads(row['snapshot'])) if row else None
+        finally:
+            connection.close()
+
+    def get_guidance(self, username, revision_id):
+        connection = self._connect()
+        try:
+            row = connection.execute('SELECT guidance FROM revision_guidance WHERE username = ? AND revision_id = ?',
+                                     (username, revision_id)).fetchone()
+            return normalise_record_times(json.loads(row['guidance'])) if row else None
+        finally:
+            connection.close()
+
+    def save_guidance(self, username, revision_id, guidance):
+        connection = self._connect()
+        try:
+            with connection:
+                connection.execute('INSERT OR IGNORE INTO revision_guidance VALUES (?, ?, ?)',
+                                   (revision_id, username, json.dumps(guidance, ensure_ascii=False)))
+        finally:
+            connection.close()
 
     def save(self, username, image_bytes, chart_type, reference_text, essay, chart_data,
              chart_url, original_url, submission_id=None):

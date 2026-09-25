@@ -141,6 +141,31 @@ before external data collection begins.
 
 ## Study Operations
 
+### Automatic revision guidance
+
+The revision panel now requests a saved AI synthesis instead of asking learners
+to pick a comparison version. The server considers at most the latest 30 reviews
+of the same task and automatically selects up to three distinct earlier drafts
+with matching reference, review framework and analysis model. Repeated copies of
+the same draft do not occupy all three slots. The selected review IDs are saved.
+
+The synthesis explains evidence-backed improvements and up to three next actions,
+with self-check questions. Overlapping overview/key-trend concerns on the same
+passage are combined. Unchanged drafts, untraceable edits, local fallback reviews,
+inferred values and omitted figures cannot establish verified improvements.
+Language feedback is included when it has an exact matching submission ID;
+legacy language feedback without that ID remains in the export but is not guessed
+into a particular draft. The AI does not supply a rewritten essay in this panel.
+
+Guidance is cached per user/review in `revision_guidance` in the existing history
+database, including its timestamp, model, evidence, selection and result. It is
+also recorded as `revision_guidance_completed`; the interface records views and
+evidence expansion. Exports include it in **feedback.html**, **feedback.csv**,
+individual JSON and historical snapshots, even if the research event write failed.
+Provider/schema failures produce clearly labelled saved-review guidance. Opening
+the same review reuses its saved result rather than spending another model call.
+Existing feedback and history records are preserved.
+
 - Export and back up the study data regularly during data collection.
 - Record the consent version used in the study protocol. Increment
   `APP_RESEARCH_CONSENT_VERSION` when the notice or collection scope changes.

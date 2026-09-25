@@ -1,10 +1,24 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 
-import { generateSampleEssay, analyzeChartWithImage, reviewRevision } from '../src/api.js';
+import { generateSampleEssay, analyzeChartWithImage, reviewRevision, getRevisionGuidance } from '../src/api.js';
 
 
 const originalFetch = globalThis.fetch;
+
+test('guidance requests share an in-flight call, preserve submission ID and permit a later retry', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, id: options.headers['X-VividWrite-Submission'] });
+    return Response.json({ guidance: { analysis_revision_id: 'review-one' } });
+  };
+  await Promise.all([getRevisionGuidance('review-one', 'submission-one'), getRevisionGuidance('review-one', 'submission-one')]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].id, 'submission-one');
+  assert.match(calls[0].url, /revision-history\/review-one\/guidance$/);
+  await getRevisionGuidance('review-one', 'submission-one');
+  assert.equal(calls.length, 2);
+});
 
 test('one submission ID links parallel chart and language feedback without reusing it for the next draft', async () => {
   const calls = [];

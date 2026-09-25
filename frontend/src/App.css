@@ -804,6 +804,20 @@
 .revision-progress-title > span { font-size: 11px; }
 .revision-progress-title > span:first-of-type { border-radius: 4px; padding: 1px 6px; background: var(--vw-surface-muted); }
 .revision-progress p { margin: 6px 0 0; }
+.revision-coaching-summary { color: var(--vw-text); max-width: 1000px; padding: 12px 0; font-size: 14px; }
+.revision-coaching-scope { font-size: 11px; }
+.revision-coaching h3 { margin: 16px 0 8px; font-size: 12px; color: var(--vw-text-secondary); }
+.revision-coaching-card { padding: 14px 16px; border: 1px solid var(--vw-border); border-radius: 8px; margin: 8px 0; }
+.revision-coaching-card h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; color: var(--vw-text); font-size: 14px; }
+.revision-coaching-card--improved { border-left: 3px solid var(--vw-success); }
+.revision-coaching-card--improved h4 svg { color: var(--vw-success); }
+.revision-coaching-number { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 23px; height: 23px; border-radius: 50%; background: var(--vw-surface-muted); font-size: 11px; }
+.revision-coaching-action { color: var(--vw-text); }
+.revision-coaching-check { font-size: 12px; }
+.revision-coaching-evidence { margin-top: 10px; font-size: 12px; }
+.revision-coaching-evidence summary { cursor: pointer; }
+.revision-coaching-evidence blockquote { margin: 10px 0; padding-left: 12px; border-left: 2px solid var(--vw-border); white-space: pre-wrap; }
+.revision-coaching-evidence button { gap: 6px; }
 .revision-progress-preview { flex-wrap: wrap; gap: 6px; color: var(--vw-text); }
 .revision-progress-preview > svg { color: var(--vw-success); flex-shrink: 0; }
 .revision-attention-count { color: #8a4b08; font-size: 12px; margin-left: 6px; }

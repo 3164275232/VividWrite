@@ -166,6 +166,18 @@ export function getRevisionHistory(taskId, before) {
   return requestJson(`/api/revision-history/${encodeURIComponent(taskId)}${query}`, {}, 'Loading revision history failed');
 }
 
+const pendingGuidance = new Map();
+export function getRevisionGuidance(revisionId, submissionId) {
+  const key = `${revisionId}:${submissionId || ''}`;
+  if (pendingGuidance.has(key)) return pendingGuidance.get(key);
+  const pending = postJson(`/api/revision-history/${encodeURIComponent(revisionId)}/guidance`, {},
+    'Revision guidance unavailable', { retryTransient: true },
+    submissionId ? { 'X-VividWrite-Submission': submissionId } : {})
+    .finally(() => pendingGuidance.delete(key));
+  pendingGuidance.set(key, pending);
+  return pending;
+}
+
 export function requestNextSentence(payload) {
   return postJson('/api/next-sentence', payload, 'Next sentence generation failed');
 }

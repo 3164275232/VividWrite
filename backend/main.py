@@ -22,6 +22,7 @@ from research_api import (
 )
 from revision_review import router as revision_review_router
 from revision_history import RevisionHistoryStore, history_username, router as revision_history_router
+from revision_guidance import router as revision_guidance_router
 from sample_essay import SampleEssayResponse, router as sample_essay_router
 from spatial_sample_essay import generate_spatial_sample_essay
 from storage import (
@@ -51,6 +52,7 @@ app.include_router(auth_router)
 app.include_router(sample_essay_router)
 app.include_router(revision_review_router)
 app.include_router(revision_history_router)
+app.include_router(revision_guidance_router)
 app.include_router(research_router)
 app.middleware("http")(authentication_middleware)
 app.middleware("http")(research_request_middleware)

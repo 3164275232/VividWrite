@@ -19,6 +19,7 @@ EVENT_KINDS = {
     'spatial_sample_essay': '地图／流程图范文生成',
     'next_sentence': '续写建议',
     'revision_comparison': '前后版本比较（系统计算）',
+    'revision_guidance': '结合历史反馈的综合修改建议',
     'history_snapshot': '历史反馈版本',
 }
 API_KINDS = {
@@ -47,8 +48,18 @@ def load_history(path, usernames):
             'SELECT username, snapshot FROM analysis_revisions WHERE username IN ('
             + ','.join('?' for _ in usernames) + ') ORDER BY username, task_id, sequence', usernames,
         ).fetchall()
-    return [normalise_record_times({**json.loads(snapshot), 'username': username})
-            for username, snapshot in rows]
+        guidance = {}
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='revision_guidance'").fetchone():
+            guidance = {(username, revision_id): json.loads(value) for username, revision_id, value in conn.execute(
+                'SELECT username, revision_id, guidance FROM revision_guidance WHERE username IN ('
+                + ','.join('?' for _ in usernames) + ')', usernames).fetchall()}
+    result = []
+    for username, snapshot in rows:
+        item = {**json.loads(snapshot), 'username': username}
+        if (username, item['id']) in guidance:
+            item['revision_guidance'] = guidance[(username, item['id'])]
+        result.append(normalise_record_times(item))
+    return result
 
 
 def media_urls(value):
@@ -145,6 +156,12 @@ def write_feedback_export(archive, events, histories, artifacts, research_root, 
 
     represented = {row['revision_id'] for row in records if row['revision_id']}
     for snapshot in histories:
+        guidance = snapshot.get('revision_guidance')
+        if guidance and not any(row['kind'] == 'revision_guidance' and row['revision_id'] == snapshot['id'] for row in records):
+            add({'username': snapshot['username'], 'event_id': 'guidance-' + snapshot['id'],
+                 'event_type': 'revision_guidance_completed', 'occurred_at': guidance['created_at']},
+                'revision_guidance', {'response': guidance, 'student_answer': snapshot['essay'],
+                                     'submission_id': snapshot.get('submission_id'), 'analysis_revision_id': snapshot['id']})
         if snapshot['id'] not in represented:
             add({'username': snapshot['username'], 'event_id': 'history-' + snapshot['id'],
                  'event_type': 'history_snapshot_completed', 'occurred_at': snapshot['created_at']},
@@ -160,6 +177,8 @@ def write_feedback_export(archive, events, histories, artifacts, research_root, 
     def visible_feedback(payload):
         response = payload.get('response') or payload
         chart = payload.get('chart_data') or (response.get('chart_data') if isinstance(response, dict) else None)
+        if isinstance(response, dict) and 'priorities' in response and 'based_on' in response:
+            return {key: response.get(key) for key in ('summary', 'improvements', 'priorities', 'based_on', 'source', 'unchanged_since_latest')}
         if isinstance(chart, dict) and chart:
             return {**{key: chart[key] for key in ('move_feedback', 'comparison', 'records') if key in chart},
                     'revision_suggestions': payload.get('revision_suggestions') or response.get('revision_suggestions') or []}
@@ -191,6 +210,8 @@ def write_feedback_export(archive, events, histories, artifacts, research_root, 
         'reported_values': '所述数值的变化', 'inference': '推断依据',
         'student_evidence': '作文中的依据', 'estimated': '是否为系统推断',
         'category': '类别', 'series': '系列', 'value': '数值', 'error': '失败原因',
+        'improvements': '本次改进', 'priorities': '下一步重点', 'action': '具体行动',
+        'self_check': '自我检查', 'explanation': '说明', 'based_on': '参考的历史版本',
     }
 
     def pretty(value):
