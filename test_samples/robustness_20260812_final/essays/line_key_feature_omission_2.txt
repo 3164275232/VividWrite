@@ -1,0 +1,7 @@
+The line chart presents changes in the millions of passengers using bus, rail and metro services on an average day.
+
+Overall, use of the three services was distributed differently across the period.
+
+In 2010, Metro served 0.8 million passengers, compared with 1.9 million in 2020. Rail began with 1.1 million passengers and ended at 2.2 million. At the 2018 observation, Metro stood at 1.7 million. The Rail figure in 2018 was 2.0 million.
+
+The selected middle year helps indicate the position of each service between the first and final observations.

@@ -1,0 +1,7 @@
+The line graph shows average daily use of bus, rail and metro services between 2010 and 2020, in millions of passengers.
+
+Overall, Metro was the highest transport mode in 2012, while the ordering differed at other observations.
+
+At the outset, Metro carried 0.8 million passengers and ultimately reached 1.9 million. In 2010, Bus served 1.8 million passengers, compared with 1.3 million in 2020. Rail began with 1.1 million passengers and ended at 2.2 million. The Rail figure in 2012 was 1.3 million. At the 2012 observation, Bus stood at 1.9 million. In 2012, Metro carried 1.0 million daily passengers.
+
+The selected middle year helps indicate the position of each service between the first and final observations.

@@ -1,0 +1,7 @@
+The line graph compares average daily passenger numbers for bus, rail and metro services between 2010 and 2020, measured in millions.
+
+Overall, the lines did not remain in their initial order, and the gap between services changed over time.
+
+The figures for Metro were 0.8 million at the beginning and 1.9 million at the end. The figures for Rail were 1.1 million at the beginning and 2.2 million at the end. The figures for Bus were 1.8 million at the beginning and 1.3 million at the end. In 2016, the figure for Metro was 1.5 million. In 2016, the figure for Bus was 1.8 million. Rail recorded 1.6 million daily users in 2016.
+
+The recorded points provide enough detail to compare the services at both the beginning and the end.

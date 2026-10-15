@@ -1,14 +1,16 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import ErrorBoundary from './ErrorBoundary.jsx';
 import CmEditor from './CmEditor.jsx';
+import RevisionWorkspace from './RevisionWorkspace.jsx';
+import MoveFeedback from './MoveFeedback.jsx';
 import {
   analyzeChartWithImage,
-  analyzeStructure,
   extractDeplot,
   generateSampleEssay,
   generateSpatialSampleEssay,
   getAuthConfig,
   getCurrentUser,
+  API_BASE,
   login as loginUser,
   logout as logoutUser,
   prepareTaskImage,
@@ -20,10 +22,13 @@ import {
 } from "./api";
 import Login from "./Login";
 import {
+  loadPracticeSample,
+  PRACTICE_SAMPLES,
+} from './practiceSamples';
+import {
   ArrowRight,
   BarChart3,
   FileText,
-  GitBranch,
   LogOut,
   RotateCcw,
   Sparkles,
@@ -31,7 +36,6 @@ import {
   X,
 } from "lucide-react";
 import "./App.css";
-import Flowchart from "./Flowchart";//对应修改1
 
 import {
   analysisRequirement,
@@ -41,6 +45,21 @@ import {
   STATISTICAL_TASK_TYPES,
   taskTypeLabel,
 } from './utils/taskTypes';
+import {
+  findMoveAssessment,
+  locateMoveRange,
+  withResolvedMoveVisualUrls,
+} from './moveFeedbackUtils.js';
+import { sameDraftText } from './revisionHistoryUtils.js';
+import {
+  abandonResearchSession,
+  archiveResearchArtifact,
+  configureResearchTelemetry,
+  endResearchSession,
+  snapshotEssay,
+  trackEssayEdit,
+  trackResearchEvent,
+} from './researchTelemetry.js';
 
 function formatFeedbackNumber(value) {
   const number = Number(value);
@@ -48,8 +67,17 @@ function formatFeedbackNumber(value) {
   return Number.isInteger(number) ? String(number) : number.toFixed(1).replace(/\.0$/, '');
 }
 
-function ChartFeedbackDetails({ chartData }) {
-  if (!['pie', 'bar', 'line'].includes(chartData?.chart_type)) return null;
+function ChartFeedbackDetails({ chartData, activeMoveId, onSelectMove }) {
+  if (Array.isArray(chartData?.move_feedback?.assessments)) {
+    return (
+      <MoveFeedback
+        chartData={chartData}
+        activeMoveId={activeMoveId}
+        onSelectMove={onSelectMove}
+      />
+    );
+  }
+  if (!['pie', 'bar', 'line', 'area'].includes(chartData?.chart_type)) return null;
   const isPie = chartData.chart_type === 'pie';
   const comparison = chartData.comparison || {};
   const issues = Array.isArray(comparison.incorrect_official_items)
@@ -206,29 +234,25 @@ export default function App() {
 
   const [authReady, setAuthReady] = useState(false);
   const [passwordRequired, setPasswordRequired] = useState(true);
+  const [researchEnabled, setResearchEnabled] = useState(false);
+  const [researchConsentRequired, setResearchConsentRequired] = useState(false);
+  const [researchConsentVersion, setResearchConsentVersion] = useState('');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [username, setUsername] = useState(""); // NEW: current logged in user
-  const [leftWidth, setLeftWidth] = useState(60); // Percentage width of the left pane
   const [upperHeight, setUpperHeight] = useState(33.33); // Percentage height of the upper section
   // 初始文本为空，使用占位符在聚焦时自动消失
   const [text, setText] = useState("");
   // Stages handling
-  const stages = ["planning", "drafting", "revision"];
+  const stages = ["drafting", "revision"];
   const [stageIndex, setStageIndex] = useState(0);
   const currentStage = stages[stageIndex];
   const [showStageConfirm, setShowStageConfirm] = useState(false);
   const [showImageRequired, setShowImageRequired] = useState(false);
-  // Sample essay structure choice dialog
-  const [showStructureChoice, setShowStructureChoice] = useState(false);
-  const [structureChoiceInfo, setStructureChoiceInfo] = useState(null);
-  const [pendingSampleEssayRequest, setPendingSampleEssayRequest] = useState(null);
   // Post-login tips modal
   const [showPostLoginTips, setShowPostLoginTips] = useState(false);
   // Stage transition notification removed
   // Save reminder states
   const [showSaveReminder, setShowSaveReminder] = useState(false);
-  //修改1
-  const [rightContent, setRightContent] = useState("Flowchart");
 
   useEffect(() => {
     let cancelled = false;
@@ -238,6 +262,9 @@ export default function App() {
         const config = await getAuthConfig();
         if (!cancelled) {
           setPasswordRequired(config?.password_required !== false);
+          setResearchEnabled(config?.research_enabled === true);
+          setResearchConsentRequired(config?.consent_required === true);
+          setResearchConsentVersion(config?.consent_version || '');
         }
       } catch (error) {
         console.warn('Could not load login settings', error);
@@ -262,6 +289,7 @@ export default function App() {
     };
 
     const handleUnauthorized = () => {
+      abandonResearchSession();
       setUsername("");
       setIsLoggedIn(false);
       setShowPostLoginTips(false);
@@ -275,18 +303,15 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (currentStage === 'revision') {
-      setRightContent('Visual Feedback');
-    }
-  }, [currentStage]);
-  
   const [chartUrl, setChartUrl] = useState(null);
   const [chartData, setChartData] = useState(null);
+  const [analysisSnapshot, setAnalysisSnapshot] = useState(null);
+  const analysisSequenceRef = useRef(0);
   // New revision review data (vocabulary / grammar / coherence / overall) with mapped suggestions
   const [revisionReview, setRevisionReview] = useState(null); // {overall:{...}, suggestions:[...]}
   const [reviewSuggestions, setReviewSuggestions] = useState([]); // normalized list with id, category, message, severity, ranges
   const [activeSuggestionId, setActiveSuggestionId] = useState(null);
+  const [activeMoveId, setActiveMoveId] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
   //添加图片上传功能
@@ -297,12 +322,23 @@ export default function App() {
   const [taskDetection, setTaskDetection] = useState(null);
   const [isPreparingTaskImage, setIsPreparingTaskImage] = useState(false);
   const [taskPreparationPhase, setTaskPreparationPhase] = useState("");
+  const [selectedPracticeSampleId, setSelectedPracticeSampleId] = useState("");
+  const [isLoadingPracticeSample, setIsLoadingPracticeSample] = useState(false);
+  const [practiceSampleError, setPracticeSampleError] = useState("");
   const effectiveChartType = selectedChartType === "auto"
     ? (resolvedChartType || "auto")
     : selectedChartType;
   const isSpatialTask = SPATIAL_TASK_TYPES.has(effectiveChartType);
   const isStatisticalTask = STATISTICAL_TASK_TYPES.has(effectiveChartType);
-  const [flowchartData, setFlowchartData] = useState({ nodes: [], edges: [] });
+  useEffect(() => {
+    analysisSequenceRef.current += 1;
+    setAnalysisSnapshot(null);
+    setChartData(null);
+    setChartUrl(null);
+    setIsAnalyzing(false);
+    setReviewSuggestions([]);
+    setRevisionReview(null);
+  }, [uploadedImage, username, selectedChartType]);
   const [isNextSentenceLoading, setIsNextSentenceLoading] = useState(false);
   const [isSampleEssayLoading, setIsSampleEssayLoading] = useState(false); // separate loading state
   const [nextSentenceError, setNextSentenceError] = useState("");
@@ -317,8 +353,50 @@ export default function App() {
   const [isExtractingDeplot, setIsExtractingDeplot] = useState(false);
   const [deplotError, setDeplotError] = useState("");
   const taskImagePreparationRef = useRef({ seq: 0, promise: null, key: null });
+  const practiceSampleLoadRef = useRef(0);
   // Track background DePlot extraction task without showing UI
   const deplotTaskRef = useRef({ seq: 0, promise: null, key: null });
+  const researchContextRef = useRef({});
+  const previousResearchTextRef = useRef(text);
+
+  researchContextRef.current = {
+    stage: currentStage,
+    selected_chart_type: selectedChartType,
+    resolved_chart_type: resolvedChartType,
+    effective_chart_type: effectiveChartType,
+    practice_sample_id: selectedPracticeSampleId || null,
+    has_task_image: Boolean(uploadedImage),
+    has_generated_image: Boolean(chartUrl),
+    word_count: text.trim() ? text.trim().split(/\s+/).length : 0,
+    character_count: text.length,
+  };
+
+  useEffect(() => {
+    if (!isLoggedIn || !username || !researchEnabled) return;
+    configureResearchTelemetry({
+      enabled: true,
+      username,
+      apiBase: API_BASE,
+      consentVersion: researchConsentVersion,
+      getContext: () => researchContextRef.current,
+    });
+  }, [isLoggedIn, researchConsentVersion, researchEnabled, username]);
+
+  useEffect(() => {
+    const previousText = previousResearchTextRef.current;
+    if (previousText !== text) {
+      trackEssayEdit(previousText, text, 'workspace_editor');
+      previousResearchTextRef.current = text;
+    }
+  }, [text]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !researchEnabled) return undefined;
+    const interval = window.setInterval(() => {
+      snapshotEssay(previousResearchTextRef.current, 'periodic_30_seconds');
+    }, 30000);
+    return () => window.clearInterval(interval);
+  }, [isLoggedIn, researchEnabled]);
   // Helper to run DePlot extraction; if showOverlay=true, show analyzing modal while waiting
   const runDeplotExtraction = useCallback(async (
     file,
@@ -544,125 +622,11 @@ export default function App() {
     }
     return resolvedType;
   }, [prepareUploadedTaskImage, resolvedChartType, selectedChartType, uploadedImage]);
-  const [missingNodes, setMissingNodes] = useState([]); // array of {id,title,reason}
-  const [sentenceRanges, setSentenceRanges] = useState([]); // [{index,start,end,text}]
-  const [paragraphRanges, setParagraphRanges] = useState([]); // [{paragraph_index,start,end,text}]
-  const [structureFeedback, setStructureFeedback] = useState(null);
-  const [mappingStatus, setMappingStatus] = useState('idle'); // idle | loading | ok | missing | error
-  const [nodeToSentenceIndices, setNodeToSentenceIndices] = useState({}); // { nodeId: [sentenceIndex,...] }
-  const [nodeToParagraphIndices, setNodeToParagraphIndices] = useState({}); // { nodeId: [paragraphIndex,...] }
   const [lastAddition, setLastAddition] = useState(null); // { start,end,prevText }
   const editorRef = useRef(null);
 
-  useEffect(() => {
-    if (rightContent !== 'Flowchart') {
-      editorRef.current?.clearHighlights();
-      setActiveSuggestionId(null);
-    }
-  }, [rightContent]);
-
-  const buildHighlightRanges = (indices, ranges, indexKey = 'index') => {
-    if (!Array.isArray(indices) || !Array.isArray(ranges)) {
-      return [];
-    }
-    return indices.map(i => {
-      const range = ranges.find(item => item[indexKey] === i);
-      if (!range) return null;
-      return { from: range.start, to: range.end };
-    }).filter(Boolean);
-  };
-
-  const runStructureAnalyze = useCallback(() => {
-    setMappingStatus('loading');
-    if (!uploadedImage || !text.trim() || !flowchartData?.nodes?.length) {
-      setMappingStatus('idle');
-      return;
-    }
-    analyzeStructure({
-      current_text: text,
-      flowchart: flowchartData,
-      deplot_text: deplotText || null,
-      chart_type: effectiveChartType,
-    })
-      .then(res => {
-        if (res.error) {
-          setMappingStatus('error');
-          return;
-        }
-        const sentences = res.sentences || [];
-        const paragraphs = res.paragraphs || [];
-        setSentenceRanges(sentences);
-        setParagraphRanges(paragraphs);
-        setStructureFeedback(res.structure_feedback || null);
-
-        const sentenceNodeMap = {};
-        (res.mappings || []).forEach(mapping => {
-          const nodeIds = mapping.node_ids?.length
-            ? mapping.node_ids
-            : mapping.primary_node
-              ? [mapping.primary_node]
-              : [];
-          nodeIds.forEach(nodeId => {
-            if (!sentenceNodeMap[nodeId]) sentenceNodeMap[nodeId] = [];
-            sentenceNodeMap[nodeId].push(mapping.sentence_index);
-          });
-        });
-        Object.keys(sentenceNodeMap).forEach(nodeId => {
-          sentenceNodeMap[nodeId] = Array.from(new Set(sentenceNodeMap[nodeId])).sort((a, b) => a - b);
-        });
-
-        const paragraphNodeMap = {};
-        (res.paragraph_mappings || []).forEach(mapping => {
-          if (mapping.primary_node) {
-            if (!paragraphNodeMap[mapping.primary_node]) {
-              paragraphNodeMap[mapping.primary_node] = [];
-            }
-            paragraphNodeMap[mapping.primary_node].push(mapping.paragraph_index);
-          }
-        });
-        Object.keys(paragraphNodeMap).forEach(nodeId => {
-          paragraphNodeMap[nodeId] = Array.from(new Set(paragraphNodeMap[nodeId])).sort((a, b) => a - b);
-        });
-
-        const reportedMissingNodes = res.missing_nodes || [];
-        setNodeToSentenceIndices(sentenceNodeMap);
-        setNodeToParagraphIndices(paragraphNodeMap);
-        setMissingNodes(reportedMissingNodes);
-        setMappingStatus(reportedMissingNodes.length ? 'missing' : 'ok');
-      })
-      .catch(err => {
-        console.warn('Mapping error', err);
-        setMappingStatus('error');
-      });
-  }, [text, flowchartData, uploadedImage, deplotText, effectiveChartType]);
-
-  const handleNodeClickHighlight = (nodeId) => {
-    if (!editorRef.current) {
-      return;
-    }
-    if (!['ok', 'missing'].includes(mappingStatus)) {
-      return;
-    }
-    setActiveSuggestionId(null);
-    const paragraphHighlights = buildHighlightRanges(
-      nodeToParagraphIndices[nodeId] || [],
-      paragraphRanges,
-      'paragraph_index',
-    );
-    const sentenceHighlights = buildHighlightRanges(
-      nodeToSentenceIndices[nodeId] || [],
-      sentenceRanges,
-    );
-    const ranges = paragraphHighlights.length ? paragraphHighlights : sentenceHighlights;
-    if (ranges.length === 0) {
-      return;
-    }
-    editorRef.current.clearHighlights();
-    editorRef.current.highlightSentenceRanges(ranges);
-  };
-
-  const handleLogin = async (uname, password) => {
-    const session = await loginUser(uname, password);
+  const handleLogin = async (uname, password, consent) => {
+    const session = await loginUser(uname, password, consent);
     setUsername(session.username);
     setIsLoggedIn(true);
     // Show tips modal right after login
@@ -670,13 +634,24 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    await logoutUser();
-    setUsername("");
-    setIsLoggedIn(false);
-    setShowPostLoginTips(false);
+    snapshotEssay(text, 'logout');
+    await endResearchSession('logout');
+    try {
+      await logoutUser();
+    } finally {
+      setUsername("");
+      setIsLoggedIn(false);
+      setShowPostLoginTips(false);
+      window.location.reload();
+    }
   };
 
   const handleNextStage = async () => {
+    trackResearchEvent('stage_advance_requested', {
+      from_stage: currentStage,
+      has_image: Boolean(uploadedImage),
+      has_text: Boolean(text.trim()),
+    });
     console.log('Next Stage clicked:', { stageIndex, currentStage, hasImage: !!uploadedImage, hasText: !!text.trim() });
     // If already at last stage do nothing
     if (stageIndex === stages.length - 1) {
@@ -698,7 +673,7 @@ export default function App() {
 
     // Keep DePlot extraction in the background. Stage changes should not be blocked by
     // first-time model loading or a slow chart parse.
-    if (currentStage === 'planning' && isStatisticalTask) {
+    if (currentStage === 'drafting' && isStatisticalTask) {
       setIsExtractingDeplot(false);
       if (!deplotText.trim() && !deplotTaskRef.current?.promise) {
         runDeplotExtraction(uploadedImage, { showOverlay: false }).catch(() => {
@@ -712,11 +687,16 @@ export default function App() {
 
   const confirmStageAdvance = async () => {
     setShowStageConfirm(false);
+    snapshotEssay(text, 'stage_advance', { from_stage: currentStage });
+    trackResearchEvent('stage_advanced', {
+      from_stage: currentStage,
+      to_stage: stages[Math.min(stageIndex + 1, stages.length - 1)],
+    });
     
-    // Save final image when leaving planning (non-blocking)
+    // Save the task image when moving into revision (non-blocking)
     setDeplotError("");
-    const movingFromPlanning = stages[stageIndex] === 'planning' && stageIndex < stages.length - 1;
-    if (movingFromPlanning && username && uploadedImage) {
+    const movingToRevision = stages[stageIndex] === 'drafting' && stageIndex < stages.length - 1;
+    if (movingToRevision && username && uploadedImage) {
       saveFinalImage(username, uploadedImage).catch(e => console.warn('Failed to save final image', e));
     }
 
@@ -737,19 +717,24 @@ export default function App() {
     setShowSaveReminder(false);
   };
 
-  // Keep rightContent consistent with stage rules (now allow Flowchart also in revision)
   useEffect(() => {
-    if (currentStage === 'planning' || currentStage === 'drafting') {
-      if (rightContent !== 'Flowchart') setRightContent('Flowchart');
-    } else if (currentStage === 'revision') {
-      // In revision we now allow Flowchart to stay; just close candidate panel
+    if (currentStage === 'revision') {
       setShowCandidatePanel(false);
     }
-  }, [currentStage, rightContent]);
+  }, [currentStage]);
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
+      trackResearchEvent('custom_task_image_selected', { file });
+      void archiveResearchArtifact(file, 'original_task_image', {
+        source: 'custom_upload',
+        selected_chart_type: selectedChartType,
+      });
+      practiceSampleLoadRef.current += 1;
+      setSelectedPracticeSampleId("");
+      setIsLoadingPracticeSample(false);
+      setPracticeSampleError("");
       setUploadedImage(file);
       setChartUrl(null);
       setChartData(null);
@@ -771,6 +756,14 @@ export default function App() {
   };
 
   const handleRemoveImage = () => {
+    trackResearchEvent('task_image_removed', {
+      practice_sample_id: selectedPracticeSampleId || null,
+      file: uploadedImage,
+    });
+    practiceSampleLoadRef.current += 1;
+    setSelectedPracticeSampleId("");
+    setIsLoadingPracticeSample(false);
+    setPracticeSampleError("");
     setUploadedImage(null);
     setImagePreview(null);
     setChartUrl(null);
@@ -793,6 +786,75 @@ export default function App() {
     setIsPreparingTaskImage(false);
     setTaskPreparationPhase("");
   };
+
+  const handlePracticeSampleChange = async (event) => {
+    const sampleId = event.target.value;
+    trackResearchEvent('practice_sample_selected', { sample_id: sampleId || null });
+    if (!sampleId) {
+      handleRemoveImage();
+      setSelectedChartType("auto");
+      return;
+    }
+
+    const loadSeq = practiceSampleLoadRef.current + 1;
+    practiceSampleLoadRef.current = loadSeq;
+    setSelectedPracticeSampleId(sampleId);
+    setIsLoadingPracticeSample(true);
+    setPracticeSampleError("");
+    setDeplotError("");
+    setChartUrl(null);
+    setChartData(null);
+    setIsPreparingTaskImage(false);
+    setTaskPreparationPhase("");
+    taskImagePreparationRef.current = {
+      seq: taskImagePreparationRef.current.seq + 1,
+      promise: null,
+      key: null,
+    };
+    deplotTaskRef.current = {
+      seq: deplotTaskRef.current.seq + 1,
+      promise: null,
+      key: null,
+    };
+    setIsExtractingDeplot(false);
+
+    try {
+      const { sample, file } = await loadPracticeSample(sampleId);
+      if (practiceSampleLoadRef.current !== loadSeq) return;
+
+      setUploadedImage(file);
+      setImagePreview(sample.imageUrl);
+      setSelectedChartType(sample.chartType);
+      setResolvedChartType(null);
+      setTaskDetection({
+        task_type: sample.chartType,
+        confidence: 1,
+        detection_source: 'preprocessed-sample',
+        needs_confirmation: false,
+        deplot_text: sample.deplotText,
+      });
+      setDeplotText(sample.deplotText);
+      void archiveResearchArtifact(file, 'original_task_image', {
+        source: 'practice_sample',
+        practice_sample_id: sampleId,
+        chart_type: sample.chartType,
+        preprocessed_deplot_text: sample.deplotText,
+      });
+    } catch (error) {
+      if (practiceSampleLoadRef.current !== loadSeq) return;
+      setSelectedPracticeSampleId("");
+      setUploadedImage(null);
+      setImagePreview(null);
+      setDeplotText("");
+      setTaskDetection(null);
+      setResolvedChartType(null);
+      setPracticeSampleError(error.message || 'Could not load the practice sample.');
+    } finally {
+      if (practiceSampleLoadRef.current === loadSeq) {
+        setIsLoadingPracticeSample(false);
+      }
+    }
+  };
 //修改2
     // 默认显示Visual Feedback
   const handleAnalyzeText = async () => {
@@ -805,24 +867,45 @@ export default function App() {
       return;
     }
 
+    const requestSequence = ++analysisSequenceRef.current;
+    const acceptAnalysis = (result) => {
+      setChartUrl(resolveBackendUrl(result.chart_url));
+      setChartData(withResolvedMoveVisualUrls(result.chart_data || null, resolveBackendUrl));
+      setAnalysisSnapshot({
+        revision: result.analysis_revision || null,
+        warning: result.history_warning || '',
+        essay: text,
+      });
+    };
     let taskTypeForAnalysis;
     try {
       taskTypeForAnalysis = await resolveTaskTypeForAction();
+      if (requestSequence !== analysisSequenceRef.current) return;
     } catch (error) {
+      if (requestSequence !== analysisSequenceRef.current) return;
       setAnalysisError(error.message);
       return;
     }
     const analysisIsSpatial = SPATIAL_TASK_TYPES.has(taskTypeForAnalysis);
+    const submissionId = `submission-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+    snapshotEssay(text, 'analysis_requested', { chart_type: taskTypeForAnalysis, submission_id: submissionId });
+    trackResearchEvent('analysis_requested', {
+      submission_id: submissionId,
+      chart_type: taskTypeForAnalysis,
+      spatial: analysisIsSpatial,
+      deplot_available: Boolean(deplotText.trim()),
+    });
 
     // Persist revision full text snapshot
     if (currentStage === 'revision' && username) {
       try { await saveRevisionText(username, text); } catch (e) { console.warn('Failed to save revision text', e); }
     }
 
+    if (requestSequence !== analysisSequenceRef.current) return;
     setIsAnalyzing(true);
     setAnalysisError("");
-    setChartUrl(null);
-    setChartData(null);
+    setActiveMoveId(null);
+    setActiveSuggestionId(null);
 
     let deplotForAnalysis = analysisIsSpatial ? '(Not required for spatial tasks)' : deplotText;
     if (!analysisIsSpatial && !deplotForAnalysis.trim()) {
@@ -832,15 +915,18 @@ export default function App() {
           chartTypeOverride: taskTypeForAnalysis,
         });
       } catch {
-        setDeplotError("Automatic DePlot extraction failed, continuing with placeholder text");
+        if (requestSequence === analysisSequenceRef.current) {
+          setDeplotError("Automatic DePlot extraction failed, continuing with placeholder text");
+        }
       }
     }
 
     try {
+      if (requestSequence !== analysisSequenceRef.current) return;
       if (currentStage === 'revision') {
         // Run BOTH: LLM revision review + chart analysis for visual feedback.
         if (!deplotForAnalysis.trim()) deplotForAnalysis = '(No DePlot data extracted)';
-        const reviewPromise = reviewRevision({ text, flowchart: flowchartData, deplot_text: deplotForAnalysis, mode: 'llm' });
+        const reviewPromise = reviewRevision({ text, deplot_text: deplotForAnalysis, mode: 'llm' }, submissionId);
         // prepare chart form data (reuse existing logic)
         const formData = new FormData();
         formData.append('image', uploadedImage);
@@ -849,8 +935,9 @@ export default function App() {
         formData.append('requirement', requirement);
         formData.append('student_answer', text);
         formData.append('deplot_text', deplotForAnalysis);
-        const chartPromise = analyzeChartWithImage(formData);
+        const chartPromise = analyzeChartWithImage(formData, submissionId);
         const [reviewRes, chartRes] = await Promise.allSettled([reviewPromise, chartPromise]);
+        if (requestSequence !== analysisSequenceRef.current) return;
         // helper to normalize chart URL (backend returns /charts/.. relative to backend origin)
         if (reviewRes.status === 'fulfilled' && reviewRes.value.success) {
           console.log('Revision review response:', reviewRes.value);
@@ -864,8 +951,7 @@ export default function App() {
           setAnalysisError(reviewRes.reason?.message || 'Revision review failed');
         }
         if (chartRes.status === 'fulfilled' && chartRes.value.success) {
-          setChartUrl(resolveBackendUrl(chartRes.value.chart_url));
-          setChartData(chartRes.value.chart_data || null);
+          acceptAnalysis(chartRes.value);
         } else if (chartRes.status === 'fulfilled') {
           setAnalysisError(prev => prev ? prev + '; ' + (chartRes.value.error || 'Chart analysis failed') : (chartRes.value.error || 'Chart analysis failed'));
         } else {
@@ -882,24 +968,30 @@ export default function App() {
         formData.append('student_answer', text);
         if (!deplotForAnalysis.trim()) deplotForAnalysis = '(No DePlot data extracted)';
         formData.append('deplot_text', deplotForAnalysis);
-        const result = await analyzeChartWithImage(formData);
+        const result = await analyzeChartWithImage(formData, submissionId);
+        if (requestSequence !== analysisSequenceRef.current) return;
         if (result.success) {
-          setChartUrl(resolveBackendUrl(result.chart_url));
-          setChartData(result.chart_data || null);
+          acceptAnalysis(result);
         } else {
           setAnalysisError(result.error || "分析失败");
         }
       }
     } catch (error) {
+      if (requestSequence !== analysisSequenceRef.current) return;
       setAnalysisError(error.message);
+      trackResearchEvent('analysis_failed', { error: error.message });
     } finally {
-      setIsAnalyzing(false);
+      if (requestSequence === analysisSequenceRef.current) setIsAnalyzing(false);
+      trackResearchEvent('analysis_finished', {
+        chart_type: taskTypeForAnalysis,
+      });
     }
   };
 
   // Apply a single suggestion: replace its excerpt with replacement and adjust subsequent suggestion ranges
   const applySuggestion = useCallback((sug) => {
     if (!sug || sug.applied) return;
+    setActiveMoveId(null);
     setText(prevText => {
       let working = prevText;
       // resolve current range (may be outdated after edits)
@@ -966,6 +1058,37 @@ export default function App() {
     });
   }, [setText, setReviewSuggestions, editorRef]);
 
+  const handleSelectMove = useCallback((assessment) => {
+    if (!assessment) return;
+    if (analysisSnapshot && !sameDraftText(analysisSnapshot.essay, text)) return;
+    const nextId = assessment.id === activeMoveId ? null : assessment.id;
+    trackResearchEvent('criterion_feedback_toggled', {
+      criterion_id: assessment.id,
+      criterion_title: assessment.title || assessment.name || null,
+      expanded: Boolean(nextId),
+      assessment,
+    });
+    setActiveMoveId(nextId);
+    setActiveSuggestionId(null);
+    if (!editorRef.current) return;
+    editorRef.current.clearHighlights();
+    if (!nextId) return;
+    const range = locateMoveRange(assessment, text);
+    if (range) {
+      editorRef.current.highlightRange(range.start, range.end, false);
+    }
+  }, [activeMoveId, analysisSnapshot, editorRef, text]);
+
+  const handleLocateRevisionEvidence = useCallback((assessment) => {
+    const range = locateMoveRange(assessment, text);
+    if (!range || !editorRef.current) return;
+    setActiveMoveId(null);
+    setActiveSuggestionId(null);
+    editorRef.current.clearHighlights();
+    editorRef.current.highlightRange(range.start, range.end, false);
+    trackResearchEvent('revision_evidence_located', { excerpt: assessment.excerpt });
+  }, [text]);
+
   const handleNextSentence = async (e) => {
     try {
       const quickAccept = e && e.shiftKey; // Shift+Click 快速使用第一条
@@ -998,7 +1121,7 @@ export default function App() {
         return;
       }
       setIsNextSentenceLoading(true);
-  const payload = { current_text: text, flowchart: flowchartData, deplot_text: deplotText, candidate_count: candidateCount };
+      const payload = { current_text: text, deplot_text: deplotText, candidate_count: candidateCount };
       let res;
       try { res = await requestNextSentence(payload); } catch (apiErr) { if (import.meta.env.VITE_SHOW_DEBUG==='true') console.error('requestNextSentence failed', apiErr); throw apiErr; }
       setNextSentenceResult(res);
@@ -1053,50 +1176,12 @@ export default function App() {
       setIsSampleEssayLoading(true);
       const requirement = sampleEssayRequirement(taskTypeForSampleEssay);
       const requestData = sampleEssayIsSpatial
-        ? { image: uploadedImage, flowchart: flowchartData, requirement, chart_type: taskTypeForSampleEssay }
-        : { deplot_text: dep, flowchart: flowchartData, requirement, chart_type: taskTypeForSampleEssay };
-      const requestKind = sampleEssayIsSpatial ? 'spatial' : 'statistical';
+        ? { image: uploadedImage, requirement, chart_type: taskTypeForSampleEssay }
+        : { deplot_text: dep, requirement, chart_type: taskTypeForSampleEssay };
       const res = sampleEssayIsSpatial
         ? await generateSpatialSampleEssay(requestData)
         : await generateSampleEssay(requestData);
-      
-      if (res.requires_choice) {
-        // Show structure choice dialog
-        setStructureChoiceInfo(res.choice_info);
-        setShowStructureChoice(true);
-        setPendingSampleEssayRequest({ kind: requestKind, data: requestData });
-        return;
-      }
-      
-      if (res.success && res.essay) {
-        setText(res.essay);
-        // Clear existing highlights
-        if (editorRef.current) editorRef.current.clearHighlights();
-      } else {
-        setNextSentenceError(res.error || 'Sample essay generation failed');
-      }
-    } catch (e) {
-      setNextSentenceError(e.message || 'Sample essay generation failed');
-    } finally {
-      setIsSampleEssayLoading(false);
-    }
-  };
 
-  // Handle structure choice for sample essay
-  const handleStructureChoice = async (useStandardStructure) => {
-    if (!pendingSampleEssayRequest) return;
-    
-    try {
-      setIsSampleEssayLoading(true);
-      const updatedRequest = {
-        ...pendingSampleEssayRequest.data,
-        use_standard_structure: useStandardStructure
-      };
-      
-      const res = pendingSampleEssayRequest.kind === 'spatial'
-        ? await generateSpatialSampleEssay(updatedRequest)
-        : await generateSampleEssay(updatedRequest);
-      
       if (res.success && res.essay) {
         setText(res.essay);
         // Clear existing highlights
@@ -1108,9 +1193,6 @@ export default function App() {
       setNextSentenceError(e.message || 'Sample essay generation failed');
     } finally {
       setIsSampleEssayLoading(false);
-      setShowStructureChoice(false);
-      setStructureChoiceInfo(null);
-      setPendingSampleEssayRequest(null);
     }
   };
 
@@ -1176,6 +1258,20 @@ export default function App() {
     editorRef.current.highlightRange(start, end, false);
   }, [activeSuggestionId, reviewSuggestions, text]);
 
+  useEffect(() => {
+    if (!activeMoveId || !editorRef.current) return;
+    const assessment = findMoveAssessment(chartData, activeMoveId);
+    if (!assessment) {
+      setActiveMoveId(null);
+      return;
+    }
+    const range = locateMoveRange(assessment, editorRef.current.getValue());
+    editorRef.current.clearHighlights();
+    if (range) {
+      editorRef.current.highlightRange(range.start, range.end, false);
+    }
+  }, [activeMoveId, chartData, editorRef, text]);
+
   const handleMouseDownHorizontal = (e) => {
     const startY = e.clientY;
     const startHeight = upperHeight;
@@ -1184,25 +1280,6 @@ export default function App() {
       const delta = e.clientY - startY;
       const newHeight = Math.min(Math.max(startHeight + (delta / window.innerHeight) * 100, 10), 90);
       setUpperHeight(newHeight);
-    };
-
-    const handleMouseUp = () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-  };
-
-  const handleMouseDownVertical = (e) => {
-    const startX = e.clientX;
-    const startWidth = leftWidth;
-
-    const handleMouseMove = (e) => {
-      const delta = e.clientX - startX;
-      const newWidth = Math.min(Math.max(startWidth + (delta / window.innerWidth) * 100, 10), 90);
-      setLeftWidth(newWidth);
     };
 
     const handleMouseUp = () => {
@@ -1248,9 +1325,9 @@ export default function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
                   <div><strong>Quick Start:</strong></div>
                   <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                    <li>Upload the task chart image in the top-left and choose the chart type.</li>
-                    <li>Use the Flowchart on the right to plan structure; drag nodes or add Body paragraphs.</li>
-                    <li>Click the top "Next Stage" button to drafting stage when you finish.</li>
+                    <li>Upload the IELTS task image and choose the task type.</li>
+                    <li>Write your report while keeping the task image visible.</li>
+                    <li>Move to Revision to compare the original image with what your text communicates.</li>
                   </ul>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'center', marginTop: '0.25rem' }}>
@@ -1277,50 +1354,54 @@ export default function App() {
                 <div style={{ fontSize: '0.9rem', background: '#555', padding: '0.4rem 0.75rem', borderRadius: '4px' }}>
                   <strong>Stage:</strong> {currentStage.charAt(0).toUpperCase() + currentStage.slice(1)}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', color: '#ccc' }}>
-                  {stages.map((stage, index) => (
-                    <div key={stage} style={{ display: 'flex', alignItems: 'center' }}>
-                      <div style={{
-                        width: '8px',
-                        height: '8px',
-                        borderRadius: '50%',
-                        background: index <= stageIndex ? '#28a745' : '#666',
-                        border: index === stageIndex ? '2px solid #fff' : 'none'
-                      }} />
-                      {index < stages.length - 1 && (
+                {currentStage !== 'revision' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', color: '#ccc' }}>
+                    {stages.map((stage, index) => (
+                      <div key={stage} style={{ display: 'flex', alignItems: 'center' }}>
                         <div style={{
-                          width: '12px',
-                          height: '1px',
-                          background: index < stageIndex ? '#28a745' : '#666',
-                          margin: '0 0.25rem'
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          background: index <= stageIndex ? '#28a745' : '#666',
+                          border: index === stageIndex ? '2px solid #fff' : 'none'
                         }} />
-                      )}
-                    </div>
-                  ))}
-                </div>
+                        {index < stages.length - 1 && (
+                          <div style={{
+                            width: '12px',
+                            height: '1px',
+                            background: index < stageIndex ? '#28a745' : '#666',
+                            margin: '0 0.25rem'
+                          }} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               {/* Removed inline status badges in favor of modal */}
-              <button
-                className="next-stage-button"
-                onClick={() => {
-                  console.log('Button clicked!', { stageIndex, stagesLength: stages.length, disabled: stageIndex === stages.length - 1 });
-                  handleNextStage();
-                }}
-                disabled={stageIndex === stages.length - 1}
-                style={{
-                  background: stageIndex === stages.length - 1 ? '#555' : '#007bff',
-                  color: 'white',
-                  border: 'none',
-                  padding: '0.5rem 0.9rem',
-                  borderRadius: '4px',
-                  cursor: stageIndex === stages.length - 1 ? 'not-allowed' : 'pointer',
-                  fontSize: '0.9rem',
-                  opacity: stageIndex === stages.length - 1 ? 0.6 : 1
-                }}
-                title="Go to next stage"
-              >
-                Next Stage <ArrowRight size={15} />
-              </button>
+              {currentStage !== 'revision' && (
+                <button
+                  className="next-stage-button"
+                  onClick={() => {
+                    console.log('Button clicked!', { stageIndex, stagesLength: stages.length, disabled: stageIndex === stages.length - 1 });
+                    handleNextStage();
+                  }}
+                  disabled={stageIndex === stages.length - 1}
+                  style={{
+                    background: stageIndex === stages.length - 1 ? '#555' : '#007bff',
+                    color: 'white',
+                    border: 'none',
+                    padding: '0.5rem 0.9rem',
+                    borderRadius: '4px',
+                    cursor: stageIndex === stages.length - 1 ? 'not-allowed' : 'pointer',
+                    fontSize: '0.9rem',
+                    opacity: stageIndex === stages.length - 1 ? 0.6 : 1
+                  }}
+                  title="Go to next stage"
+                >
+                  Next Stage <ArrowRight size={15} />
+                </button>
+              )}
               <span style={{ color: '#ddd', fontSize: '0.8rem', fontWeight: 600 }}>
                 {username}
               </span>
@@ -1358,34 +1439,17 @@ export default function App() {
                     You will move from <strong style={{ color: '#007bff' }}>{currentStage}</strong> to <strong style={{ color: '#28a745' }}>{stages[stageIndex + 1]}</strong> stage.
                   </div>  
                   <div style={{ marginBottom: '0.75rem' }}>
-                    {currentStage === 'planning' && (
-                      <>
-                        Functions of AI generating would be included in drafting stage:
-                      </>
-                    )}
                     {currentStage === 'drafting' && (
                       <>
-                        <div>
-                          Functions of AI generating would be disabled in revision stage (except for "Analyze Structure").
-                        </div>
-                        <div>
-                          Functions of Visual Feedback and Revision Suggestions would be included:
-                        </div>
+                        Revision keeps your report editable and adds the visual comparison workspace.
                       </>
                     )}
                   </div>
                   <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.85rem', color: '#6c757d' }}>
-                    {currentStage === 'planning' && (
-                      <>
-                        <li>Next Sentence: AI would suggest the next sentence based on the original image and your flowchart</li>
-                        <li>Sample Essay: AI would generate a sample essay based on the original image and your flowchart.</li>
-                        <li>Analyze Structure: AI would build the relationship between your essay and flowchart.</li>
-                      </>
-                    )}
                     {currentStage === 'drafting' && (
                       <>
-                        <li>Visual Feedback: AI would generate a graph based on your essay, with similar style of layout and design.</li>
-                        <li>Revision Suggestions: AI would provide suggestions for improving your essay based from from different aspects.</li>
+                        <li>Compare the original task with the image generated from your report.</li>
+                        <li>Revise your report beside explicit data differences and optional language notes.</li>
                       </>
                     )}
                   </ul>
@@ -1398,71 +1462,8 @@ export default function App() {
             </div>
           )}
           
-          {/* Structure Choice Dialog */}
-          {showStructureChoice && structureChoiceInfo && (
-            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
-              <div style={{ background: '#fff', padding: '1.5rem', borderRadius: '8px', width: '480px', boxShadow: '0 4px 16px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <h3 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  {structureChoiceInfo.title}
-                </h3>
-                <div style={{ fontSize: '0.9rem', lineHeight: 1.5 }}>
-                  <div style={{ marginBottom: '0.75rem' }}>
-                    {structureChoiceInfo.message}
-                  </div>
-                  <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#f8f9fa', borderRadius: '4px', border: '1px solid #e9ecef' }}>
-                    <strong style={{ color: '#dc3545' }}>Missing structures:</strong>
-                    <ul style={{ margin: '0.5rem 0 0 1.2rem', padding: 0 }}>
-                      {structureChoiceInfo.missing_structures.map((structure, index) => (
-                        <li key={index} style={{ color: '#dc3545' }}>{structure}</li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div style={{ marginBottom: '0.75rem' }}>
-                    <strong>Choose how to proceed:</strong>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                    {structureChoiceInfo.options.map((option) => (
-                      <div key={option.id} style={{ padding: '0.75rem', border: '1px solid #e9ecef', borderRadius: '4px', background: '#f8f9fa' }}>
-                        <div style={{ fontWeight: 'bold', marginBottom: '0.25rem' }}>
-                          {option.title}
-                        </div>
-                        <div style={{ fontSize: '0.85rem', color: '#6c757d' }}>
-                          {option.description}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-                  <button 
-                    onClick={() => {
-                      setShowStructureChoice(false);
-                      setStructureChoiceInfo(null);
-                      setPendingSampleEssayRequest(null);
-                    }} 
-                    style={{ padding: '0.45rem 0.9rem', background: '#e0e0e0', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer' }}
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={() => handleStructureChoice(false)} 
-                    style={{ padding: '0.45rem 0.9rem', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}
-                  >
-                    Use Flowchart Structure
-                  </button>
-                  <button 
-                    onClick={() => handleStructureChoice(true)} 
-                    style={{ padding: '0.45rem 0.9rem', background: '#007bff', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}
-                  >
-                    Use Standard Structure
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Stage transition toast removed */}
-          {(isExtractingDeplot || isPreparingTaskImage) && currentStage !== 'planning' && (
+          {(isExtractingDeplot || isPreparingTaskImage) && (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2500 }}>
               <div style={{ background: '#fff', padding: '1.5rem 1.25rem 1.25rem', borderRadius: 8, width: 320, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', gap: '0.9rem', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, fontSize: '1.05rem' }}>
@@ -1507,11 +1508,40 @@ export default function App() {
               </div>
             </div>
           )}
-          <div className="workspace" style={{ display: "flex", flexGrow: 1, width: "100%" }}>
+          {currentStage === 'revision' ? (
+            <RevisionWorkspace
+              imagePreview={imagePreview}
+              chartUrl={chartUrl}
+              chartData={chartData}
+              analysisSnapshot={analysisSnapshot}
+              onLocateRevision={handleLocateRevisionEvidence}
+              chartFeedbackDetails={(
+                <ChartFeedbackDetails
+                  chartData={chartData}
+                  activeMoveId={activeMoveId}
+                  onSelectMove={handleSelectMove}
+                />
+              )}
+              activeMoveAssessment={findMoveAssessment(chartData, activeMoveId)}
+              text={text}
+              onTextChange={setText}
+              editorRef={editorRef}
+              isAnalyzing={isAnalyzing}
+              onAnalyze={handleAnalyzeText}
+              analysisError={analysisError}
+              reviewSuggestions={reviewSuggestions}
+              revisionReview={revisionReview}
+              activeSuggestionId={activeSuggestionId}
+              setActiveSuggestionId={setActiveSuggestionId}
+              onLanguageSuggestionFocus={() => setActiveMoveId(null)}
+              applySuggestion={applySuggestion}
+            />
+          ) : (
+          <div className="workspace workspace--drafting" style={{ display: "flex", flexGrow: 1, width: "100%" }}>
             <div
               className="workspace-left"
               style={{
-                flexBasis: `${leftWidth}%`,
+                flexBasis: '100%',
                 backgroundColor: "#f0f0f0",
                 overflow: "hidden",
                 display: "flex",
@@ -1521,8 +1551,7 @@ export default function App() {
               <div
                 className="workspace-panel source-panel"
                 style={{
-                  // If in planning stage, occupy full height to hide writing area
-                  flexBasis: currentStage === 'planning' ? '100%' : `${upperHeight}%`,
+                  flexBasis: `${upperHeight}%`,
                   borderBottom: "1px solid #ccc",
                   padding: "1rem",
                   boxSizing: "border-box",
@@ -1540,18 +1569,32 @@ export default function App() {
                   </div>
                   {imagePreview && <span className="status-pill">Ready</span>}
                 </div>
-                {deplotError && currentStage === 'planning' && (
+                {deplotError && currentStage === 'drafting' && (
                   <div style={{ fontSize: '0.7rem', color: '#c00', marginBottom: '0.4rem' }}>{deplotError}</div>
                 )}
                 
-                {/* Chart type selector: only visible during planning stage */}
-                {currentStage === 'planning' && (
-                  <div className="chart-type-field" style={{ marginBottom: "1rem" }}>
-                    <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold" }}>
-                      Chart Type:
+                {currentStage === 'drafting' && (
+                  <div className="task-source-section">
+                  <div className="task-source-controls">
+                    <label className="task-source-field task-source-field--sample">
+                      <span>Practice sample</span>
+                      <select
+                        value={selectedPracticeSampleId}
+                        onChange={handlePracticeSampleChange}
+                        disabled={isLoadingPracticeSample}
+                      >
+                        <option value="">Use your own image</option>
+                        {PRACTICE_SAMPLES.map((sample) => (
+                          <option key={sample.id} value={sample.id}>{sample.label}</option>
+                        ))}
+                      </select>
                     </label>
+                    <label className="task-source-field">
+                      <span>Chart type</span>
                     <select
                       value={selectedChartType}
+                      disabled={Boolean(selectedPracticeSampleId)}
+                      title={selectedPracticeSampleId ? 'The chart type is set by the selected practice sample.' : undefined}
                       onChange={(e) => {
                         const nextType = e.target.value;
                         setSelectedChartType(nextType);
@@ -1578,14 +1621,6 @@ export default function App() {
                           prepareUploadedTaskImage(uploadedImage, nextType).catch(() => {});
                         }
                       }}
-                      style={{
-                        padding: "0.5rem",
-                        borderRadius: "4px",
-                        border: "1px solid #ccc",
-                        fontSize: "1rem",
-                        width: "100%",
-                        maxWidth: "200px"
-                      }}
                     >
                       <option value="auto">Auto Detect</option>
                       <option value="bar">Bar Chart</option>
@@ -1595,8 +1630,21 @@ export default function App() {
                       <option value="map">Map Task</option>
                       <option value="process">Process Diagram</option>
                     </select>
+                    </label>
+                  </div>
+                    {isLoadingPracticeSample && (
+                      <div className="task-source-status">Loading practice sample...</div>
+                    )}
+                    {selectedPracticeSampleId && !isLoadingPracticeSample && deplotText.trim() && (
+                      <div className="task-source-status task-source-status--ready">
+                        Preprocessed DePlot data ready. No chart extraction is required.
+                      </div>
+                    )}
+                    {practiceSampleError && (
+                      <div className="task-source-status task-source-status--error">{practiceSampleError}</div>
+                    )}
                     {isPreparingTaskImage && (
-                      <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: '#444' }}>
+                      <div className="task-source-status">
                         {taskPreparationPhase === 'detecting'
                           ? 'Detecting IELTS task type...'
                           : taskPreparationPhase === 'deplot'
@@ -1605,7 +1653,7 @@ export default function App() {
                       </div>
                     )}
                     {selectedChartType === 'auto' && taskDetection && !taskDetection.needs_confirmation && KNOWN_TASK_TYPES.has(taskDetection.task_type) && (
-                      <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: '#166534' }}>
+                      <div className="task-source-status task-source-status--ready">
                         Auto Detect: {taskTypeLabel(taskDetection.task_type)} ({Math.round(Number(taskDetection.confidence || 0) * 100)}% confidence)
                       </div>
                     )}
@@ -1708,7 +1756,7 @@ export default function App() {
                             lineHeight: 1,
                             padding: 0
                           }}
-                          title="Delete image (removable only in planning stage)"
+                          title="Remove task image"
                         >
                           <X size={16} />
                           ×
@@ -1718,7 +1766,7 @@ export default function App() {
                   </div>
                 )}
               </div>
-              {currentStage !== 'planning' && (
+              {currentStage === 'drafting' && (
                 <>
                   <div
                     className="panel-resizer panel-resizer--horizontal"
@@ -1768,7 +1816,7 @@ export default function App() {
                         ref={editorRef}
                         value={text}
                         onChange={setText}
-                        placeholder="Start writing or click the Flowchart on the right to plan structure..."
+                        placeholder="Start writing your IELTS Task 1 report..."
                         style={{ height: '100%' }}
                       />
                     </div>
@@ -1854,23 +1902,6 @@ export default function App() {
                           </button>
                         </>
                       )}
-                      <button
-                        onClick={runStructureAnalyze}
-                        disabled={mappingStatus === 'loading' || !uploadedImage || !flowchartData?.nodes?.length}
-                        style={{
-                          padding: '0.5rem 0.9rem',
-                          background: mappingStatus === 'loading' || !uploadedImage || !flowchartData?.nodes?.length ? '#888' : '#17a2b8',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: 4,
-                          cursor: mappingStatus === 'loading' || !uploadedImage || !flowchartData?.nodes?.length ? 'not-allowed' : 'pointer',
-                          fontSize: '0.85rem'
-                        }}
-                        title="Analyze structure & map sentences"
-                      >
-                        <GitBranch size={14} />
-                        {mappingStatus === 'loading' ? 'Analyzing structure...' : 'Structure Analyze'}
-                      </button>
                       {currentStage === 'revision' && (
                         <button
                           onClick={handleAnalyzeText}
@@ -1905,301 +1936,19 @@ export default function App() {
                 </>
               )}
             </div>
-            <div
-              className="panel-resizer panel-resizer--vertical"
-              style={{
-                width: "5px",
-                cursor: "col-resize",
-                backgroundColor: "#ccc",
-              }}
-              onMouseDown={handleMouseDownVertical}
-            ></div>
-            <div
-              className={`workspace-right ${rightContent === 'Flowchart' ? 'is-flowchart' : ''}`}
-              style={{
-                flexBasis: `${100 - leftWidth}%`,
-                backgroundColor: "#e0e0e0",
-                // When editing Flowchart we hide outer scrollbars and let inner canvas manage its own scrolling
-                overflow: rightContent === 'Flowchart' ? 'hidden' : 'auto',
-                padding: "1rem",
-                boxSizing: "border-box",
-                display: 'flex',
-                flexDirection: 'column',
-              }}
-            >
-              <div className="right-pane-heading">
-                <div>
-                  <span className="panel-eyebrow">Learning workspace</span>
-                  <h2>Feedback</h2>
-                </div>
-              </div>
-              <div className="view-tabs" style={{ display: "flex", gap: "1rem", marginBottom: "1rem", flexShrink: 0 }}>
-                {(currentStage === 'planning' || currentStage === 'drafting') && (
-                  <button
-                    className={rightContent === 'Flowchart' ? 'is-active' : ''}
-                    onClick={() => setRightContent('Flowchart')}
-                    style={{
-                      padding: '0.5rem 1rem',
-                      cursor: 'pointer',
-                      backgroundColor: rightContent === 'Flowchart' ? '#6c757d' : '#ffffff',
-                      color: rightContent === 'Flowchart' ? '#ffffff' : '#000000',
-                      border: '1px solid #dee2e6',
-                      borderRadius: '4px'
-                    }}
-                  >
-                    <GitBranch size={14} /> Structure
-                  </button>
-                )}
-                {currentStage === 'revision' && (
-                  <>
-                    <button
-                      className={rightContent === 'Flowchart' ? 'is-active' : ''}
-                      onClick={() => setRightContent('Flowchart')}
-                      style={{
-                        padding: '0.5rem 1rem',
-                        cursor: 'pointer',
-                        backgroundColor: rightContent === 'Flowchart' ? '#6c757d' : '#ffffff',
-                        color: rightContent === 'Flowchart' ? '#ffffff' : '#000000',
-                        border: '1px solid #dee2e6',
-                        borderRadius: '4px'
-                      }}
-                    >
-                      <GitBranch size={14} /> Structure
-                    </button>
-                    <button
-                      className={rightContent === 'Visual Feedback' ? 'is-active' : ''}
-                      onClick={() => setRightContent('Visual Feedback')}
-                      style={{
-                        padding: '0.5rem 1rem',
-                        cursor: 'pointer',
-                        backgroundColor: rightContent === 'Visual Feedback' ? '#6c757d' : '#ffffff',
-                        color: rightContent === 'Visual Feedback' ? '#ffffff' : '#000000',
-                        border: '1px solid #dee2e6',
-                        borderRadius: '4px'
-                      }}
-                    >
-                      <BarChart3 size={14} /> Visual feedback
-                    </button>
-                    <button
-                      className={rightContent === 'Revision Suggestions' ? 'is-active' : ''}
-                      onClick={() => setRightContent('Revision Suggestions')}
-                      style={{
-                        padding: '0.5rem 1rem',
-                        cursor: 'pointer',
-                        backgroundColor: rightContent === 'Revision Suggestions' ? '#6c757d' : '#ffffff',
-                        color: rightContent === 'Revision Suggestions' ? '#ffffff' : '#000000',
-                        border: '1px solid #dee2e6',
-                        borderRadius: '4px'
-                      }}
-                    >
-                      <FileText size={14} /> Revision
-                    </button>
-                  </>
-                )}
-              </div>
-              {/* 修改5 */}
-              {analysisError && (
-                <div style={{ 
-                  padding: "1rem", 
-                  backgroundColor: "#f8d7da", 
-                  color: "#721c24", 
-                  border: "1px solid #f5c6cb",
-                  borderRadius: "4px",
-                  marginBottom: "1rem"
-                }}>
-                  {analysisError}
-                </div>
-              )}
-              
-              {rightContent === "Flowchart" && (currentStage === 'planning' || currentStage === 'drafting' || currentStage === 'revision') && (
-                <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ marginBottom: '0.5rem', fontSize: '0.7rem', color: '#333', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span>
-                      Mapping Status: {mappingStatus === 'idle' && '(Not analyzed)'}
-                      {mappingStatus === 'loading' && 'Analyzing structure...'}
-                      {mappingStatus === 'ok' && 'Paragraph and sentence mapping established'}
-                      {mappingStatus === 'missing' && `Missing ${missingNodes.length} structural node(s)`}
-                      {mappingStatus === 'error' && 'Mapping failed'}
-                    </span>
-                    {mappingStatus === 'missing' && missingNodes.length > 0 && (
-                      <span style={{ color: '#c00' }}>Please fill missing node content then click Structure Analyze again</span>
-                    )}
-                  </div>
-                  {structureFeedback && mappingStatus !== 'loading' && (
-                    <div style={{
-                      marginBottom: '0.5rem',
-                      padding: '0.45rem 0.6rem',
-                      borderLeft: `3px solid ${structureFeedback.is_complete ? '#247047' : '#b45309'}`,
-                      background: structureFeedback.is_complete ? '#f0fdf4' : '#fff7ed',
-                      fontSize: '0.7rem',
-                      lineHeight: 1.35,
-                    }}>
-                      <strong>{structureFeedback.summary}</strong>
-                      {structureFeedback.suggestions?.length > 0 && (
-                        <div style={{ marginTop: '0.2rem' }}>
-                          {structureFeedback.suggestions.join(' ')}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <div style={{ flex: 1, minHeight: 0 }}>
-                    <Flowchart
-                      imageReady={!!imagePreview}
-                      onFlowchartChange={setFlowchartData}
-                      onNodeClick={currentStage === 'planning' ? null : handleNodeClickHighlight}
-                      missingNodeIds={new Set(missingNodes.map(m => m.id))}
-                      nodeSentenceCounts={nodeToSentenceIndices}
-                      nodeParagraphCounts={nodeToParagraphIndices}
-                      readOnly={currentStage === 'revision'}
-                      currentStage={currentStage}
-                    />
-                  </div>
-                </div>
-              )}
-              
-              {rightContent === "Visual Feedback" && currentStage === 'revision' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  {!chartUrl && (
-                    <p style={{ margin: 0 }}>Click the "Analyze Text" button to generate visual feedback (chart + structural review).</p>
-                  )}
-                  {chartUrl && (
-                    <div style={{ background: '#fff', padding: '0.75rem', border: '1px solid #ddd', borderRadius: 6 }}>
-                      <strong style={{ fontSize: '0.9rem' }}>Generated Chart</strong>
-                      <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'center' }}>
-                        <img src={chartUrl} alt="Generated feedback chart" style={{ maxWidth: '100%', maxHeight: 300, objectFit: 'contain' }} />
-                      </div>
-                      <ChartFeedbackDetails chartData={chartData} />
-                    </div>
-                  )}
-                  {/* Chart Data (debug) block removed */}
-                </div>
-              )}
-              
-              {rightContent === "Revision Suggestions" && currentStage === 'revision' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: 1, minHeight: 0 }}>
-                  {!reviewSuggestions.length && !revisionReview && (
-                    <p style={{ margin: 0 }}>Click the "Analyze Text" button to get revision review (vocabulary / grammar / coherence).</p>
-                  )}
-                  {/* Overall Review moved to bottom */}
-                  {reviewSuggestions.length > 0 && (() => {
-                    // Group by category
-                    const groups = reviewSuggestions.reduce((acc, s) => {
-                      const cat = s.category || 'other';
-                      (acc[cat] ||= []).push(s);
-                      return acc;
-                    }, {});
-                    // Remove 'overall' category suggestions from grouped display
-                    delete groups['overall'];
-                    const order = ['vocabulary','grammar','coherence'];
-                    const sortedCats = [...order.filter(c=>groups[c]), ...Object.keys(groups).filter(c=>!order.includes(c))];
-                    return (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem', overflowY: 'auto', minHeight: 0 }}>
-                        {sortedCats.map(cat => (
-                          <div key={cat} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                              <span style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'capitalize' }}>{cat}</span>
-                              <span style={{ fontSize: '0.6rem', color: '#666' }}>({groups[cat].length})</span>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
-                              {groups[cat].map(sug => {
-                                const active = sug.id === activeSuggestionId;
-                                const disabled = sug.applied;
-                                const range = sug.range || (Array.isArray(sug.ranges) && sug.ranges[0]);
-                                return (
-                                  <div
-                                    key={sug.id}
-                                    onClick={() => {
-                                      if (!range || !editorRef.current) return;
-                                      const becomingActive = sug.id !== activeSuggestionId;
-                                      setActiveSuggestionId(becomingActive ? sug.id : null);
-                                      editorRef.current.clearHighlights();
-                                      if (becomingActive) {
-                                        // 使用持久高亮（false）确保不会 3.5s 后消失
-                                        editorRef.current.highlightRange(range.start, range.end, false);
-                                      }
-                                    }}
-                                    style={{
-                                      border: '1px solid ' + (active ? '#495057' : '#ddd'),
-                                      background: disabled ? '#f1f3f5' : (active ? '#e2e3e5' : '#fff'),
-                                      padding: '0.65rem 0.75rem',
-                                      borderRadius: 8,
-                                      display: 'flex',
-                                      flexDirection: 'column',
-                                      gap: '0.4rem',
-                                      fontSize: '0.75rem',
-                                      position: 'relative',
-                                      cursor: range ? 'pointer' : 'default',
-                                      transition: 'background .15s, border-color .15s'
-                                    }}
-                                  >
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                      <span style={{ fontWeight: 600, fontSize: '0.7rem', textTransform: 'capitalize' }}>{sug.severity}</span>
-                                      <div style={{ display: 'flex', gap: '0.45rem', alignItems: 'center' }}>
-                                        <button
-                                          disabled={disabled || !sug.replacement}
-                                          onClick={(e) => { e.stopPropagation(); applySuggestion(sug); }}
-                                          style={{
-                                            border: '1px solid ' + (disabled ? '#ccc' : '#146c43'),
-                                            background: disabled ? '#e9ecef' : '#198754',
-                                            color: disabled ? '#666' : '#fff',
-                                            fontSize: '0.7rem',
-                                            padding: '0.35rem 0.8rem',
-                                            borderRadius: 6,
-                                            cursor: disabled ? 'not-allowed' : 'pointer',
-                                            fontWeight: 600,
-                                            boxShadow: disabled ? 'none' : '0 1px 2px rgba(0,0,0,0.15)'
-                                          }}
-                                        >{disabled ? 'Applied' : 'Apply'}</button>
-                                      </div>
-                                    </div>
-                                    <div style={{ lineHeight: 1.3 }}>{sug.message}</div>
-                                    {sug.excerpt && (
-                                      <div style={{ fontSize: '0.62rem', color: '#555', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                                        <span style={{ fontWeight: 600 }}>Original:</span>
-                                        <code style={{ background: '#f8f9fa', padding: '2px 4px', borderRadius: 4 }}>{sug.excerpt}</code>
-                                      </div>
-                                    )}
-                                    {sug.replacement && (
-                                      <div style={{ fontSize: '0.62rem', color: '#555', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                                        <span style={{ fontWeight: 600 }}>Replacement:</span>
-                                        <code style={{ background: '#fff3cd', padding: '2px 4px', borderRadius: 4 }}>{sug.replacement}</code>
-                                      </div>
-                                    )}
-                                    {sug.applyError && (
-                                      <div style={{ fontSize: '0.55rem', color: '#c92a2a' }}>{sug.applyError}</div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                        {/* Overall review card placed after grouped suggestions */}
-                        {revisionReview && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', background: '#f7f7f7', padding: '0.75rem 0.85rem', border: '1px solid #ddd', borderRadius: 6 }}>
-                            <strong style={{ fontSize: '0.95rem' }}>Overall Review</strong>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', fontSize: '0.75rem' }}>
-                              {['vocabulary','grammar','coherence'].map(cat => (
-                                <span key={cat} style={{ background: '#fff', border: '1px solid #ccc', borderRadius: 4, padding: '0.3rem 0.4rem' }}>
-                                  {cat}: {revisionReview[cat]?.score ?? '-'}
-                                </span>
-                              ))}
-                            </div>
-                            <div style={{ fontSize: '0.75rem', color: '#444' }}>{revisionReview.summary}</div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
           </div>
+          )}
         </>
         </ErrorBoundary>
       ) : (
         <>
-          <Login onLogin={handleLogin} passwordRequired={passwordRequired} />
+          <Login
+            onLogin={handleLogin}
+            passwordRequired={passwordRequired}
+            researchEnabled={researchEnabled}
+            consentRequired={researchConsentRequired}
+            consentVersion={researchConsentVersion}
+          />
         </>
       )}
     </main>

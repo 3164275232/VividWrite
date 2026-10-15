@@ -1,0 +1,7 @@
+The chart displays the proportion of households recycling waste in Bristol, Leeds, Liverpool, Manchester and Sheffield in two years.
+
+Overall, the figures differed considerably across the five cities, with several fairly close results.
+
+Bristol was recorded at 55% in 2020. For Bristol, the rate reached 42% in 2015. Sheffield was recorded at 38% in 2015. For Liverpool, the rate reached 39% in 2020. The 2015 result for Liverpool was 28%. In 2020, the proportion for Manchester stood at 46%. In 2015, the proportion for Leeds stood at 35%. For Manchester, the rate reached 21% in 2015. For Leeds, the rate reached 48% in 2020. For Sheffield, the rate reached 51% in 2020.
+
+The two observations therefore allow changes within each location to be considered alongside differences between locations.

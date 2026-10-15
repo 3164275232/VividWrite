@@ -5,14 +5,6 @@ from unittest.mock import patch
 from sample_essay import SampleEssayRequest, generate_sample_essay
 
 
-OPTION_C_NODES = [
-    {"type": "introduction"},
-    {"type": "overview"},
-    {"type": "key_details_a"},
-    {"type": "key_details_b"},
-]
-
-
 class SampleEssayTests(unittest.TestCase):
     @patch("sample_essay.get_deepseek_api_key", return_value="test-key")
     def test_line_prompt_names_the_original_visual_instead_of_the_internal_table(self, _key):
@@ -32,10 +24,6 @@ class SampleEssayTests(unittest.TestCase):
                 "TITLE | Passengers<0x0A>CHART TYPE | Line graph<0x0A>"
                 "Year | Bus | Rail<0x0A>2010 | 1.8 | 1.1<0x0A>2020 | 1.3 | 2.2"
             ),
-            flowchart={
-                "nodes": OPTION_C_NODES,
-                "edges": [],
-            },
         )
 
         with patch("sample_essay.get_deepseek_client", return_value=client):
@@ -54,35 +42,35 @@ class SampleEssayTests(unittest.TestCase):
         self.assertIn("Key Details A", captured["messages"][0]["content"])
         self.assertIn("Do not generate an independent conclusion", captured["messages"][0]["content"])
         self.assertNotIn("Background", captured["messages"][0]["content"])
-        self.assertTrue(response.debug["structure_check"]["all_required_present"])
-        self.assertFalse(response.debug["structure_check"]["optional_commentary"])
+        self.assertEqual(response.debug["structure"], "standard-ielts-task-1")
 
-    @patch("sample_essay.get_deepseek_client")
     @patch("sample_essay.get_deepseek_api_key", return_value="test-key")
-    def test_missing_overview_requests_option_c_structure_choice(self, _key, client):
-        response = generate_sample_essay(
-            SampleEssayRequest(
-                chart_type="bar",
-                deplot_text="City | 2010 | 2020<0x0A>A | 10 | 20",
-                flowchart={
-                    "nodes": [
-                        {"type": "introduction"},
-                        {"type": "key_details_a"},
-                        {"type": "key_details_b"},
-                        {"type": "optional_commentary"},
-                    ],
-                    "edges": [],
-                },
-            )
+    def test_sample_essay_uses_standard_structure_without_a_plan(self, _key):
+        captured = {}
+
+        class Completions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(content="A complete sample response.")
+                        )
+                    ]
+                )
+
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+        request = SampleEssayRequest(
+            chart_type="bar",
+            min_words=1,
+            deplot_text="City | 2010 | 2020<0x0A>A | 10 | 20",
         )
 
-        self.assertFalse(response.success)
-        self.assertTrue(response.requires_choice)
-        self.assertIn(
-            "Overview / Highlight Key Patterns",
-            response.choice_info["missing_structures"],
-        )
-        client.assert_not_called()
+        with patch("sample_essay.get_deepseek_client", return_value=client):
+            response = generate_sample_essay(request)
+
+        self.assertTrue(response.success, response.error)
+        self.assertIn("Introduction -> Overview", captured["messages"][0]["content"])
 
     @patch("sample_essay.get_deepseek_api_key", return_value="test-key")
     def test_small_scale_sample_essay_keeps_one_decimal_place(self, _key):
@@ -106,10 +94,6 @@ class SampleEssayTests(unittest.TestCase):
                 "TITLE | Passengers<0x0A>CHART TYPE | Line graph<0x0A>"
                 "Year | Bus<0x0A>2010 | 1.8<0x0A>2020 | 1.3"
             ),
-            flowchart={
-                "nodes": OPTION_C_NODES,
-                "edges": [],
-            },
         )
 
         with patch("sample_essay.get_deepseek_client", return_value=client):
@@ -144,10 +128,6 @@ class SampleEssayTests(unittest.TestCase):
                 "City | 2015 | 2020<0x0A>Bristol | 41.70 | 55.20<0x0A>"
                 "Leeds | 35.26 | 48.16"
             ),
-            flowchart={
-                "nodes": OPTION_C_NODES,
-                "edges": [],
-            },
         )
 
         with patch("sample_essay.get_deepseek_client", return_value=client):
@@ -168,10 +148,6 @@ class SampleEssayTests(unittest.TestCase):
                     "TITLE | Spending<0x0A>Category | Percentage<0x0A>"
                     "Housing | 32%<0x0A>Food | 8%<0x0A>Other | 8%"
                 ),
-                flowchart={
-                    "nodes": OPTION_C_NODES,
-                    "edges": [],
-                },
             )
         )
 
@@ -217,10 +193,6 @@ class SampleEssayTests(unittest.TestCase):
                 "2014 | 1.7 | 1.5<0x0A>2016 | 1.2 | 1.8<0x0A>"
                 "2018 | 1.5 | 2.0<0x0A>2020 | 1.3 | 2.2"
             ),
-            flowchart={
-                "nodes": OPTION_C_NODES,
-                "edges": [],
-            },
         )
 
         with patch("sample_essay.get_deepseek_client", return_value=client):
@@ -261,10 +233,6 @@ class SampleEssayTests(unittest.TestCase):
                 "Year | Bus | Rail<0x0A>2010 | 1.8 | 1.1<0x0A>"
                 "2012 | 1.9 | 1.3<0x0A>2020 | 1.3 | 2.2"
             ),
-            flowchart={
-                "nodes": OPTION_C_NODES,
-                "edges": [],
-            },
         )
 
         with patch("sample_essay.get_deepseek_client", return_value=client):
@@ -274,6 +242,61 @@ class SampleEssayTests(unittest.TestCase):
         self.assertEqual(completions.call_count, 2)
         self.assertIn("overall decline", response.essay or "")
         self.assertNotIn("consistent decline", response.essay or "")
+
+    @patch("sample_essay.get_deepseek_api_key", return_value="test-key")
+    def test_horizontal_year_table_rejects_and_repairs_a_false_gap_claim(self, _key):
+        bad_draft = (
+            "Overall, the gap between the highest and lowest cities narrowed slightly. "
+            "This reduced the difference from 14 points in 2015 to 16 points in 2020."
+        )
+
+        class Completions:
+            def __init__(self):
+                self.call_count = 0
+                self.calls = []
+
+            def create(self, **kwargs):
+                self.calls.append(kwargs)
+                self.call_count += 1
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(content=bad_draft)
+                        )
+                    ]
+                )
+
+        completions = Completions()
+        client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+        request = SampleEssayRequest(
+            chart_type="bar",
+            min_words=1,
+            deplot_text=(
+                "TITLE | Household recycling rates<0x0A>CHART TYPE | Bar chart<0x0A>"
+                "City | 2015 | 2020<0x0A>Bristol | 42 | 55<0x0A>"
+                "Leeds | 35 | 48<0x0A>Liverpool | 28 | 39<0x0A>"
+                "Manchester | 31 | 46<0x0A>Sheffield | 38 | 51"
+            ),
+        )
+
+        with patch("sample_essay.get_deepseek_client", return_value=client):
+            response = generate_sample_essay(request)
+
+        self.assertTrue(response.success, response.error)
+        self.assertEqual(completions.call_count, 2)
+        first_prompt = completions.calls[0]["messages"][1]["content"]
+        self.assertIn(
+            "2015 ranking: Bristol (42) > Sheffield (38) > Leeds (35)",
+            first_prompt,
+        )
+        self.assertIn(
+            "Spread trend from 2015 to 2020: widens from 14 to 16",
+            first_prompt,
+        )
+        self.assertIn("gap between the highest and lowest cities widened", response.essay or "")
+        self.assertIn("increased the difference from 14", response.essay or "")
+        self.assertNotIn("narrowed", response.essay or "")
+        self.assertNotIn("reduced the difference", response.essay or "")
 
 
 if __name__ == "__main__":

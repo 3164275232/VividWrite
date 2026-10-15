@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import uuid
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from chart_detection import detect_chart_type
+from chart_inference import finalise_provenance, infer_supported_comparisons, is_asserted_claim
 from chart_renderer import InvalidChartSpec, extract_image_palette, render_vega_lite_png
 from chart_text import (
     InvalidExtractedChartData,
@@ -22,6 +24,9 @@ from chart_text import (
     round_deplot_table_values,
 )
 from deepseek_config import get_deepseek_client, get_deepseek_extra_body, get_deepseek_model
+from error_taxonomy import build_error_taxonomy
+from move_feedback import attach_move_feedback
+from move_visual_feedback import render_move_visuals
 
 
 SUPPORTED_CHART_TYPES = {"auto", "bar", "line", "area", "pie"}
@@ -30,8 +35,8 @@ SUPPORTED_CHART_TYPES = {"auto", "bar", "line", "area", "pie"}
 SYSTEM_PROMPT = """
 You are the data alignment engine for an IELTS Academic Task 1 visual-feedback system.
 You receive (1) DePlot text extracted from the official chart and (2) a student's essay.
-Create ONE unified, declarative chart representation. This task is about factual visual
-feedback, not about grading language.
+Create ONE unified, declarative chart representation and assess the seven rhetorical moves
+below. Do not grade grammar or supply rewritten prose.
 
 Data ownership rules:
 - The official DePlot text controls the framework: chart type, category order, series order,
@@ -67,8 +72,59 @@ Return exactly one JSON object with this shape:
     "uncertain_items": ["string"],
     "alignment_notes": ["string"]
   },
-  "vega_lite_spec": {"mark": "...", "encoding": {"...": "..."}}
+  "vega_lite_spec": {"mark": "...", "encoding": {"...": "..."}},
+  "move_feedback": {
+    "assessments": [
+      {
+        "code": "one of the seven exact move codes below",
+        "status": "effective|developing|not_detected|not_applicable",
+        "excerpt": "an exact verbatim excerpt from the student answer, or an empty string",
+        "rationale": "brief evidence-based explanation",
+        "hint": "brief revision hint, never a replacement sentence",
+        "visual_focus": {
+          "current": [{"category": "optional", "series": "optional", "period": "optional"}],
+          "recommended": [{"category": "optional", "series": "optional", "period": "optional"}]
+        }
+      }
+    ]
+  }
 }
+
+Move-feedback rules:
+- Return exactly one assessment for each code, in this order:
+  1. move_1_introducing_topic (Introducing the Topic)
+  2. move_2_stating_overview (Stating the Overview)
+  3. move_3_highlighting_key_trends (Highlighting Key Trends)
+  4. move_4_elaborating_key_trends (Elaborating on the Key Trends)
+  5. move_5_integrating_trend_and_detail (Including Key Trends and their Elaboration)
+  6. move_6_comparing_contrasting (Making Comparative or Contrastive Statements)
+  7. move_7_closing_summary (Stating the Conclusion)
+- Treat moves as rhetorical options, not seven mandatory boxes. A separate conclusion is
+  optional. Use not_applicable when an optional move is unnecessary or its function is
+  already achieved through another move.
+- Use effective when the move is purposeful and clear; developing when it is present but
+  could be better selected, clearer, or better connected; not_detected when it is absent
+  but could usefully improve this draft.
+- Feedback is a hint, not a replacement. Do not write a corrected sentence or rewrite the
+  essay. Keep rationale and hint concise and applicable to the submitted chart and draft.
+- The excerpt must be copied exactly from the student answer. For developing, identify the
+  precise text that can improve. For not_detected, highlight the closest existing sentence
+  that creates the revision opportunity when possible; otherwise use an empty string.
+- Assess the whole submitted essay without assuming a single planted mistake. Multiple
+  moves may be developing at once, and the essay may use unfamiliar wording.
+- visual_focus is allowed only for Moves 2, 3 and 5. Select records from the returned chart
+  framework using its exact labels. current identifies a less useful feature emphasised by
+  the draft; recommended identifies the more informative feature(s) that support the hint.
+  Leave current empty when no current focus can be located. Leave both empty for other moves.
+- For Move 3, prioritise genuinely salient features such as the largest change, a clear
+  reversal, an extreme, or a meaningful crossover rather than mechanically choosing the
+  first or last record. Treat explicit declarations such as "the principal pattern" or
+  "the most important feature" as the focus the writer has chosen; a later mention of a
+  better feature does not erase that declared priority. Do not mark Move 3 developing only
+  because a correctly prioritised trend is repeated. For a developing visual comparison,
+  current and recommended must both be grounded in distinct chart records; otherwise leave
+  both empty and rely on textual feedback. For Move 5, select evidence that directly
+  supports the trend named in the hint.
 
 Vega-Lite rules:
 - Use only inline fields from records: category, series, period, region, value, x, y,
@@ -189,7 +245,8 @@ def _pie_record_label(record: dict) -> str:
 
 
 _PERCENTAGE_PATTERN = re.compile(
-    r"(?P<value>\d+(?:\.\d+)?)\s*(?:%|percent(?:age)?(?:\s+points?)?|per\s+cent)",
+    r"(?P<value>\d+(?:\.\d+)?)\s*(?:%|percentage(?!\s+points?\b)|"
+    r"percent(?!age\b|\s+points?\b)|per\s+cent(?!\s+points?\b))",
     flags=re.IGNORECASE,
 )
 _PIE_CLAUSE_BOUNDARY = re.compile(
@@ -198,7 +255,7 @@ _PIE_CLAUSE_BOUNDARY = re.compile(
 )
 _PIE_AGGREGATE_PATTERN = re.compile(
     r"\b(?:combined|cumulative|collectively|together|altogether|jointly|"
-    r"aggregate(?:d)?|sum(?:med)?|addition\s+of|in\s+combination)\b",
+    r"aggregate(?:d)?|sum(?:med)?|total(?:ed|ing|led|ling|s)|addition\s+of|in\s+combination)\b",
     flags=re.IGNORECASE,
 )
 
@@ -233,11 +290,103 @@ def _collect_explicit_pie_percentages(
         if not percentage_matches:
             continue
 
-        mentioned_labels = [label for label, pattern in patterns.items() if pattern.search(clause)]
+        label_matches = sorted(
+            (
+                (match.start(), match.end(), label)
+                for label, pattern in patterns.items()
+                for match in pattern.finditer(clause)
+            ),
+            key=lambda item: item[0],
+        )
+        mentioned_labels = list(dict.fromkeys(label for _, _, label in label_matches))
         if len(percentage_matches) == 1:
-            if _PIE_AGGREGATE_PATTERN.search(clause) or len(mentioned_labels) != 1:
+            if _PIE_AGGREGATE_PATTERN.search(clause) or not label_matches:
                 continue
-            candidates[mentioned_labels[0]].append(float(percentage_matches[0].group("value")))
+            value_match = percentage_matches[0]
+            value_start, value_end = value_match.span()
+            preceding = [item for item in label_matches if item[1] <= value_start]
+            following = [item for item in label_matches if item[0] >= value_end]
+            grammatical_following = [
+                item for item in following
+                if re.fullmatch(
+                    r"\s*(?:of\s+(?:the\s+)?(?:budget|total|spending|expenditure)\s+)?"
+                    r"(?:for|on|to)\s+",
+                    clause[value_end:item[0]],
+                    flags=re.IGNORECASE,
+                )
+            ]
+            if grammatical_following:
+                nearest = min(grammatical_following, key=lambda item: item[0])
+            elif preceding:
+                nearest = max(preceding, key=lambda item: item[1])
+            else:
+                nearest = min(following, key=lambda item: item[0])
+            candidates[nearest[2]].append(float(value_match.group("value")))
+            continue
+
+        if (
+            re.search(r"\brespectively\b", clause, flags=re.IGNORECASE)
+            and len(mentioned_labels) == len(percentage_matches)
+        ):
+            for label, value_match in zip(mentioned_labels, percentage_matches):
+                candidates[label].append(float(value_match.group("value")))
+            continue
+
+        mixed_bindings: list[tuple[str, re.Match[str]]] = []
+        used_labels: set[str] = set()
+        for value_match in percentage_matches:
+            preceding = [item for item in label_matches if item[1] <= value_match.start()]
+            following = [item for item in label_matches if item[0] >= value_match.end()]
+            grammatical_following = [
+                item for item in following
+                if re.fullmatch(
+                    r"\s*(?:of\s+(?:the\s+)?(?:budget|total|spending|expenditure)\s+)?"
+                    r"(?:for|on|to)\s+",
+                    clause[value_match.end():item[0]],
+                    flags=re.IGNORECASE,
+                )
+            ]
+            label_match = (
+                min(grammatical_following, key=lambda item: item[0])
+                if grammatical_following
+                else max(preceding, key=lambda item: item[1])
+                if preceding
+                else None
+            )
+            if label_match is None or label_match[2] in used_labels:
+                break
+            used_labels.add(label_match[2])
+            mixed_bindings.append((label_match[2], value_match))
+        if (
+            not _PIE_AGGREGATE_PATTERN.search(clause)
+            and len(mixed_bindings) == len(percentage_matches)
+        ):
+            for label, value_match in mixed_bindings:
+                candidates[label].append(float(value_match.group("value")))
+            continue
+
+        value_then_label: list[tuple[str, re.Match[str]]] = []
+        used_labels: set[str] = set()
+        for value_match in percentage_matches:
+            following = [item for item in label_matches if item[0] >= value_match.end()]
+            if not following:
+                break
+            label_match = min(following, key=lambda item: item[0])
+            between = clause[value_match.end():label_match[0]]
+            if not re.fullmatch(
+                r"\s*(?:of\s+(?:the\s+)?(?:budget|total|spending|expenditure)\s+)?"
+                r"(?:for|on|to)\s+",
+                between,
+                flags=re.IGNORECASE,
+            ):
+                break
+            if label_match[2] in used_labels:
+                break
+            used_labels.add(label_match[2])
+            value_then_label.append((label_match[2], value_match))
+        if len(value_then_label) == len(percentage_matches):
+            for label, value_match in value_then_label:
+                candidates[label].append(float(value_match.group("value")))
             continue
 
         segment_start = 0
@@ -295,6 +444,7 @@ def _merge_explicit_pie_percentages(result: dict, deplot_text: str, student_answ
         record["missing"] = False
         record["estimated"] = False
         record["confidence"] = 1.0
+        record["explicit_student_value"] = True
         record["conflicting_values"] = unique_values if len(unique_values) > 1 else []
         if previous_value != value:
             alignment_notes.append(f"{label} {value:g}% was read directly from the student's essay.")
@@ -305,6 +455,700 @@ def _merge_explicit_pie_percentages(result: dict, deplot_text: str, student_answ
                 f"The latest value ({value:g}%) is used for the chart."
             )
 
+    result["records"] = records
+
+
+def _remove_unsupported_pie_values(
+    result: dict,
+    deplot_text: str,
+    student_answer: str,
+) -> None:
+    """Remove official pie values that the model copied without essay evidence."""
+    if result.get("chart_type") != "pie":
+        return
+    try:
+        official_values = parse_validated_pie_table(deplot_text)
+    except InvalidExtractedChartData:
+        return
+
+    explicit_claims = _collect_explicit_pie_percentages(
+        student_answer,
+        list(official_values),
+    )
+    official_keys = {_key(label) for label in official_values}
+    explicit_keys = {_key(label) for label in explicit_claims}
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    removed_count = 0
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        label_key = _key(_pie_record_label(record))
+        if label_key not in official_keys:
+            continue
+        if label_key in explicit_keys:
+            record["explicit_student_value"] = True
+            continue
+        if record.get("value") is None:
+            continue
+        record["value"] = None
+        record["missing"] = True
+        record["estimated"] = False
+        record["confidence"] = 0.0
+        record["explicit_student_value"] = False
+        record["conflicting_values"] = []
+        removed_count += 1
+
+    if removed_count:
+        comparison = result.get("comparison")
+        if not isinstance(comparison, dict):
+            comparison = {}
+            result["comparison"] = comparison
+        comparison.setdefault("alignment_notes", []).append(
+            f"Removed {removed_count} model-proposed pie value(s) that were not explicitly "
+            "supported by the student's essay."
+        )
+
+
+def _enforce_explicit_pie_values(
+    result: dict,
+    deplot_text: str,
+    student_answer: str,
+) -> None:
+    """Make locally traceable category percentages authoritative for pie charts."""
+    if result.get("chart_type") != "pie":
+        return
+    try:
+        official_values = parse_validated_pie_table(deplot_text)
+    except InvalidExtractedChartData:
+        return
+    explicit_claims = _collect_explicit_pie_percentages(student_answer, list(official_values))
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    records_by_key = {
+        _key(_pie_record_label(record)): record
+        for record in records
+        if isinstance(record, dict) and _key(_pie_record_label(record))
+    }
+    for label in official_values:
+        key = _key(label)
+        record = records_by_key.get(key)
+        if record is None:
+            record = _clean_record({"category": label, "value": None, "missing": True})
+            records.append(record)
+            records_by_key[key] = record
+        values = explicit_claims.get(label, [])
+        record["category"] = label
+        if values:
+            unique_values = list(dict.fromkeys(values))
+            record["value"] = float(values[-1])
+            record["missing"] = False
+            record["estimated"] = False
+            record["confidence"] = 1.0
+            record["explicit_student_value"] = True
+            record["conflicting_values"] = unique_values if len(unique_values) > 1 else []
+        else:
+            record["value"] = None
+            record["missing"] = True
+            record["estimated"] = False
+            record["confidence"] = 0.0
+            record["explicit_student_value"] = False
+            record["conflicting_values"] = []
+    result["records"] = records
+
+
+_CARTESIAN_NUMBER_RE = re.compile(r"(?<![\w.])[-+]?\d+(?:,\d{3})*(?:\.\d+)?(?![\w.])")
+_CHANGE_VALUE_PREFIX_RE = re.compile(
+    r"(?:\bby|\b(?:increase|rise|growth|gain|change|decrease|decline|drop|fall|difference|gap)"
+    r"\b[^.!?;]{0,80}\b(?:of|at|by))\s*$",
+    flags=re.IGNORECASE,
+)
+_RELATIVE_VALUE_SUFFIX_RE = re.compile(
+    r"^\s*(?:%|percentage\s+points?|percent(?:age\s+points?)?|million|billion|thousand)?"
+    r"\s*(?:above|below|ahead\s+of|behind|higher\s+than|lower\s+than|"
+    r"(?:more|less)(?:\s+(?:daily\s+)?(?:passengers?|people|users?|units?|tonnes?|tons?))?\s+than)\b",
+    flags=re.IGNORECASE,
+)
+_FROM_TO_VALUE_RE = re.compile(
+    r"\bfrom\s+(?P<start>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)"
+    r"\s*(?:%|percent(?:age\s+points?)?|million|billion|thousand)?\s+"
+    r"to\s+(?P<end>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)",
+    flags=re.IGNORECASE,
+)
+_START_END_VALUE_RE = re.compile(
+    r"\b(?:start(?:ed|ing)?|began)\s+(?:at|with)\s+"
+    r"(?P<start>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)"
+    r"\s*(?:%|percent(?:age\s+points?)?|million|billion|thousand)?"
+    r"[^.!?;]{0,80}?\b(?:end(?:ed|ing)?|finish(?:ed|ing)?|reach(?:ed|ing)?|"
+    r"rose|increased|grew|climbed|fell|declined|dropped)\s+(?:at|to)?\s*"
+    r"(?P<end>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)",
+    flags=re.IGNORECASE,
+)
+_BEGINNING_END_VALUE_RE = re.compile(
+    r"(?P<start>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)"
+    r"\s*(?:%|percent(?:age\s+points?)?|million|billion|thousand)?"
+    r"(?:\s+(?:daily\s+)?(?:passengers?|people|users?|units?|tonnes?|tons?))?"
+    r"\s+(?:at|in)\s+(?:the\s+)?(?:beginning|start|outset|first)"
+    r"[^.!?;]{0,100}?"
+    r"(?P<end>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)"
+    r"\s*(?:%|percent(?:age\s+points?)?|million|billion|thousand)?"
+    r"(?:\s+(?:daily\s+)?(?:passengers?|people|users?|units?|tonnes?|tons?))?"
+    r"\s+(?:at|in)\s+(?:the\s+)?(?:end|finish|conclusion|last)",
+    flags=re.IGNORECASE,
+)
+_INITIAL_FINAL_VALUE_RE = re.compile(
+    r"\b(?:initially|at\s+first|at\s+the\s+outset)\b[^.!?;]{0,60}?"
+    r"(?P<start>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)"
+    r"\s*(?:%|percent(?:age\s+points?)?|million|billion|thousand)?"
+    r"[^.!?;]{0,100}?\b(?:finally|ultimately|by\s+the\s+end)\b[^.!?;]{0,40}?"
+    r"(?P<end>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)",
+    flags=re.IGNORECASE,
+)
+_OPEN_CLOSE_VALUE_RE = re.compile(
+    r"\b(?:opened|started|began)\s+(?:the\s+)?(?:period|decade|series)?\s*(?:at|with)\s+"
+    r"(?P<start>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)"
+    r"\s*(?:%|percent(?:age\s+points?)?|million|billion|thousand)?"
+    r"[^.!?;]{0,100}?\b(?:closed|finished|ended)"
+    r"(?:\s+(?:it|the\s+(?:period|decade|series)))?\s+(?:at|with)\s+"
+    r"(?P<end>[-+]?\d+(?:,\d{3})*(?:\.\d+)?)",
+    flags=re.IGNORECASE,
+)
+_ORDERED_SERIES_VALUES_RE = re.compile(
+    r"\b(?:respectively|chronological\s+order|in\s+order|from\s+(?:19|20)\d{2}\s+"
+    r"(?:through|to|until)\s+(?:19|20)\d{2}|across\s+the\s+(?:six|\d+)\s+"
+    r"(?:years|periods|dates|points)|(?:at|over)\s+the\s+(?:five|six|\d+)\s+"
+    r"subsequent\s+(?:dates|points|observations)|from\b[^!?;]{0,180}\bthrough\b"
+    r"[^!?;]{0,180}\bto)\b",
+    flags=re.IGNORECASE,
+)
+_CARTESIAN_CLAUSE_BOUNDARY_RE = re.compile(r",\s+(?=as\s+[a-z])", re.IGNORECASE)
+
+
+def _match_distance(span: tuple[int, int], value_span: tuple[int, int]) -> int:
+    start, end = span
+    value_start, value_end = value_span
+    if end <= value_start:
+        return value_start - end
+    if start >= value_end:
+        return start - value_end
+    return 0
+
+
+def _label_occurrences(sentence: str, labels: list[str]) -> list[tuple[str, tuple[int, int]]]:
+    occurrences: list[tuple[str, tuple[int, int]]] = []
+    for label in labels:
+        pattern = _label_pattern(label)
+        if pattern is None:
+            continue
+        occurrences.extend((label, match.span()) for match in pattern.finditer(sentence))
+    return occurrences
+
+
+def _series_occurrences(
+    sentence: str,
+    series_names: list[str],
+) -> list[tuple[str, tuple[int, int]]]:
+    occurrences: list[tuple[str, tuple[int, int]]] = []
+    seen: set[tuple[str, tuple[int, int]]] = set()
+    for series in series_names:
+        for alias in _series_aliases(series):
+            pattern = _label_pattern(alias)
+            if pattern is None:
+                continue
+            for match in pattern.finditer(sentence):
+                occurrence = (series, match.span())
+                if occurrence not in seen:
+                    seen.add(occurrence)
+                    occurrences.append(occurrence)
+    return occurrences
+
+
+def _nearest_label(
+    occurrences: list[tuple[str, tuple[int, int]]],
+    value_span: tuple[int, int],
+) -> tuple[str, tuple[int, int]] | None:
+    if not occurrences:
+        return None
+    return min(
+        occurrences,
+        key=lambda item: (
+            _match_distance(item[1], value_span),
+            0 if item[1][0] <= value_span[0] else 1,
+        ),
+    )
+
+
+_VALUE_TO_CATEGORY_RE = re.compile(
+    r"^\s*(?:%|percent|percentage\s+points?|million|billion|thousand)?"
+    r"\s*(?:in|by|during|for|at)\s+(?:(?:the\s+)?(?:year|period)\s+)?$",
+    flags=re.IGNORECASE,
+)
+_VALUE_TO_SERIES_RE = re.compile(
+    r"^\s*(?:%|percent|percentage\s+points?|million|billion|thousand)?"
+    r"(?:\s+(?:daily\s+)?(?:passengers?|people|users?|units?|tonnes?|tons?|minutes?))?"
+    r"\s*(?:for|on|by|in)\s+$",
+    flags=re.IGNORECASE,
+)
+
+
+def _nearest_category(
+    sentence: str,
+    occurrences: list[tuple[str, tuple[int, int]]],
+    value_span: tuple[int, int],
+) -> tuple[str, tuple[int, int]] | None:
+    following = sorted(
+        (
+            occurrence
+            for occurrence in occurrences
+            if occurrence[1][0] >= value_span[1]
+        ),
+        key=lambda item: item[1][0],
+    )
+    if following:
+        between = sentence[value_span[1] : following[0][1][0]]
+        if _VALUE_TO_CATEGORY_RE.fullmatch(between):
+            return following[0]
+    return _nearest_label(occurrences, value_span)
+
+
+def _range_subject_category(
+    sentence: str,
+    occurrences: list[tuple[str, tuple[int, int]]],
+    value_span: tuple[int, int],
+) -> tuple[str, tuple[int, int]] | None:
+    """Bind a from-to range to its grammatical category instead of the next clause."""
+    following = sorted(
+        (
+            occurrence
+            for occurrence in occurrences
+            if occurrence[1][0] >= value_span[1]
+        ),
+        key=lambda item: item[1][0],
+    )
+    if following:
+        between = sentence[value_span[1] : following[0][1][0]]
+        if _VALUE_TO_CATEGORY_RE.fullmatch(between):
+            return following[0]
+
+    preceding = [
+        occurrence
+        for occurrence in occurrences
+        if occurrence[1][1] <= value_span[0]
+    ]
+    if preceding:
+        return max(preceding, key=lambda item: item[1][1])
+    return _nearest_category(sentence, occurrences, value_span)
+
+
+def _nearest_series(
+    sentence: str,
+    occurrences: list[tuple[str, tuple[int, int]]],
+    value_span: tuple[int, int],
+) -> tuple[str, tuple[int, int]] | None:
+    following = sorted(
+        (
+            occurrence
+            for occurrence in occurrences
+            if occurrence[1][0] >= value_span[1]
+        ),
+        key=lambda item: item[1][0],
+    )
+    if following:
+        between = sentence[value_span[1] : following[0][1][0]]
+        if _VALUE_TO_SERIES_RE.fullmatch(between):
+            return following[0]
+    return _nearest_label(occurrences, value_span)
+
+
+def _collect_explicit_cartesian_values(
+    student_answer: str,
+    official_records: list[dict],
+) -> dict[tuple[str, str], list[float]]:
+    """Collect explicit category/series/value claims without trusting model output."""
+    categories = list(dict.fromkeys(str(record["category"]) for record in official_records))
+    series_names = list(dict.fromkeys(str(record["series"]) for record in official_records))
+    official_cells = {(_key(category), _key(series)) for category, series in (
+        (str(record["category"]), str(record["series"])) for record in official_records
+    )}
+    claims: dict[tuple[str, str], list[float]] = {}
+    temporal_series = len(series_names) >= 2 and all(
+        re.fullmatch(r"\d{4}", series) for series in series_names
+    )
+    temporal_categories = len(categories) >= 2 and all(
+        re.fullmatch(r"\d{4}", category) for category in categories
+    )
+    active_series: str | None = None
+
+    def add_claim(category: str, series: str, value: float) -> None:
+        if (_key(category), _key(series)) in official_cells:
+            claims.setdefault((category, series), []).append(value)
+
+    sentences = [
+        clause.strip()
+        for sentence in re.split(r"(?<=[.!?;])\s+|[\r\n]+", student_answer)
+        for clause in _CARTESIAN_CLAUSE_BOUNDARY_RE.split(sentence)
+        if clause.strip()
+    ]
+    for sentence in sentences:
+        category_occurrences = _label_occurrences(sentence, categories)
+        series_occurrences = _series_occurrences(sentence, series_names)
+        mentioned_series = list(dict.fromkeys(series for series, _ in series_occurrences))
+        if temporal_series and len(mentioned_series) == 1:
+            active_series = mentioned_series[0]
+        elif temporal_series and len(mentioned_series) > 1:
+            active_series = None
+        if temporal_categories and len(mentioned_series) == 1 and _ORDERED_SERIES_VALUES_RE.search(sentence):
+            occupied_spans = [span for _, span in category_occurrences + series_occurrences]
+            ordered_values = [
+                float(match.group().replace(",", ""))
+                for match in _CARTESIAN_NUMBER_RE.finditer(sentence)
+                if not any(
+                    start < match.end() and match.start() < end
+                    for start, end in occupied_spans
+                )
+                and not _CHANGE_VALUE_PREFIX_RE.search(
+                    sentence[max(0, match.start() - 100):match.start()]
+                )
+                and not _RELATIVE_VALUE_SUFFIX_RE.search(sentence[match.end():match.end() + 80])
+            ]
+            if len(ordered_values) == len(categories):
+                for category, value in zip(categories, ordered_values):
+                    add_claim(category, mentioned_series[0], value)
+                continue
+        if temporal_categories and not category_occurrences and len(mentioned_series) == 1:
+            endpoint_matches = {
+                (
+                    float(match.group("start").replace(",", "")),
+                    float(match.group("end").replace(",", "")),
+                )
+                for pattern in (
+                    _FROM_TO_VALUE_RE,
+                    _START_END_VALUE_RE,
+                    _BEGINNING_END_VALUE_RE,
+                    _INITIAL_FINAL_VALUE_RE,
+                    _OPEN_CLOSE_VALUE_RE,
+                )
+                for match in pattern.finditer(sentence)
+            }
+            if len(endpoint_matches) == 1:
+                start_value, end_value = next(iter(endpoint_matches))
+                entity = mentioned_series[0]
+                add_claim(categories[0], entity, start_value)
+                add_claim(categories[-1], entity, end_value)
+        if not category_occurrences:
+            continue
+        occupied_spans = [
+            span
+            for _, span in category_occurrences + series_occurrences
+        ]
+        numeric_occurrences: list[tuple[float, tuple[int, int]]] = []
+        for match in _CARTESIAN_NUMBER_RE.finditer(sentence):
+            value_span = match.span()
+            if any(
+                start < value_span[1] and value_span[0] < end
+                for start, end in occupied_spans
+            ):
+                continue
+            prefix = sentence[max(0, value_span[0] - 100) : value_span[0]]
+            if _CHANGE_VALUE_PREFIX_RE.search(prefix):
+                continue
+            if _RELATIVE_VALUE_SUFFIX_RE.search(sentence[value_span[1]:value_span[1] + 80]):
+                continue
+            numeric_occurrences.append(
+                (float(match.group().replace(",", "")), value_span)
+            )
+
+        consumed_spans: set[tuple[int, int]] = set()
+        if temporal_series:
+            range_matches = [
+                match
+                for pattern in (
+                    _FROM_TO_VALUE_RE,
+                    _START_END_VALUE_RE,
+                    _BEGINNING_END_VALUE_RE,
+                    _INITIAL_FINAL_VALUE_RE,
+                    _OPEN_CLOSE_VALUE_RE,
+                )
+                for match in pattern.finditer(sentence)
+            ]
+            for match in range_matches:
+                value_spans = [match.span("start"), match.span("end")]
+                if any(
+                    start < value_span[1] and value_span[0] < end
+                    for value_span in value_spans
+                    for start, end in occupied_spans
+                ):
+                    continue
+                preceding = sentence[max(0, match.start() - 55) : match.start()]
+                if re.search(r"\b(?:gap|difference|spread|range)\b", preceding, re.IGNORECASE):
+                    continue
+                category_match = _range_subject_category(
+                    sentence,
+                    category_occurrences,
+                    match.span(),
+                )
+                if category_match is None:
+                    continue
+                category, category_span = category_match
+                if _match_distance(category_span, match.span()) > 220:
+                    continue
+                add_claim(
+                    category,
+                    series_names[0],
+                    float(match.group("start").replace(",", "")),
+                )
+                add_claim(
+                    category,
+                    series_names[-1],
+                    float(match.group("end").replace(",", "")),
+                )
+                consumed_spans.update(value_spans)
+
+        target_series = (
+            mentioned_series[0]
+            if len(mentioned_series) == 1
+            else active_series
+            if not mentioned_series
+            else None
+        )
+        available_numbers = [
+            occurrence
+            for occurrence in numeric_occurrences
+            if occurrence[1] not in consumed_spans
+        ]
+        ordered_categories = sorted(category_occurrences, key=lambda item: item[1][0])
+        ordered_series = list(
+            dict.fromkeys(
+                series
+                for series, _ in sorted(series_occurrences, key=lambda item: item[1][0])
+            )
+        )
+        if (
+            len(ordered_categories) == 1
+            and len(ordered_series) == len(available_numbers)
+            and len(ordered_series) >= 2
+            and re.search(r"\brespectiv(?:e|ely)\b", sentence, flags=re.IGNORECASE)
+        ):
+            category = ordered_categories[0][0]
+            for series, (value, value_span) in zip(
+                ordered_series,
+                sorted(available_numbers, key=lambda item: item[1][0]),
+            ):
+                add_claim(category, series, value)
+                consumed_spans.add(value_span)
+
+        if target_series and len(ordered_categories) == len(available_numbers):
+            for (category, _), (value, value_span) in zip(
+                ordered_categories,
+                sorted(available_numbers, key=lambda item: item[1][0]),
+            ):
+                add_claim(category, target_series, value)
+                consumed_spans.add(value_span)
+
+        if not series_occurrences:
+            continue
+        sentence_claims: dict[
+            tuple[str, str],
+            list[tuple[int, int, float]],
+        ] = {}
+        for value, value_span in numeric_occurrences:
+            if value_span in consumed_spans:
+                continue
+            category_match = _nearest_category(sentence, category_occurrences, value_span)
+            series_match = _nearest_series(sentence, series_occurrences, value_span)
+            if category_match is None or series_match is None:
+                continue
+            category, category_span = category_match
+            series, series_span = series_match
+            if (
+                _match_distance(category_span, value_span) > 240
+                or _match_distance(series_span, value_span) > 160
+            ):
+                continue
+            cell_key = (_key(category), _key(series))
+            if cell_key not in official_cells:
+                continue
+            score = (
+                3 * _match_distance(category_span, value_span)
+                + _match_distance(series_span, value_span)
+            )
+            sentence_claims.setdefault((category, series), []).append(
+                (score, value_span[0], value)
+            )
+        for cell, candidates in sentence_claims.items():
+            _, _, value = min(candidates)
+            claims.setdefault(cell, []).append(value)
+    return claims
+
+
+def _merge_explicit_cartesian_values(
+    result: dict,
+    deplot_text: str,
+    student_answer: str,
+) -> None:
+    """Make explicit essay values authoritative for bar and line chart records."""
+    chart_type = result.get("chart_type")
+    if chart_type not in {"bar", "line", "area"}:
+        return
+    official_records = parse_numeric_chart_table(deplot_text)
+    if not official_records:
+        return
+    explicit_claims = _collect_explicit_cartesian_values(student_answer, official_records)
+    if not explicit_claims:
+        return
+
+    value_precision = infer_deplot_value_precision(deplot_text, chart_type)
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    comparison = result.get("comparison")
+    if not isinstance(comparison, dict):
+        comparison = {}
+        result["comparison"] = comparison
+    alignment_notes = comparison.setdefault("alignment_notes", [])
+
+    for (category, series), values in explicit_claims.items():
+        unique_values = list(dict.fromkeys(values))
+        explicit_value = quantize_chart_value(values[-1], value_precision)
+        record = _matching_record(records, category, series)
+        if record is None:
+            axis_label = next(
+                (
+                    str(item.get("axis_label") or "")
+                    for item in official_records
+                    if _key(item["category"]) == _key(category)
+                    and _key(item["series"]) == _key(series)
+                ),
+                "",
+            )
+            record = _clean_record(
+                {
+                    "category": category,
+                    "series": series,
+                    "period": category if _key(axis_label) in {"year", "date", "period", "time"} else None,
+                    "value": explicit_value,
+                    "confidence": 1.0,
+                }
+            )
+            records.append(record)
+
+        previous_value = record.get("value")
+        record["value"] = explicit_value
+        record["missing"] = False
+        record["estimated"] = False
+        record["confidence"] = 1.0
+        record["explicit_student_value"] = True
+        record["conflicting_values"] = (
+            [quantize_chart_value(value, value_precision) for value in unique_values]
+            if len(unique_values) > 1
+            else []
+        )
+        if previous_value != explicit_value:
+            alignment_notes.append(
+                f"{series} at {category} was read as {explicit_value:g} directly from the student's essay."
+            )
+        if len(unique_values) > 1:
+            value_list = ", ".join(f"{value:g}" for value in unique_values)
+            alignment_notes.append(
+                f"{series} at {category} has conflicting student values: {value_list}. "
+                f"The latest value ({explicit_value:g}) is used for the chart."
+            )
+
+    result["records"] = records
+
+
+def _remove_unsupported_cartesian_values(
+    result: dict,
+    deplot_text: str,
+    student_answer: str,
+) -> None:
+    """Remove model values that cannot be traced to an explicit essay claim."""
+    if result.get("chart_type") not in {"bar", "line", "area"}:
+        return
+    official_records = parse_numeric_chart_table(deplot_text)
+    if not official_records:
+        return
+    explicit_claims = _collect_explicit_cartesian_values(student_answer, official_records)
+    explicit_cells = {
+        (_key(category), _key(series))
+        for category, series in explicit_claims
+    }
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    removed_count = 0
+    for official in official_records:
+        category = str(official["category"])
+        series = str(official["series"])
+        if (_key(category), _key(series)) in explicit_cells:
+            continue
+        record = _matching_record(records, category, series)
+        if record is None or record.get("value") is None:
+            continue
+        record["value"] = None
+        record["missing"] = True
+        record["estimated"] = False
+        record["confidence"] = 0.0
+        record["explicit_student_value"] = False
+        removed_count += 1
+
+    if removed_count:
+        comparison = result.get("comparison")
+        if not isinstance(comparison, dict):
+            comparison = {}
+            result["comparison"] = comparison
+        notes = comparison.setdefault("alignment_notes", [])
+        notes.append(
+            f"Removed {removed_count} model-proposed value(s) that were not explicitly "
+            "supported by the student's essay."
+        )
+
+
+def _enforce_explicit_cartesian_values(
+    result: dict,
+    deplot_text: str,
+    student_answer: str,
+) -> None:
+    """Make the local text parser authoritative before chart annotation/rendering."""
+    chart_type = result.get("chart_type")
+    if chart_type not in {"bar", "line", "area"}:
+        return
+    official_records = parse_numeric_chart_table(deplot_text)
+    if not official_records:
+        return
+    explicit_claims = _collect_explicit_cartesian_values(student_answer, official_records)
+    value_precision = infer_deplot_value_precision(deplot_text, chart_type)
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+
+    for official in official_records:
+        category = str(official["category"])
+        series = str(official["series"])
+        record = _matching_record(records, category, series)
+        if record is None:
+            record = _clean_record({
+                "category": category,
+                "series": series,
+                "period": category
+                if _key(official.get("axis_label")) in {"year", "date", "period", "time"}
+                else None,
+                "value": None,
+                "missing": True,
+            })
+            records.append(record)
+
+        values = explicit_claims.get((category, series), [])
+        if values:
+            unique_values = list(dict.fromkeys(values))
+            record["value"] = quantize_chart_value(values[-1], value_precision)
+            record["missing"] = False
+            record["estimated"] = False
+            record["confidence"] = 1.0
+            record["explicit_student_value"] = True
+            record["conflicting_values"] = [
+                quantize_chart_value(value, value_precision)
+                for value in unique_values
+            ] if len(unique_values) > 1 else []
+        else:
+            record["value"] = None
+            record["missing"] = True
+            record["estimated"] = False
+            record["confidence"] = 0.0
+            record["explicit_student_value"] = False
+            record["conflicting_values"] = []
     result["records"] = records
 
 
@@ -365,8 +1209,11 @@ def _annotate_pie_accuracy(result: dict, deplot_text: str, tolerance: float = 0.
             record["error_delta"] = round(delta, 6)
             conflicting_values = record.get("conflicting_values")
             has_conflict = isinstance(conflicting_values, list) and len(conflicting_values) > 1
-            record["incorrect"] = has_conflict or abs(delta) > tolerance
-            if has_conflict:
+            is_inferred = bool(record.get("estimated")) and not record.get("explicit_student_value")
+            record["incorrect"] = not is_inferred and (has_conflict or abs(delta) > tolerance)
+            if is_inferred:
+                record["feedback_status"] = "estimated"
+            elif has_conflict:
                 record["feedback_status"] = "conflicting"
                 value_list = " and ".join(f"{float(value):g}%" for value in conflicting_values)
                 accuracy_issues.append(
@@ -455,6 +1302,16 @@ def _find_bar_record(
     for index, record in indexed_records:
         if index in used_indices:
             continue
+        record_category = record.get("period") or record.get("category")
+        if (
+            _key(record_category) == category_key
+            and _key(record.get("series")) in series_aliases
+        ):
+            return index, record
+
+    for index, record in indexed_records:
+        if index in used_indices:
+            continue
         record_keys = {
             _key(record.get(field))
             for field in ("category", "series", "period", "region")
@@ -508,7 +1365,7 @@ def _annotate_cartesian_accuracy(
 ) -> None:
     """Compare explicit bar/line values with the official DePlot table locally."""
     chart_type = result.get("chart_type")
-    if chart_type not in {"bar", "line"}:
+    if chart_type not in {"bar", "line", "area"}:
         return
     official_records = parse_numeric_chart_table(deplot_text)
     if not official_records:
@@ -556,6 +1413,13 @@ def _annotate_cartesian_accuracy(
             index, record = matched
             used_indices.add(index)
 
+        record["category"] = category
+        record["series"] = series
+        record["period"] = (
+            category
+            if _key(official.get("axis_label")) in {"year", "date", "period", "time"}
+            else None
+        )
         record["official_value"] = official_value
         record["feedback_label"] = item_label
         student_value = record.get("value")
@@ -563,14 +1427,26 @@ def _annotate_cartesian_accuracy(
             delta = float(student_value) - official_value
             record["missing"] = False
             record["error_delta"] = round(delta, 6)
-            is_estimated_line_point = chart_type == "line" and bool(record.get("estimated"))
+            is_inferred_value = bool(record.get("estimated")) and not record.get("explicit_student_value")
             exceeds_tolerance = abs(delta) > accepted_tolerance + 1e-9
-            record["incorrect"] = not is_estimated_line_point and exceeds_tolerance
-            if is_estimated_line_point:
+            conflicting_values = record.get("conflicting_values")
+            has_conflict = isinstance(conflicting_values, list) and len(conflicting_values) > 1
+            record["incorrect"] = not is_inferred_value and (
+                has_conflict or exceeds_tolerance
+            )
+            if is_inferred_value:
                 record["feedback_status"] = "estimated"
+            elif has_conflict:
+                record["feedback_status"] = "conflicting"
             else:
                 record["feedback_status"] = "incorrect" if record["incorrect"] else "correct"
-            if record["incorrect"]:
+            if has_conflict:
+                value_list = " and ".join(f"{float(value):g}" for value in conflicting_values)
+                accuracy_issues.append(
+                    f"{item_label}: conflicting student values {value_list}; "
+                    f"official {official_value:g}"
+                )
+            elif record["incorrect"]:
                 accuracy_issues.append(
                     f"{item_label}: student {student_value:g}, official {official_value:g}"
                 )
@@ -582,16 +1458,9 @@ def _annotate_cartesian_accuracy(
             omitted_items.append(item_label)
         ordered_records.append(record)
 
-    for index, record in indexed_records:
-        if index in used_indices:
-            continue
-        label = record.get("feedback_label") or _bar_record_axis(record) or "Unrecognised item"
-        record["official_value"] = None
-        record["incorrect"] = True
-        record["feedback_status"] = "unexpected"
-        record["feedback_label"] = str(label)
-        accuracy_issues.append(f"{label}: not present in the official bar chart")
-        ordered_records.append(record)
+    ignored_nonofficial_records = sum(
+        1 for index, _ in indexed_records if index not in used_indices
+    )
 
     comparison = result.get("comparison")
     if not isinstance(comparison, dict):
@@ -605,6 +1474,15 @@ def _annotate_cartesian_accuracy(
     comparison["accepted_value_tolerance"] = accepted_tolerance
     comparison["accepted_value_tolerance_unit"] = tolerance_unit
     comparison["official_value_precision"] = value_precision
+    if ignored_nonofficial_records:
+        alignment_notes = comparison.get("alignment_notes")
+        if not isinstance(alignment_notes, list):
+            alignment_notes = []
+            comparison["alignment_notes"] = alignment_notes
+        alignment_notes.append(
+            f"Ignored {ignored_nonofficial_records} model record(s) outside the official "
+            "category-and-series framework."
+        )
     result["records"] = ordered_records
 
 
@@ -622,7 +1500,7 @@ def _annotate_line_accuracy(
     deplot_text: str,
     tolerance: float | None = None,
 ) -> None:
-    if result.get("chart_type") == "line":
+    if result.get("chart_type") in {"line", "area"}:
         _annotate_cartesian_accuracy(result, deplot_text, tolerance)
 
 
@@ -665,12 +1543,41 @@ _CONTINUOUS_TREND_RE = re.compile(
 )
 
 
-def _supports_continuous_trend(student_answer: str, series: str) -> bool:
+def _continuous_trend_evidence(student_answer: str, series: str) -> str:
     sentences = re.split(r"(?<=[.!?])\s+|[\r\n]+", student_answer)
-    return any(
-        _sentence_has_series(sentence, series) and _CONTINUOUS_TREND_RE.search(sentence)
+    return next((sentence.strip()
         for sentence in sentences
-    )
+        if is_asserted_claim(sentence) and _sentence_has_series(sentence, series)
+        and _CONTINUOUS_TREND_RE.search(sentence)), "")
+
+
+def _attach_explicit_record_evidence(result: dict, deplot_text: str, student_answer: str) -> None:
+    """Keep verbatim sentence evidence only when the existing parser confirms the cell.
+
+    Ambiguous contextual claims retain their values but no invented source quote.
+    This metadata never changes the extracted facts or their accuracy status.
+    """
+    chart_type = result.get("chart_type")
+    if chart_type not in {"bar", "line", "area", "pie"}:
+        return
+    records = result.get("records", [])
+    official = parse_numeric_chart_table(deplot_text) if chart_type != "pie" else []
+    labels = [_pie_record_label(record) for record in records] if chart_type == "pie" else []
+    precision = infer_deplot_value_precision(deplot_text, chart_type)
+    for sentence in re.split(r"(?<=[.!?;])\s+|[\r\n]+", student_answer):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        claims = (_collect_explicit_pie_percentages(sentence, labels) if chart_type == "pie"
+                  else _collect_explicit_cartesian_values(sentence, official))
+        for record in records:
+            if not record.get("explicit_student_value") or record.get("missing"):
+                continue
+            key = (_pie_record_label(record) if chart_type == "pie"
+                   else (record.get("category"), record.get("series")))
+            if any(quantize_chart_value(value, precision) == record.get("value")
+                   for value in claims.get(key, [])):
+                record["student_evidence"] = sentence
 
 
 def _period_coordinate(period: str, fallback: int) -> float:
@@ -683,8 +1590,8 @@ def _interpolate_supported_temporal_gaps(
     deplot_text: str,
     student_answer: str,
 ) -> None:
-    """Fill internal line gaps only when the student's wording supports continuity."""
-    if result.get("chart_type") not in {"line", "area"}:
+    """Fill temporal gaps only when the student's wording supports continuity."""
+    if result.get("chart_type") not in {"line", "area", "bar"}:
         return
     framework = parse_series_framework(deplot_text)
     records = result.get("records") if isinstance(result.get("records"), list) else []
@@ -692,6 +1599,8 @@ def _interpolate_supported_temporal_gaps(
         return
 
     periods = list(dict.fromkeys(period for period, _ in framework))
+    if result.get("chart_type") == "bar" and not all(re.fullmatch(r"(?:19|20)\d{2}", period) for period in periods):
+        return
     series_names = list(dict.fromkeys(series for _, series in framework))
     comparison = result.get("comparison")
     if not isinstance(comparison, dict):
@@ -700,13 +1609,15 @@ def _interpolate_supported_temporal_gaps(
     uncertain_items = comparison.setdefault("uncertain_items", [])
 
     for series in series_names:
-        if not _supports_continuous_trend(student_answer, series):
+        trend_evidence = _continuous_trend_evidence(student_answer, series)
+        if not trend_evidence:
             continue
         series_records = [_matching_record(records, period, series) for period in periods]
         known_indices = [
             index
             for index, record in enumerate(series_records)
             if record is not None and isinstance(record.get("value"), (int, float))
+            and not record.get("estimated") and not record.get("missing")
         ]
         if len(known_indices) < 2:
             continue
@@ -735,6 +1646,14 @@ def _interpolate_supported_temporal_gaps(
             record["value"] = round(left_value + (right_value - left_value) * ratio, 6)
             record["missing"] = False
             record["estimated"] = True
+            record["explicit_student_value"] = False
+            record["inference"] = {
+                "method": "linear_interpolation",
+                "student_evidence": trend_evidence,
+                "explanation": "A straight-line estimate between stated values. The report's trend wording does not specify this exact intermediate value.",
+                "from": {"period": periods[left_index], "value": left_value},
+                "to": {"period": periods[right_index], "value": right_value},
+            }
             record["confidence"] = min(
                 0.6,
                 float(left_record.get("confidence") or 0.5),
@@ -873,7 +1792,7 @@ class ChartFeedbackService:
             response = self.client.chat.completions.create(
                 model=get_deepseek_model(),
                 temperature=0,
-                max_tokens=5000,
+                max_tokens=6500,
                 response_format={"type": "json_object"},
                 extra_body=get_deepseek_extra_body(),
                 messages=messages,
@@ -884,12 +1803,40 @@ class ChartFeedbackService:
                 raw = _extract_json_object(response.choices[0].message.content or "")
                 result = _normalise_result(raw, effective_type)
                 _merge_explicit_pie_percentages(result, deplot_text, student_answer)
+                _remove_unsupported_pie_values(result, deplot_text, student_answer)
+                _enforce_explicit_pie_values(result, deplot_text, student_answer)
+                _merge_explicit_cartesian_values(result, deplot_text, student_answer)
+                _remove_unsupported_cartesian_values(result, deplot_text, student_answer)
+                _enforce_explicit_cartesian_values(result, deplot_text, student_answer)
+                infer_supported_comparisons(result, student_answer)
                 _annotate_pie_accuracy(result, deplot_text)
-                _annotate_bar_accuracy(result, deplot_text)
                 _validate_temporal_record_coverage(result, deplot_text, student_answer)
                 _interpolate_supported_temporal_gaps(result, deplot_text, student_answer)
+                _annotate_bar_accuracy(result, deplot_text)
                 _annotate_line_accuracy(result, deplot_text)
-                result["style"] = {"color_palette": palette, "renderer": "vega-lite"}
+                _attach_explicit_record_evidence(result, deplot_text, student_answer)
+                finalise_provenance(result)
+                # The former five-class checker remains an internal factual guard for
+                # chart rendering. The user-facing framework is the seven rhetorical moves.
+                content_checks = build_error_taxonomy(copy.deepcopy(result), student_answer)
+                semantic_alerts = [
+                    (
+                        f'TEXT CONFLICT: {str(issue.get("item") or "Written claim").strip()} '
+                        f'{"trend direction" if issue.get("error_type") == "trend_direction_error" else "ranking"} '
+                        "differs from the official chart."
+                    )
+                    for issue in content_checks.get("issues", [])
+                    if issue.get("error_type") in {
+                        "trend_direction_error",
+                        "comparison_ranking_error",
+                    }
+                ]
+                result["style"] = {
+                    "color_palette": palette,
+                    "renderer": "vega-lite",
+                    "analysis_model": get_deepseek_model(),
+                    "semantic_alert_count": len(semantic_alerts),
+                }
                 result["vega_lite_spec"] = render_vega_lite_png(
                     result["vega_lite_spec"],
                     result["records"],
@@ -898,7 +1845,10 @@ class ChartFeedbackService:
                     palette,
                     chart_type=result["chart_type"],
                     unit=f'{result["axes"]["unit"]} {result["axes"]["y_label"]}'.strip(),
+                    semantic_alerts=semantic_alerts,
                 )
+                attach_move_feedback(result, student_answer, raw.get("move_feedback"))
+                render_move_visuals(image_path, self.output_dir, result)
                 result["style"]["alignment_attempts"] = attempt + 1
                 return result, filename
             except (InvalidChartSpec, UnifiedChartFeedbackError) as exc:

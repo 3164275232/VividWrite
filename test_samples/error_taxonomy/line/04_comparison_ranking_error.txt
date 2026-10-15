@@ -1,0 +1,7 @@
+The line graph shows the average daily number of passengers travelling by bus, rail and metro from 2010 to 2020. Values are measured in millions.
+
+Overall, the relative ordering of the three modes changed considerably over the period. Bus began with the largest figure, while the three services ended at markedly different levels.
+
+In 2010, bus use stood at 1.8 million passengers, compared with 1.1 million for rail and 0.8 million for metro. In 2020, the corresponding figures for bus, rail and metro were 1.3 million, 2.2 million and 1.9 million respectively.
+
+Metro was the highest transport mode in 2020. It exceeded bus, while rail was slightly above metro. At the start of the period, bus led the other modes and rail occupied the middle position.

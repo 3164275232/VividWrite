@@ -1,0 +1,7 @@
+The pie chart shows the distribution of average Canadian household spending across six categories in 2024.
+
+Overall, the six shares were unevenly distributed, with clear differences between larger and smaller items.
+
+Households allocated 32% of their spending to Leisure. A share of 8% went to Other. The proportion spent on Utilities was 10%. The proportion spent on Transport was 17%. A share of 21% went to Food. Households allocated 12% of their spending to Housing.
+
+These proportions show the different amounts of attention given to the reported spending items.

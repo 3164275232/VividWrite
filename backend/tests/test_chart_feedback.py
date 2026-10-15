@@ -12,9 +12,55 @@ from chart_feedback import (
     _annotate_bar_accuracy,
     _annotate_line_accuracy,
     _annotate_pie_accuracy,
+    _attach_explicit_record_evidence,
+    _collect_explicit_cartesian_values,
+    _collect_explicit_pie_percentages,
+    _enforce_explicit_cartesian_values,
+    _enforce_explicit_pie_values,
+    _interpolate_supported_temporal_gaps,
     _normalise_result,
+    _remove_unsupported_pie_values,
 )
 from chart_renderer import InvalidChartSpec, extract_image_palette, prepare_vega_lite_spec
+
+
+class RecordEvidenceTests(unittest.TestCase):
+    def test_explicit_value_evidence_uses_the_same_cell_parser_and_an_exact_sentence(self):
+        table = "City | 2015 | 2020\nBristol | 42 | 55\nLeeds | 35 | 48"
+        essay = "Bristol recorded 47% in 2015. Leeds reached 48% in 2020."
+        result = {"chart_type": "bar", "records": []}
+        _enforce_explicit_cartesian_values(result, table, essay)
+        _attach_explicit_record_evidence(result, table, essay)
+        rows = {(row["category"], row["series"]): row for row in result["records"]}
+        self.assertEqual(rows[("Bristol", "2015")]["student_evidence"], "Bristol recorded 47% in 2015.")
+        self.assertNotIn("student_evidence", rows[("Bristol", "2020")])
+        self.assertEqual(rows[("Bristol", "2015")]["value"], 47)
+
+    def test_pie_evidence_preserves_the_student_sentence(self):
+        table = "Category | Percentage\nHousing | 60%\nFood | 40%"
+        essay = "Housing accounted for 60%, while food represented 40%."
+        result = {"chart_type": "pie", "records": [
+            {"category": "Housing", "value": 60, "explicit_student_value": True},
+            {"category": "Food", "value": 40, "explicit_student_value": True}]}
+        _attach_explicit_record_evidence(result, table, essay)
+        self.assertEqual([row["student_evidence"] for row in result["records"]], [essay, essay])
+
+    def test_interpolation_records_the_trend_quote_and_never_uses_estimated_anchors(self):
+        table = "Year | Rail\n2010 | 10\n2015 | 15\n2020 | 20"
+        essay = "Rail rose steadily from 10 in 2010 to 20 in 2020."
+        def result():
+            return {"chart_type": "line", "records": [
+                {"category": "2010", "series": "Rail", "value": 10},
+                {"category": "2015", "series": "Rail", "value": None, "missing": True},
+                {"category": "2020", "series": "Rail", "value": 20}]}
+        chart = result()
+        _interpolate_supported_temporal_gaps(chart, table, essay)
+        self.assertEqual(chart["records"][1]["inference"]["student_evidence"], essay)
+        self.assertEqual(chart["records"][1]["value"], 15)
+        chart = result()
+        chart["records"][0]["estimated"] = True
+        _interpolate_supported_temporal_gaps(chart, table, essay)
+        self.assertIsNone(chart["records"][1]["value"])
 
 
 def _model_payload(chart_type="bar"):
@@ -103,6 +149,216 @@ class SequenceClient:
 
 
 class UnifiedChartFeedbackTests(unittest.TestCase):
+    def test_full_pipeline_recovers_supported_inference_without_copying_reference(self):
+        for chart_type in ('bar', 'pie'):
+            with self.subTest(chart_type=chart_type), tempfile.TemporaryDirectory() as folder:
+                payload = _model_payload(chart_type)
+                payload['axes'] = {'x_label': 'Category', 'y_label': 'Percentage', 'unit': '%'}
+                payload['records'] = [
+                    {'category': 'Housing', 'series': '2020' if chart_type == 'bar' else None,
+                     'value': 40, 'estimated': False},
+                    # A leaked reference value must be removed before deriving the student's 20.
+                    {'category': 'Food', 'series': '2020' if chart_type == 'bar' else None,
+                     'value': 30, 'estimated': False},
+                ]
+                if chart_type == 'pie':
+                    payload['vega_lite_spec'] = {'mark': 'arc', 'encoding': {}}
+                result, filename = ChartFeedbackService(folder, client=FakeClient(payload)).generate(
+                    chart_type=chart_type, requirement='Summarise the chart.',
+                    student_answer='Housing accounted for 40% in 2020. Food was half of Housing in 2020.',
+                    deplot_text=('Category | 2020\nHousing | 42\nFood | 30' if chart_type == 'bar'
+                                 else 'Category | Percentage\nHousing | 42%\nFood | 30%\nOther | 28%'),
+                )
+                food = next(record for record in result['records'] if record['category'] == 'Food')
+                self.assertEqual(food['value'], 20)
+                self.assertEqual(food['data_source'], 'inferred')
+                self.assertEqual(food['inference']['method'], 'stated_ratio')
+                self.assertFalse(food['incorrect'])
+                meta = result['vega_lite_spec']['usermeta']['vividwrite']
+                self.assertEqual(meta['estimated_value_count'], 1)
+                self.assertEqual(meta['provenance_rendering'], 'diagonal-hatching-v1')
+                with Image.open(Path(folder) / filename) as image:
+                    self.assertGreater(image.width, 500)
+
+    def test_line_ordered_series_values_map_to_all_official_periods(self):
+        official_records = [
+            {"category": period, "series": "Bus"}
+            for period in ("2010", "2012", "2014", "2016", "2018", "2020")
+        ]
+        variants = (
+            "Across the six years, the Bus figures were 1.8, 1.9, 1.7, 1.6, 1.5, 1.3 million respectively.",
+            "For Bus, daily use stood at 1.8, 1.9, 1.7, 1.6, 1.5, 1.3 million in chronological order.",
+            "Bus recorded 1.8, 1.9, 1.7, 1.6, 1.5, 1.3 million passengers from 2010 through 2020.",
+        )
+
+        for essay in variants:
+            with self.subTest(essay=essay):
+                claims = _collect_explicit_cartesian_values(essay, official_records)
+                self.assertEqual(
+                    [claims[(period, "Bus")][-1] for period in ("2010", "2012", "2014", "2016", "2018", "2020")],
+                    [1.8, 1.9, 1.7, 1.6, 1.5, 1.3],
+                )
+
+    def test_line_ordered_values_accept_subsequent_points_and_dates(self):
+        official_records = [
+            {"category": period, "series": "Rail"}
+            for period in ("2010", "2012", "2014", "2016", "2018", "2020")
+        ]
+        variants = (
+            "Rail increased from 1.1 million in 2010 to 1.3, 1.5, 1.8, 2.0 and 2.2 million at the five subsequent points.",
+            "Rail recorded 1.1, 1.3, 1.5, 1.8, 2.0 and 2.2 million across the six dates.",
+        )
+
+        for essay in variants:
+            with self.subTest(essay=essay):
+                claims = _collect_explicit_cartesian_values(essay, official_records)
+                self.assertEqual(
+                    [claims[(period, "Rail")][-1] for period in ("2010", "2012", "2014", "2016", "2018", "2020")],
+                    [1.1, 1.3, 1.5, 1.8, 2.0, 2.2],
+                )
+
+    def test_line_parser_separates_as_linked_series_before_mapping_values(self):
+        official_records = [
+            {"category": period, "series": entity}
+            for period in ("2010", "2012", "2014", "2016", "2018", "2020")
+            for entity in ("Rail", "Metro")
+        ]
+        essay = (
+            "Rail made the strongest increase, as metro rose from 0.8 million in 2010 "
+            "through 1.0, 1.2, 1.5 and 1.7 million to 1.9 million in 2020."
+        )
+
+        claims = _collect_explicit_cartesian_values(essay, official_records)
+
+        self.assertEqual(
+            [claims[(period, "Metro")][-1] for period in ("2010", "2012", "2014", "2016", "2018", "2020")],
+            [0.8, 1.0, 1.2, 1.5, 1.7, 1.9],
+        )
+
+    def test_pie_parser_maps_mixed_subject_and_for_value_phrasing(self):
+        claims = _collect_explicit_pie_percentages(
+            "Housing represents 32% of expenditure, compared with 21% for food and 17% for transport.",
+            ["Housing", "Food", "Transport"],
+        )
+
+        self.assertEqual(
+            claims,
+            {"Housing": [32.0], "Food": [21.0], "Transport": [17.0]},
+        )
+
+    def test_relative_line_gap_is_not_treated_as_a_series_value(self):
+        official_records = [
+            {"category": "2020", "series": "Bus"},
+            {"category": "2020", "series": "Metro"},
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "In 2020, metro stood 0.6 million above bus use.",
+            official_records,
+        )
+
+        self.assertEqual(claims, {})
+
+    def test_relative_line_passenger_gap_is_not_treated_as_a_series_value(self):
+        official_records = [
+            {"category": "2020", "series": "Rail"},
+            {"category": "2020", "series": "Metro"},
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "By 2020, rail carried 0.3 million more passengers than metro.",
+            official_records,
+        )
+
+        self.assertEqual(claims, {})
+
+    def test_pie_parser_keeps_subject_value_and_ignores_aggregate_total(self):
+        claims = _collect_explicit_pie_percentages(
+            "Food was the second-largest item at 21%, four points above transport. "
+            "Utilities and other spending totalled 18%.",
+            ["Food", "Transport", "Utilities", "Other"],
+        )
+
+        self.assertEqual(claims, {"Food": [21.0]})
+
+    def test_local_enforcement_removes_model_values_without_essay_evidence(self):
+        bar_result = {
+            "chart_type": "bar",
+            "records": [
+                {"category": "North", "series": "2020", "value": 50},
+                {"category": "South", "series": "2020", "value": 40},
+            ],
+        }
+        _enforce_explicit_cartesian_values(
+            bar_result,
+            "Region | 2020<0x0A>North | 50<0x0A>South | 40",
+            "North recorded 50% in 2020.",
+        )
+        self.assertEqual(bar_result["records"][0]["value"], 50)
+        self.assertIsNone(bar_result["records"][1]["value"])
+
+        pie_result = {
+            "chart_type": "pie",
+            "records": [
+                {"category": "Housing", "value": 60},
+                {"category": "Other", "value": 40},
+            ],
+        }
+        _enforce_explicit_pie_values(
+            pie_result,
+            "Category | Percentage<0x0A>Housing | 60%<0x0A>Other | 40%",
+            "Housing represented 60% of spending.",
+        )
+        self.assertEqual(pie_result["records"][0]["value"], 60)
+        self.assertIsNone(pie_result["records"][1]["value"])
+
+    def test_line_respectively_values_map_to_series_in_order(self):
+        official_records = [
+            {"category": "2020", "series": "Bus"},
+            {"category": "2020", "series": "Rail"},
+            {"category": "2020", "series": "Metro"},
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "In 2020, the respective figures for bus, rail and metro were 1.3, 2.2 and 1.9 million.",
+            official_records,
+        )
+
+        self.assertEqual(
+            claims,
+            {
+                ("2020", "Bus"): [1.3],
+                ("2020", "Rail"): [2.2],
+                ("2020", "Metro"): [1.9],
+            },
+        )
+
+    def test_pie_respectively_values_map_to_categories_and_ignore_point_difference(self):
+        claims = _collect_explicit_pie_percentages(
+            "Leisure and utilities accounted for 12% and 10% respectively. "
+            "Transport made up 17%, placing it 4 percentage points below food.",
+            ["Food", "Transport", "Leisure", "Utilities"],
+        )
+
+        self.assertEqual(
+            claims,
+            {"Transport": [17.0], "Leisure": [12.0], "Utilities": [10.0]},
+        )
+
+    def test_aligns_started_and_reached_values_without_treating_change_as_endpoint(self):
+        official_records = [
+            {"category": "Manchester", "series": "2015"},
+            {"category": "Manchester", "series": "2020"},
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "Manchester started at 31% and reached 46% by 2020, giving it "
+            "the largest increase among the cities discussed, at 15 percentage points.",
+            official_records,
+        )
+
+        self.assertEqual(claims, {("Manchester", "2015"): [31.0], ("Manchester", "2020"): [46.0]})
+
     def test_normalises_long_form_records(self):
         result = _normalise_result(_model_payload(), "auto")
         self.assertEqual(result["records"][0]["value"], 72.0)
@@ -122,6 +378,10 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
             self.assertTrue(output.exists())
             self.assertGreater(output.stat().st_size, 1000)
             self.assertEqual(result["chart_type"], "bar")
+            self.assertEqual(result["schema_version"], "2.0")
+            self.assertEqual(len(result["move_feedback"]["definitions"]), 7)
+            self.assertEqual(len(result["move_feedback"]["assessments"]), 7)
+            self.assertNotIn("error_taxonomy", result)
             self.assertEqual(client.completions.kwargs["response_format"], {"type": "json_object"})
 
     def test_rejects_external_chart_data(self):
@@ -171,18 +431,18 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
             chart_type="bar",
         )
 
-        self.assertEqual(prepared["config"]["font"], "DejaVu Sans")
+        self.assertEqual(prepared["config"]["font"], "sans-serif")
         self.assertEqual(prepared["config"]["title"]["color"], "#111827")
         for channel in ("x", "y"):
             axis = prepared["encoding"][channel]["axis"]
             self.assertTrue(axis["labels"])
             self.assertEqual(axis["labelColor"], "#374151")
             self.assertEqual(axis["titleColor"], "#111827")
-            self.assertEqual(axis["labelFont"], "DejaVu Sans")
+        self.assertEqual(axis["labelFont"], "sans-serif")
         legend = prepared["encoding"]["color"]["legend"]
         self.assertEqual(legend["labelColor"], "#374151")
         self.assertEqual(legend["titleColor"], "#111827")
-        self.assertEqual(legend["labelFont"], "DejaVu Sans")
+        self.assertEqual(legend["labelFont"], "sans-serif")
 
     def test_bar_accuracy_is_compared_with_official_cells_locally(self):
         result = {
@@ -318,6 +578,105 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(result["comparison"]["accepted_value_tolerance"], 0.1)
         self.assertEqual(result["comparison"]["official_value_precision"], 1)
 
+    def test_explicit_wrong_line_value_overrides_model_copy_of_official_value(self):
+        periods = ["2010", "2012", "2014", "2016", "2018", "2020"]
+        series_values = {
+            "Bus": [1.8, 1.9, 1.7, 1.6, 1.5, 1.3],
+            "Rail": [1.1, 1.3, 1.5, 1.8, 2.0, 2.2],
+            "Metro": [0.8, 1.0, 1.2, 1.5, 1.7, 1.9],
+        }
+        payload = _model_payload("line")
+        payload["title"] = "Average daily passengers using public transport, 2010-2020"
+        payload["axes"] = {
+            "x_label": "Year",
+            "y_label": "Average daily passengers",
+            "unit": "millions",
+        }
+        payload["records"] = [
+            {
+                "period": period,
+                "category": period,
+                "series": series,
+                "value": value,
+                "missing": False,
+                "estimated": False,
+                "confidence": 1,
+            }
+            for series, values in series_values.items()
+            for period, value in zip(periods, values)
+        ]
+        payload["vega_lite_spec"] = {
+            "mark": "line",
+            "encoding": {
+                "x": {"field": "period", "type": "ordinal"},
+                "y": {"field": "value", "type": "quantitative"},
+                "color": {"field": "series", "type": "nominal"},
+            },
+        }
+        deplot = (
+            "Year | Bus | Rail | Metro<0x0A>2010 | 1.8 | 1.1 | 0.8<0x0A>"
+            "2012 | 1.9 | 1.3 | 1.0<0x0A>2014 | 1.7 | 1.5 | 1.2<0x0A>"
+            "2016 | 1.6 | 1.8 | 1.5<0x0A>2018 | 1.5 | 2.0 | 1.7<0x0A>"
+            "2020 | 1.3 | 2.2 | 1.9"
+        )
+        answer = (
+            "In 2010, Bus was the clear leader with 1.8 million daily passengers, "
+            "significantly ahead of Rail at 4.1 million and Metro at 0.8 million. "
+            "Rail passenger numbers climbed steadily from 4.1 million in 2010 to "
+            "1.5 million in 2014, before reaching 1.8 million in 2016, 2.0 million "
+            "in 2018 and 2.2 million in 2020. Similarly, Metro usage rose at every "
+            "interval, starting at 0.8 million and reaching 1.9 million by 2020."
+        )
+
+        with tempfile.TemporaryDirectory() as folder:
+            result, _ = ChartFeedbackService(
+                folder,
+                client=FakeClient(payload),
+            ).generate(
+                chart_type="line",
+                requirement="Summarise the graph.",
+                student_answer=answer,
+                deplot_text=deplot,
+            )
+
+        rail_2010 = next(
+            record
+            for record in result["records"]
+            if record["period"] == "2010" and record["series"] == "Rail"
+        )
+        rendered_rail_2010 = next(
+            record
+            for record in result["vega_lite_spec"]["data"]["values"]
+            if record["period"] == "2010" and record["series"] == "Rail"
+        )
+        metro_2020 = next(
+            record
+            for record in result["records"]
+            if record["period"] == "2020" and record["series"] == "Metro"
+        )
+        rail_2012 = next(
+            record
+            for record in result["records"]
+            if record["period"] == "2012" and record["series"] == "Rail"
+        )
+        self.assertEqual(rail_2010["value"], 4.1)
+        self.assertEqual(rail_2010["official_value"], 1.1)
+        self.assertEqual(rail_2010["feedback_status"], "incorrect")
+        self.assertTrue(rail_2010["explicit_student_value"])
+        self.assertEqual(rendered_rail_2010["_line_error_value"], 4.1)
+        self.assertEqual(
+            rendered_rail_2010["_line_feedback_label"],
+            "YOU: 4.1\nCORRECT: 1.1",
+        )
+        self.assertEqual(metro_2020["value"], 1.9)
+        self.assertNotEqual(metro_2020["feedback_status"], "conflicting")
+        self.assertEqual(rail_2012["value"], 2.8)
+        self.assertEqual(rail_2012["feedback_status"], "estimated")
+        self.assertIn(
+            "2010 - Rail: student 4.1, official 1.1",
+            result["comparison"]["incorrect_official_items"],
+        )
+
     def test_estimated_line_points_are_not_treated_as_explicit_errors(self):
         result = {
             "chart_type": "line",
@@ -448,8 +807,9 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
             chart_type="line",
         )
 
-        self.assertEqual(len(prepared["layer"]), 2)
+        self.assertEqual(len(prepared["layer"]), 3)
         overlay = prepared["layer"][1]
+        label = prepared["layer"][2]
         self.assertEqual(overlay["mark"]["type"], "point")
         self.assertEqual(overlay["mark"]["color"], "#f9a8d4")
         self.assertEqual(overlay["mark"]["stroke"], "#be185d")
@@ -458,6 +818,12 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(overlay["encoding"]["y"]["field"], "_line_error_value")
         self.assertEqual(overlay["encoding"]["y"]["title"], "value")
         self.assertEqual(prepared["data"]["values"][0]["_line_error_value"], 2.2)
+        self.assertEqual(
+            prepared["data"]["values"][0]["_line_feedback_label"],
+            "YOU: 2.2\nCORRECT: 1.8",
+        )
+        self.assertEqual(label["mark"]["type"], "text")
+        self.assertEqual(label["mark"]["color"], "#701a3d")
         self.assertIsNone(prepared["data"]["values"][1]["_line_error_value"])
 
     def test_pie_renderer_adds_category_and_percentage_labels(self):
@@ -791,21 +1157,13 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
 
         self.assertEqual(
             [layer["mark"]["type"] for layer in prepared["layer"]],
-            ["arc", "arc", "rule", "text"],
+            ["arc", "arc", "text"],
         )
         error_layer = prepared["layer"][1]
-        hatch_layer = prepared["layer"][2]
         self.assertEqual(error_layer["mark"]["color"], "#f9a8d4")
         self.assertEqual(error_layer["mark"]["stroke"], "#be185d")
         self.assertEqual(error_layer["mark"]["opacity"], 1)
-        self.assertEqual(hatch_layer["mark"]["type"], "rule")
-        self.assertEqual(hatch_layer["mark"]["stroke"], "#be185d")
-        self.assertEqual(hatch_layer["encoding"]["x"]["scale"]["domain"], [0, 600])
-        self.assertEqual(hatch_layer["encoding"]["y"]["scale"]["domain"], [420, 0])
-        self.assertGreater(
-            len([record for record in prepared["data"]["values"] if record.get("_hatch_x") is not None]),
-            0,
-        )
+        self.assertFalse(any(record.get("_hatch_x") is not None for record in prepared["data"]["values"]))
         self.assertEqual(
             prepared["data"]["values"][0]["_display_label"],
             "Housing\nYOU: 30%\nCORRECT: 32%",
@@ -848,10 +1206,10 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         self.assertEqual(excess["_legend_label"], "Excess over 100%: 10%")
         self.assertEqual(
             [layer["mark"]["type"] for layer in prepared["layer"]],
-            ["arc", "arc", "rule", "arc", "text"],
+            ["arc", "arc", "arc", "text"],
         )
         error_layer = prepared["layer"][1]
-        excess_layer = prepared["layer"][3]
+        excess_layer = prepared["layer"][2]
         self.assertEqual(error_layer["mark"]["outerRadius"], 145)
         self.assertEqual(error_layer["mark"]["stroke"], "#be185d")
         self.assertEqual((excess_layer["mark"]["innerRadius"], excess_layer["mark"]["outerRadius"]), (165, 177))
@@ -1070,10 +1428,10 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
                 deplot_text=deplot,
             )
 
-        self.assertEqual(client.completions.call_count, 2)
+        self.assertEqual(client.completions.call_count, 1)
         first_period = [record for record in result["records"] if record["period"] == "2010"]
         self.assertTrue(all(record["value"] is not None for record in first_period))
-        self.assertIn("explicitly states values", client.completions.kwargs["messages"][1]["content"])
+        self.assertTrue(all(record["explicit_student_value"] for record in first_period))
 
     def test_continuous_trend_interpolates_internal_line_gaps(self):
         periods = ["2010", "2012", "2014", "2016", "2018", "2020"]
@@ -1160,6 +1518,203 @@ class UnifiedChartFeedbackTests(unittest.TestCase):
         )
         self.assertIsNone(missing["value"])
         self.assertTrue(missing["missing"])
+
+    def test_beginning_and_end_values_map_to_first_and_last_line_periods(self):
+        deplot = (
+            "Year | Bus | Rail<0x0A>2010 | 1.8 | 1.1<0x0A>"
+            "2016 | 1.6 | 1.8<0x0A>2020 | 1.3 | 2.2"
+        )
+        records = [
+            {"category": row[0], "series": row[1]}
+            for row in (
+                ("2010", "Bus"), ("2010", "Rail"),
+                ("2016", "Bus"), ("2016", "Rail"),
+                ("2020", "Bus"), ("2020", "Rail"),
+            )
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "The figures for Bus were 1.8 million at the beginning and 1.3 million at the end. "
+            "Rail stood at 1.1 million at the outset and 2.2 million at the finish.",
+            records,
+        )
+
+        self.assertEqual(claims[("2010", "Bus")], [1.8])
+        self.assertEqual(claims[("2020", "Bus")], [1.3])
+        self.assertEqual(claims[("2010", "Rail")], [1.1])
+        self.assertEqual(claims[("2020", "Rail")], [2.2])
+
+    def test_opened_and_closed_values_map_to_first_and_last_line_periods(self):
+        records = [
+            {"category": row[0], "series": row[1]}
+            for row in (
+                ("2010", "Bus"), ("2010", "Rail"),
+                ("2016", "Bus"), ("2016", "Rail"),
+                ("2020", "Bus"), ("2020", "Rail"),
+            )
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "Bus opened the period at 1.8 million and closed it at 1.3 million. "
+            "Rail began the decade with 1.1 million and finished at 2.2 million.",
+            records,
+        )
+
+        self.assertEqual(claims[("2010", "Bus")], [1.8])
+        self.assertEqual(claims[("2020", "Bus")], [1.3])
+        self.assertEqual(claims[("2010", "Rail")], [1.1])
+        self.assertEqual(claims[("2020", "Rail")], [2.2])
+
+    def test_overlapping_endpoint_patterns_are_deduplicated(self):
+        records = [
+            {"category": period, "series": "Metro"}
+            for period in ("2010", "2014", "2020")
+        ]
+
+        claims = _collect_explicit_cartesian_values(
+            "Metro began with 0.8 million passengers and ended at 1.9 million.",
+            records,
+        )
+
+        self.assertEqual(claims[("2010", "Metro")], [0.8])
+        self.assertEqual(claims[("2020", "Metro")], [1.9])
+
+    def test_unstated_pie_value_copied_by_model_is_removed(self):
+        result = {
+            "chart_type": "pie",
+            "comparison": {},
+            "records": [
+                {"category": "Housing", "value": 60.0},
+                {"category": "Other", "value": 40.0},
+            ],
+        }
+        deplot = "Category | Percentage<0x0A>Housing | 60%<0x0A>Other | 40%"
+
+        _remove_unsupported_pie_values(
+            result,
+            deplot,
+            "Housing represented 60% of expenditure.",
+        )
+        _annotate_pie_accuracy(result, deplot)
+
+        housing, other = result["records"]
+        self.assertEqual(housing["value"], 60.0)
+        self.assertEqual(housing["feedback_status"], "correct")
+        self.assertIsNone(other["value"])
+        self.assertEqual(other["feedback_status"], "missing")
+
+    def test_semantic_alert_is_visible_in_chart_title(self):
+        prepared = prepare_vega_lite_spec(
+            {
+                "mark": "bar",
+                "encoding": {
+                    "x": {"field": "category", "type": "ordinal"},
+                    "y": {"field": "value", "type": "quantitative"},
+                },
+            },
+            [{"category": "A", "value": 10.0}],
+            "Student chart",
+            chart_type="bar",
+            semantic_alerts=["TEXT CONFLICT: A is not the highest item."],
+        )
+
+        self.assertEqual(prepared["title"]["text"], "Student chart")
+        self.assertEqual(
+            prepared["title"]["subtitle"],
+            ["TEXT CONFLICT: A is not the highest item."],
+        )
+        self.assertEqual(prepared["title"]["subtitleColor"], "#991b1b")
+
+    def test_line_chart_replaces_model_point_mark_with_connected_lines(self):
+        records = [
+            {"period": "2010", "category": "2010", "series": "Bus", "value": 1.8},
+            {"period": "2020", "category": "2020", "series": "Bus", "value": 1.3},
+            {"period": "2010", "category": "2010", "series": "Rail", "value": 1.1},
+            {"period": "2020", "category": "2020", "series": "Rail", "value": 2.2},
+        ]
+        prepared = prepare_vega_lite_spec(
+            {
+                "mark": "point",
+                "encoding": {
+                    "x": {"field": "period", "type": "ordinal", "title": "Year"},
+                    "y": {"field": "value", "type": "quantitative", "title": "Passengers"},
+                    "color": {"field": "series", "type": "nominal", "title": "Transport mode"},
+                },
+            },
+            records,
+            "Daily passengers",
+            chart_type="line",
+        )
+
+        self.assertEqual(prepared["mark"]["type"], "line")
+        self.assertEqual(prepared["mark"]["invalid"], "filter")
+        self.assertEqual(prepared["mark"]["point"], {"filled": True, "size": 60})
+        self.assertEqual(prepared["encoding"]["x"]["field"], "period")
+        self.assertEqual(prepared["encoding"]["y"]["field"], "value")
+        self.assertEqual(prepared["encoding"]["color"]["field"], "series")
+        self.assertEqual(prepared["encoding"]["color"]["scale"]["domain"], ["Bus", "Rail"])
+
+    def test_line_chart_marks_connections_across_unmentioned_periods_as_inferred(self):
+        periods = ["2010", "2012", "2014", "2016", "2018", "2020"]
+        endpoint_values = {
+            "Bus": {"2010": 1.8, "2020": 1.3},
+            "Rail": {"2010": 1.1, "2020": 2.2},
+            "Metro": {"2010": 0.8, "2020": 1.9},
+        }
+        records = [
+            {
+                "period": period,
+                "category": period,
+                "series": series,
+                "value": endpoint_values[series].get(period),
+                "missing": period not in endpoint_values[series],
+            }
+            for period in periods
+            for series in ("Bus", "Rail", "Metro")
+        ]
+
+        prepared = prepare_vega_lite_spec(
+            {
+                "mark": "point",
+                "encoding": {
+                    "x": {"field": "period", "type": "ordinal", "title": "Year"},
+                    "y": {"field": "value", "type": "quantitative"},
+                    "color": {"field": "series", "type": "nominal"},
+                },
+            },
+            records,
+            "Daily passengers",
+            chart_type="line",
+        )
+
+        self.assertEqual(prepared["layer"][0]["mark"]["type"], "line")
+        self.assertEqual(prepared["layer"][0]["encoding"]["x"]["sort"], periods)
+        self.assertEqual(prepared["usermeta"]["vividwrite"]["inferred_connection_count"], 3)
+        self.assertEqual(sum(record["value"] is not None for record in records), 6)
+
+    def test_line_chart_restores_series_grouping_when_model_uses_wrong_mark(self):
+        records = [
+            {"category": "2010", "series": "Bus", "value": 1.8},
+            {"category": "2020", "series": "Bus", "value": 1.3},
+            {"category": "2010", "series": "Metro", "value": 0.8},
+            {"category": "2020", "series": "Metro", "value": 1.9},
+        ]
+        prepared = prepare_vega_lite_spec(
+            {
+                "mark": "bar",
+                "encoding": {
+                    "x": {"field": "category", "type": "ordinal"},
+                    "y": {"field": "value", "type": "quantitative"},
+                },
+            },
+            records,
+            "Daily passengers",
+            chart_type="line",
+        )
+
+        self.assertEqual(prepared["mark"]["type"], "line")
+        self.assertEqual(prepared["encoding"]["x"]["field"], "category")
+        self.assertEqual(prepared["encoding"]["color"]["field"], "series")
 
 
 if __name__ == "__main__":

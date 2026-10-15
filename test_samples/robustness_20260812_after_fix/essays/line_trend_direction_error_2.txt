@@ -1,0 +1,7 @@
+The graph traces daily passenger numbers for three public transport modes over the decade from 2010 to 2020.
+
+Overall, Rail decreased over the decade, while the relative positions of all three modes changed during the period.
+
+In 2010, Rail served 1.1 million passengers, compared with 2.2 million in 2020. At the outset, Metro carried 0.8 million passengers and ultimately reached 1.9 million. Bus began with 1.8 million passengers and ended at 1.3 million. In 2012, Rail carried 1.3 million daily passengers. The Metro figure in 2012 was 1.0 million. At the 2012 observation, Bus stood at 1.9 million.
+
+The intermediate observation adds detail to the comparison rather than limiting it to the two endpoints.

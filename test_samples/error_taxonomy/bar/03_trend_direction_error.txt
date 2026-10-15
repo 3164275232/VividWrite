@@ -1,0 +1,7 @@
+The bar chart illustrates the percentage of households recycling waste in five UK cities in 2015 and 2020.
+
+Overall, Bristol was the highest-ranked city in both years, while Liverpool had the lowest recycling rates. Sheffield held second place throughout the period, and Leeds remained in the middle of the distribution.
+
+Bristol increased from 42% in 2015 to 55% in 2020. Sheffield followed a similar pattern, moving from 38% to 51%, while Leeds changed from 35% to 48%. Manchester decreased from 31% in 2015 to 46% in 2020. Liverpool, meanwhile, rose from 28% to 39%.
+
+In the final year, the gap between Bristol and Sheffield was four percentage points. Leeds was three points below Sheffield and two points above Manchester. Liverpool remained the least successful city, trailing Manchester by seven points. The difference between the highest and lowest figures was fourteen points in 2015 and sixteen points in 2020, so the overall spread was broadly similar in the two years shown.

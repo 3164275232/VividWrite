@@ -1,0 +1,7 @@
+The circular chart presents how household expenditure in Canada was allocated among six items in 2024.
+
+Overall, Housing was the smallest category in the household budget, with unequal shares across the other items.
+
+A share of 10% went to Utilities. Households allocated 17% of their spending to Transport. Housing accounted for 32% of expenditure. A share of 8% went to Other. Households allocated 12% of their spending to Leisure. Households allocated 21% of their spending to Food.
+
+The stated shares make it possible to compare the relative weight of the categories in the household budget.

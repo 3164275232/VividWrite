@@ -1,0 +1,7 @@
+The bar chart presents household recycling rates in five cities in the United Kingdom in 2015 and 2020.
+
+Overall, Bristol had the highest rate by the end of the period, whereas Liverpool recorded the lowest figure in both years. The values in 2020 were higher across the chart, and Sheffield remained close to Bristol in the final year.
+
+In 2015, Leeds led the five cities with a recycling rate of 42%, while Sheffield followed at 38%. Bristol accounted for 35%, compared with 31% in Manchester and 28% in Liverpool. Five years later, Bristol reached 55%, the largest figure shown for 2020. Sheffield rose to 51%, and Leeds registered 48%.
+
+Manchester and Liverpool had lower final percentages, at 46% and 39% respectively. The difference between these two cities was seven percentage points in 2020. At the upper end, Bristol exceeded Sheffield by four points and Leeds by seven points. Therefore, although the five cities finished at different levels, the final distribution was more concentrated than the range recorded in 2015.

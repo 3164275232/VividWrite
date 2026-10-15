@@ -1,0 +1,7 @@
+The grouped bars show the share of households that recycled in Bristol, Leeds, Liverpool, Manchester and Sheffield in 2015 and 2020.
+
+Overall, the distribution changed across the two observations, and the five locations remained separated by noticeable margins.
+
+In 2020, Sheffield registered 51%. In 2015, Sheffield registered 38%. For 2015, the rate reported for Leeds stood at 35%. In 2020, Liverpool registered 39%. In 2020, Bristol registered 66%. Manchester's figure in 2020 was 46%. Bristol's figure in 2015 was 42%. For 2020, the rate reported for Leeds stood at 48%. In 2015, Liverpool registered 28%. Manchester's figure in 2015 was 31%.
+
+These percentages allow both changes over time and differences between places to be compared directly.

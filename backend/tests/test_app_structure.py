@@ -5,19 +5,30 @@ from main import app, generate_revision_suggestions
 
 class AppStructureTests(unittest.TestCase):
     def test_only_business_routes_remain(self):
-        paths = set(app.openapi()["paths"])
+        schema = app.openapi()
+        paths = set(schema["paths"])
 
         self.assertIn("/health", paths)
         self.assertIn("/api/auth/login", paths)
         self.assertIn("/api/auth/me", paths)
         self.assertIn("/api/auth/logout", paths)
+        self.assertIn("/api/research/sessions/start", paths)
+        self.assertIn("/api/research/events", paths)
+        self.assertIn("/api/research/artifacts", paths)
+        self.assertIn("/api/research/admin/participants", paths)
+        self.assertIn("/api/research/admin/export-all", paths)
         self.assertIn("/api/prepare-task-image", paths)
         self.assertIn("/api/deplot-extract", paths)
         self.assertIn("/api/analyze-chart-with-image", paths)
+        self.assertIn("/api/move-framework", paths)
+        self.assertNotIn("/api/error-taxonomy", paths)
         self.assertIn("/api/generate-spatial-sample-essay", paths)
+        self.assertNotIn("/api/analyze-structure", paths)
+        self.assertNotIn("/api/map-sentences", paths)
         self.assertNotIn("/api/hello", paths)
         self.assertNotIn("/api/echo", paths)
         self.assertNotIn("/api/analyze-chart", paths)
+        self.assertNotIn("flowchart", str(schema).lower())
 
     def test_revision_suggestions_report_missing_and_short_answers(self):
         suggestions = generate_revision_suggestions(

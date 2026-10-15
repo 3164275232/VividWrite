@@ -1,4 +1,3 @@
-import json
 import sys
 from typing import Optional
 
@@ -11,13 +10,21 @@ from pydantic import BaseModel
 from auth import authentication_middleware, router as auth_router
 from deplot_extractor import extract_table_from_image_deplot
 from hybrid_feedback import HybridFeedbackService
+from move_feedback import move_catalog
 from next_sentence import NextSentenceRequest, NextSentenceResponse, generate_next_sentence
 from paths import CHARTS_DIR, UPLOADS_DIR, ensure_runtime_directories
+from research_api import (
+    archive_file_for_request,
+    record_server_event_for_request,
+    research_submission_id,
+    research_request_middleware,
+    router as research_router,
+)
 from revision_review import router as revision_review_router
+from revision_history import RevisionHistoryStore, history_username, router as revision_history_router
+from revision_guidance import router as revision_guidance_router
 from sample_essay import SampleEssayResponse, router as sample_essay_router
-from sentence_mapping import SentenceMappingRequest, SentenceMappingResponse, map_sentences
 from spatial_sample_essay import generate_spatial_sample_essay
-from structure_feedback_agents import router as structure_feedback_router
 from storage import (
     relative_runtime_path,
     save_uploaded_file,
@@ -44,8 +51,11 @@ app = FastAPI(title="VividWrite API", version="0.2.0")
 app.include_router(auth_router)
 app.include_router(sample_essay_router)
 app.include_router(revision_review_router)
-app.include_router(structure_feedback_router)
+app.include_router(revision_history_router)
+app.include_router(revision_guidance_router)
+app.include_router(research_router)
 app.middleware("http")(authentication_middleware)
+app.middleware("http")(research_request_middleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -63,6 +73,8 @@ class ChartAnalysisResponse(BaseModel):
     chart_data: Optional[dict] = None
     chart_url: Optional[str] = None
     revision_suggestions: Optional[list] = None
+    analysis_revision: Optional[dict] = None
+    history_warning: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -93,13 +105,29 @@ def generate_revision_suggestions(chart_data: dict, student_answer: str) -> list
     records = chart_data.get("records") if isinstance(chart_data.get("records"), list) else []
     suggestions = []
 
-    missing_count = sum(1 for record in records if record.get("missing"))
-    if missing_count:
-        suggestions.append({
-            "type": "data_completeness",
-            "message": f"Your answer leaves {missing_count} item(s) from the original chart unspecified.",
-            "severity": "medium",
-        })
+    move_feedback = chart_data.get("move_feedback")
+    assessments = (
+        move_feedback.get("assessments")
+        if isinstance(move_feedback, dict)
+        else None
+    )
+    if isinstance(assessments, list):
+        for assessment in assessments:
+            if not isinstance(assessment, dict) or assessment.get("status") != "developing":
+                continue
+            suggestions.append({
+                "type": assessment.get("code", "rhetorical_move"),
+                "message": assessment.get("hint") or "Review how this rhetorical move supports the report.",
+                "severity": "medium",
+            })
+    else:
+        missing_count = sum(1 for record in records if record.get("missing"))
+        if missing_count:
+            suggestions.append({
+                "type": "data_completeness",
+                "message": f"Your answer leaves {missing_count} item(s) from the original chart unspecified.",
+                "severity": "medium",
+            })
 
     estimated_count = sum(1 for record in records if record.get("estimated"))
     if estimated_count:
@@ -110,7 +138,7 @@ def generate_revision_suggestions(chart_data: dict, student_answer: str) -> list
         })
 
     incorrect_count = sum(1 for record in records if record.get("incorrect"))
-    if incorrect_count:
+    if incorrect_count and not isinstance(assessments, list):
         suggestions.append({
             "type": "data_accuracy",
             "message": f"Your answer contains {incorrect_count} pie-chart value(s) that differ from the original chart.",
@@ -143,52 +171,106 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/move-framework")
+def move_framework() -> dict:
+    return move_catalog()
+
+
+def _attach_move_visual_urls(chart_data: dict) -> None:
+    feedback = chart_data.get("move_feedback")
+    assessments = feedback.get("assessments") if isinstance(feedback, dict) else None
+    if not isinstance(assessments, list):
+        return
+    for assessment in assessments:
+        visual = assessment.get("visual") if isinstance(assessment, dict) else None
+        filename = visual.get("image_filename") if isinstance(visual, dict) else None
+        if filename:
+            visual["image_url"] = f"/charts/{filename}"
+
+
 @app.post("/api/next-sentence", response_model=NextSentenceResponse)
-def next_sentence(request: NextSentenceRequest):
+def next_sentence(request: Request, payload: NextSentenceRequest):
     try:
-        return generate_next_sentence(request)
+        result = generate_next_sentence(payload)
+        record_server_event_for_request(
+            request,
+            "next_sentence_completed",
+            payload={"request": payload.model_dump(), "response": result.model_dump()},
+        )
+        return result
     except Exception as exc:
+        record_server_event_for_request(
+            request,
+            "next_sentence_failed",
+            payload={"request": payload.model_dump(), "error": str(exc)},
+        )
         return NextSentenceResponse(error=str(exc))
-
-
-@app.post("/api/map-sentences", response_model=SentenceMappingResponse)
-def map_sentences_endpoint(request: SentenceMappingRequest):
-    try:
-        return map_sentences(request)
-    except Exception as exc:
-        return SentenceMappingResponse(error=str(exc))
 
 
 @app.post("/api/deplot-extract")
 async def deplot_extract(
+    request: Request,
     image: UploadFile = File(...),
     chart_type: Optional[str] = Form(None),
 ):
     try:
         image_path = await save_uploaded_file(image, UPLOADS_DIR)
+        input_artifact = archive_file_for_request(
+            request,
+            image_path,
+            category="deplot_input_image",
+            original_name=image.filename,
+            mime_type=image.content_type,
+            metadata={"chart_type": chart_type},
+        )
         raw_text = await run_in_threadpool(
             extract_table_from_image_deplot,
             str(image_path),
             chart_type,
         ) or ""
         normalized = _normalize_deplot_response_text(raw_text)
+        record_server_event_for_request(
+            request,
+            "deplot_extraction_completed",
+            payload={
+                "chart_type": chart_type,
+                "original_filename": image.filename,
+                "image_id": image_path.name,
+                "extracted_text": normalized,
+                "input_artifact": input_artifact,
+            },
+        )
         return {
             "extracted_text": normalized,
             "image_id": image_path.name,
             "filename": image.filename,
         }
     except Exception as exc:
+        record_server_event_for_request(
+            request,
+            "deplot_extraction_failed",
+            payload={"chart_type": chart_type, "filename": image.filename, "error": str(exc)},
+        )
         raise HTTPException(status_code=500, detail=f"DePlot extraction failed: {exc}") from exc
 
 
 @app.post("/api/prepare-task-image", response_model=TaskImagePreparationResponse)
 async def prepare_task_image(
+    request: Request,
     image: UploadFile = File(...),
     chart_type: str = Form("auto"),
     extract_deplot: bool = Form(False),
 ):
     image_path = await save_uploaded_file(image, UPLOADS_DIR)
     selected_type = (chart_type or "auto").strip().lower()
+    archive_file_for_request(
+        request,
+        image_path,
+        category="task_preparation_input_image",
+        original_name=image.filename,
+        mime_type=image.content_type,
+        metadata={"selected_chart_type": selected_type, "extract_deplot": extract_deplot},
+    )
 
     if selected_type != "auto":
         task_type = selected_type if selected_type in SUPPORTED_TASK_TYPES else "unknown"
@@ -263,6 +345,7 @@ async def prepare_task_image(
 
 @app.post("/api/analyze-chart-with-image", response_model=ChartAnalysisResponse)
 async def analyze_chart_with_image(
+    request: Request,
     image: UploadFile = File(...),
     chart_type: str = Form(...),
     requirement: str = Form(...),
@@ -272,6 +355,17 @@ async def analyze_chart_with_image(
 ):
     try:
         image_path = await save_uploaded_file(image, UPLOADS_DIR)
+        archived_artifacts = []
+        input_artifact = archive_file_for_request(
+            request,
+            image_path,
+            category="analysis_input_image",
+            original_name=image.filename,
+            mime_type=image.content_type,
+            metadata={"chart_type": chart_type, "requirement": requirement},
+        )
+        if input_artifact:
+            archived_artifacts.append(input_artifact)
         extracted_text = deplot_text if deplot_text and deplot_text.strip() else (deplot_data or "")
         service = HybridFeedbackService(CHARTS_DIR)
         result, filename = await run_in_threadpool(
@@ -282,42 +376,138 @@ async def analyze_chart_with_image(
             deplot_text=extracted_text,
             image_path=str(image_path),
         )
+        _attach_move_visual_urls(result)
+        generated_artifact = archive_file_for_request(
+            request,
+            CHARTS_DIR / filename,
+            category="generated_feedback_image",
+            original_name=filename,
+            mime_type="image/png",
+            metadata={"chart_type": chart_type},
+        )
+        if generated_artifact:
+            archived_artifacts.append(generated_artifact)
+        assessments = result.get("move_feedback", {}).get("assessments", [])
+        for assessment in (assessments if isinstance(assessments, list) else []):
+            visual = assessment.get("visual") if isinstance(assessment, dict) else None
+            visual_filename = visual.get("image_filename") if isinstance(visual, dict) else None
+            if not visual_filename:
+                continue
+            visual_artifact = archive_file_for_request(
+                request,
+                CHARTS_DIR / visual_filename,
+                category="annotated_original_image",
+                original_name=visual_filename,
+                mime_type="image/png",
+                metadata={
+                    "criterion_id": assessment.get("id"),
+                    "criterion_number": assessment.get("number"),
+                    "criterion_label": assessment.get("label"),
+                },
+            )
+            if visual_artifact:
+                archived_artifacts.append(visual_artifact)
+        revision_suggestions = generate_revision_suggestions(result, student_answer)
+        analysis_revision = None
+        history_warning = None
+        username = history_username(request)
+        if username:
+            try:
+                analysis_revision = await run_in_threadpool(
+                    RevisionHistoryStore().save,
+                    username, image_path.read_bytes(), result.get("chart_type") or chart_type,
+                    extracted_text, student_answer, result, f"/charts/{filename}",
+                    f"/uploads/{image_path.name}",
+                    submission_id=research_submission_id(request),
+                )
+            except Exception:
+                # A storage failure must not discard an otherwise successful review.
+                history_warning = "This review could not be saved to your revision history."
+        else:
+            history_warning = "Sign in to save reviews and compare revisions."
+        record_server_event_for_request(
+            request,
+            "chart_analysis_completed",
+            stage="revision",
+            payload={
+                "chart_type": chart_type,
+                "requirement": requirement,
+                "student_answer": student_answer,
+                "deplot_text": extracted_text,
+                "chart_data": result,
+                "chart_url": f"/charts/{filename}",
+                "revision_suggestions": revision_suggestions,
+                "analysis_revision_id": analysis_revision.get('id') if analysis_revision else None,
+                "artifacts": archived_artifacts,
+            },
+        )
         return ChartAnalysisResponse(
             success=True,
             chart_data=result,
             chart_url=f"/charts/{filename}",
-            revision_suggestions=generate_revision_suggestions(result, student_answer),
+            revision_suggestions=revision_suggestions,
+            analysis_revision=analysis_revision,
+            history_warning=history_warning,
         )
     except Exception as exc:
+        record_server_event_for_request(
+            request,
+            "chart_analysis_failed",
+            stage="revision",
+            payload={
+                "chart_type": chart_type,
+                "requirement": requirement,
+                "student_answer": student_answer,
+                "deplot_text": deplot_text or deplot_data or "",
+                "error": str(exc),
+            },
+        )
         return ChartAnalysisResponse(success=False, error=str(exc))
 
 
 @app.post("/api/generate-spatial-sample-essay", response_model=SampleEssayResponse)
 async def spatial_sample_essay(
+    request: Request,
     image: UploadFile = File(...),
     chart_type: str = Form(...),
     requirement: str = Form(""),
-    flowchart: str = Form("{}"),
-    use_standard_structure: Optional[bool] = Form(None),
     min_words: int = Form(150),
 ):
     try:
-        flowchart_data = json.loads(flowchart)
-        if not isinstance(flowchart_data, dict):
-            raise ValueError("flowchart must be a JSON object")
         image_path = await save_uploaded_file(image, UPLOADS_DIR)
-        return await run_in_threadpool(
+        input_artifact = archive_file_for_request(
+            request,
+            image_path,
+            category="spatial_sample_essay_input_image",
+            original_name=image.filename,
+            mime_type=image.content_type,
+            metadata={"chart_type": chart_type, "requirement": requirement},
+        )
+        result = await run_in_threadpool(
             generate_spatial_sample_essay,
             image_path=image_path,
             chart_type=chart_type,
             requirement=requirement,
-            flowchart=flowchart_data,
-            use_standard_structure=use_standard_structure,
             min_words=min_words,
         )
-    except (json.JSONDecodeError, ValueError) as exc:
-        return SampleEssayResponse(success=False, error=str(exc))
+        record_server_event_for_request(
+            request,
+            "spatial_sample_essay_completed",
+            payload={
+                "chart_type": chart_type,
+                "requirement": requirement,
+                "min_words": min_words,
+                "response": result.model_dump(),
+                "input_artifact": input_artifact,
+            },
+        )
+        return result
     except Exception as exc:
+        record_server_event_for_request(
+            request,
+            "spatial_sample_essay_failed",
+            payload={"chart_type": chart_type, "requirement": requirement, "error": str(exc)},
+        )
         return SampleEssayResponse(success=False, error=str(exc))
 
 
@@ -330,6 +520,18 @@ async def save_final_image(
     try:
         authenticated_user = getattr(request.state, "username", None)
         path = await save_user_image(authenticated_user or username, image)
+        archived = archive_file_for_request(
+            request,
+            path,
+            category="revision_source_image",
+            original_name=image.filename,
+            mime_type=image.content_type,
+        )
+        record_server_event_for_request(
+            request,
+            "revision_source_image_saved",
+            payload={"path": relative_runtime_path(path), "artifact": archived},
+        )
         return {"success": True, "path": relative_runtime_path(path)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -342,6 +544,16 @@ def save_revision_text(request: Request, payload: RevisionTextIn):
     try:
         authenticated_user = getattr(request.state, "username", None)
         path = save_user_revision(authenticated_user or payload.username, payload.text)
+        record_server_event_for_request(
+            request,
+            "revision_text_saved",
+            stage="revision",
+            payload={
+                "text": payload.text,
+                "word_count": len(payload.text.split()),
+                "path": relative_runtime_path(path),
+            },
+        )
         return RevisionTextOut(success=True, path=relative_runtime_path(path))
     except ValueError as exc:
         return RevisionTextOut(success=False, error=str(exc))

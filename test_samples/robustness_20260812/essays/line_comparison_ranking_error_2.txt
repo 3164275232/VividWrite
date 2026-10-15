@@ -1,0 +1,7 @@
+The graph plots the number of passengers using three forms of public transport on an average day from 2010 to 2020.
+
+Overall, Metro was the highest transport mode in 2010, while the ordering of the three services changed elsewhere in the period.
+
+In 2010, Rail served 1.1 million passengers per day, compared with 2.2 million in 2020. The figures for Metro were 0.8 million at the beginning and 1.9 million at the end. Bus carried 1.8 million passengers in 2010 and 1.3 million in 2020. Rail recorded 1.8 million daily users in 2016. At 2016, Metro stood at 1.5 million passengers. Bus recorded 1.6 million daily users in 2016.
+
+The recorded points provide enough detail to compare the services at both the beginning and the end.

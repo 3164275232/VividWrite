@@ -1,0 +1,7 @@
+The graph traces daily passenger numbers for three public transport modes over the decade from 2010 to 2020.
+
+Overall, Bus was the highest transport mode in 2020, while the ordering differed at other observations.
+
+At the outset, Metro carried 0.8 million passengers and ultimately reached 1.9 million. Rail opened the period at 1.1 million and closed it at 2.2 million. Bus opened the period at 1.8 million and closed it at 1.3 million. At the 2012 observation, Bus stood at 1.9 million. The Rail figure in 2012 was 1.3 million. At the 2012 observation, Metro stood at 1.0 million.
+
+Together, these recorded points show how the balance between the services developed during the decade.

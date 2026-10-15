@@ -1,0 +1,7 @@
+The line graph compares the average number of daily passengers using bus, rail and metro services between 2010 and 2020, measured in millions.
+
+Overall, rail and metro use increased over the period, whereas bus use declined. Bus was the most widely used mode at the beginning, but rail had become the leading form of transport by 2020.
+
+In 2010, buses carried 2.0 million passengers per day. The corresponding figures for rail and metro were 1.1 million and 0.8 million. Bus use then moved downward and finished at 1.3 million in 2020.
+
+By contrast, rail passenger numbers rose from 1.1 million in 2010 to 2.2 million in 2020. Metro use followed a similar upward pattern, increasing from 0.8 million in 2010 to 1.9 million in 2020. Consequently, rail exceeded both other modes at the end of the period, while bus recorded the lowest final figure.

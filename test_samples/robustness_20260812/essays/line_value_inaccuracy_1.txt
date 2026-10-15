@@ -1,0 +1,7 @@
+The graph plots the number of passengers using three forms of public transport on an average day from 2010 to 2020.
+
+Overall, the lines did not remain in their initial order, and the gap between services changed over time.
+
+In 2010, Bus served 1.8 million passengers per day, compared with 1.7 million in 2020. In 2010, Rail served 1.1 million passengers per day, compared with 2.2 million in 2020. The figures for Metro were 0.8 million at the beginning and 1.9 million at the end. In 2016, the figure for Bus was 1.6 million. At 2016, Metro stood at 1.5 million passengers. In 2016, the figure for Rail was 1.8 million.
+
+The intermediate observations help to show how the ordering developed rather than only giving two isolated totals.

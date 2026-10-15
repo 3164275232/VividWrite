@@ -1,0 +1,663 @@
+{
+  "protocol": "VividWrite taxonomy randomized robustness test",
+  "seed": 20260812,
+  "case_count": 45,
+  "generation_policy": "Targets, error magnitude, detail order, and wording templates were sampled before inference. Cases are frozen and must not be edited in response to classifier output.",
+  "pie_trend_policy": "The source pie is single-period. These three cases expect trend_direction_error to be reported as not applicable, not as a detected error.",
+  "cases": [
+    {
+      "case_id": "bar_value_inaccuracy_1",
+      "chart_type": "bar",
+      "expected_error": "value_inaccuracy",
+      "replicate": 1,
+      "essay_file": "essays/bar_value_inaccuracy_1.txt",
+      "essay_sha256": "f4e03652c5e60581b30ee510d1195b2c5b6acd89c331848205d9ce2317eb6d79",
+      "generation_metadata": {
+        "entity": "Bristol",
+        "period": "2020",
+        "official": 55,
+        "claimed": 66
+      },
+      "essay": "The grouped bars show the share of households that recycled in Bristol, Leeds, Liverpool, Manchester and Sheffield in 2015 and 2020.\n\nOverall, the distribution changed across the two observations, and the five locations remained separated by noticeable margins.\n\nIn 2020, Sheffield registered 51%. In 2015, Sheffield registered 38%. For 2015, the rate reported for Leeds stood at 35%. In 2020, Liverpool registered 39%. In 2020, Bristol registered 66%. Manchester's figure in 2020 was 46%. Bristol's figure in 2015 was 42%. For 2020, the rate reported for Leeds stood at 48%. In 2015, Liverpool registered 28%. Manchester's figure in 2015 was 31%.\n\nThese percentages allow both changes over time and differences between places to be compared directly."
+    },
+    {
+      "case_id": "bar_value_inaccuracy_2",
+      "chart_type": "bar",
+      "expected_error": "value_inaccuracy",
+      "replicate": 2,
+      "essay_file": "essays/bar_value_inaccuracy_2.txt",
+      "essay_sha256": "0b4214e8e63ef0b1acb4c59764de61c966c928533f5bdc8ba522ae2029f924d4",
+      "generation_metadata": {
+        "entity": "Manchester",
+        "period": "2015",
+        "official": 31,
+        "claimed": 39
+      },
+      "essay": "The grouped bars show the share of households that recycled in Bristol, Leeds, Liverpool, Manchester and Sheffield in 2015 and 2020.\n\nOverall, the distribution changed across the two observations, and the five locations remained separated by noticeable margins.\n\nBristol's figure in 2015 was 42%. In 2015, Liverpool registered 28%. Leeds's figure in 2015 was 35%. In 2020, Bristol registered 55%. For 2015, the rate reported for Manchester stood at 39%. In 2015, Sheffield registered 38%. For 2020, the rate reported for Manchester stood at 46%. For 2020, the rate reported for Liverpool stood at 39%. For 2020, the rate reported for Leeds stood at 48%. In 2020, Sheffield registered 51%.\n\nTaken together, the observations provide a compact comparison of local recycling behaviour."
+    },
+    {
+      "case_id": "bar_value_inaccuracy_3",
+      "chart_type": "bar",
+      "expected_error": "value_inaccuracy",
+      "replicate": 3,
+      "essay_file": "essays/bar_value_inaccuracy_3.txt",
+      "essay_sha256": "207762926a9e747f44b13c8b484d46ddf740f228b2c21c40f793646e1bfaca2e",
+      "generation_metadata": {
+        "entity": "Manchester",
+        "period": "2015",
+        "official": 31,
+        "claimed": 37
+      },
+      "essay": "The chart presents household recycling rates for five cities in the United Kingdom at two points in time, 2015 and 2020.\n\nOverall, there were clear differences between the cities, while the second observation generally occupied a higher part of the scale.\n\nLeeds's figure in 2020 was 48%. For 2015, the rate reported for Bristol stood at 42%. For 2015, the rate reported for Manchester stood at 37%. For 2015, the rate reported for Liverpool stood at 28%. In 2020, Sheffield registered 51%. Leeds's figure in 2015 was 35%. Bristol's figure in 2020 was 55%. Sheffield's figure in 2015 was 38%. In 2020, Liverpool registered 39%. For 2020, the rate reported for Manchester stood at 46%.\n\nThe data therefore show measurable variation rather than a uniform pattern across the country."
+    },
+    {
+      "case_id": "bar_entity_misalignment_1",
+      "chart_type": "bar",
+      "expected_error": "entity_misalignment",
+      "replicate": 1,
+      "essay_file": "essays/bar_entity_misalignment_1.txt",
+      "essay_sha256": "d3a2dee11e4a2c13ca6293fb0f190e3b295e47992dd4ac5a7f0eb0df509aedf1",
+      "generation_metadata": {
+        "entities": [
+          "Liverpool",
+          "Sheffield"
+        ],
+        "period": "2020"
+      },
+      "essay": "The chart presents household recycling rates for five cities in the United Kingdom at two points in time, 2015 and 2020.\n\nOverall, there were clear differences between the cities, while the second observation generally occupied a higher part of the scale.\n\nIn 2015, Liverpool registered 28%. In 2020, Bristol registered 55%. Manchester's figure in 2015 was 31%. Bristol's figure in 2015 was 42%. For 2020, the rate reported for Leeds stood at 48%. Sheffield's figure in 2020 was 39%. In 2020, Liverpool registered 51%. Sheffield's figure in 2015 was 38%. Manchester's figure in 2020 was 46%. Leeds's figure in 2015 was 35%.\n\nTaken together, the observations provide a compact comparison of local recycling behaviour."
+    },
+    {
+      "case_id": "bar_entity_misalignment_2",
+      "chart_type": "bar",
+      "expected_error": "entity_misalignment",
+      "replicate": 2,
+      "essay_file": "essays/bar_entity_misalignment_2.txt",
+      "essay_sha256": "740e155f9e4be705b1bd8ca54ca308a1e0cc3984fddcd61dafeea8ef9eb0cf6a",
+      "generation_metadata": {
+        "entities": [
+          "Liverpool",
+          "Sheffield"
+        ],
+        "period": "2015"
+      },
+      "essay": "The grouped bars show the share of households that recycled in Bristol, Leeds, Liverpool, Manchester and Sheffield in 2015 and 2020.\n\nOverall, the figures varied by location and the distance between neighbouring cities was often modest.\n\nLiverpool's figure in 2020 was 39%. Leeds's figure in 2015 was 35%. In 2015, Bristol registered 42%. For 2015, the rate reported for Liverpool stood at 38%. Manchester's figure in 2015 was 31%. In 2020, Manchester registered 46%. In 2020, Leeds registered 48%. In 2015, Sheffield registered 28%. In 2020, Bristol registered 55%. For 2020, the rate reported for Sheffield stood at 51%.\n\nThe data therefore show measurable variation rather than a uniform pattern across the country."
+    },
+    {
+      "case_id": "bar_entity_misalignment_3",
+      "chart_type": "bar",
+      "expected_error": "entity_misalignment",
+      "replicate": 3,
+      "essay_file": "essays/bar_entity_misalignment_3.txt",
+      "essay_sha256": "9ba63b5aa67d3383fd1b2e48be661a5f9a566b45d05541deb00ccc39bad2368d",
+      "generation_metadata": {
+        "entities": [
+          "Bristol",
+          "Liverpool"
+        ],
+        "period": "2020"
+      },
+      "essay": "The grouped bars show the share of households that recycled in Bristol, Leeds, Liverpool, Manchester and Sheffield in 2015 and 2020.\n\nOverall, the figures varied by location and the distance between neighbouring cities was often modest.\n\nLeeds's figure in 2020 was 48%. Bristol's figure in 2020 was 39%. Sheffield's figure in 2020 was 51%. Leeds's figure in 2015 was 35%. In 2015, Bristol registered 42%. For 2015, the rate reported for Manchester stood at 31%. In 2020, Liverpool registered 55%. In 2015, Liverpool registered 28%. In 2015, Sheffield registered 38%. For 2020, the rate reported for Manchester stood at 46%.\n\nTaken together, the observations provide a compact comparison of local recycling behaviour."
+    },
+    {
+      "case_id": "bar_trend_direction_error_1",
+      "chart_type": "bar",
+      "expected_error": "trend_direction_error",
+      "replicate": 1,
+      "essay_file": "essays/bar_trend_direction_error_1.txt",
+      "essay_sha256": "b7b0297bb9bb6eb92ad1ca07315c9fbfb4cfa1b7276fca525e92b0bdb4a218bc",
+      "generation_metadata": {
+        "entity": "Liverpool",
+        "official_direction": "increase",
+        "claimed_direction": "decrease"
+      },
+      "essay": "The bar chart compares the percentages of households recycling waste in five British cities in 2015 and 2020.\n\nOverall, Liverpool followed a downward trend from 2015 to 2020, against a background of variation between locations.\n\nManchester's figure in 2020 was 46%. For 2015, the rate reported for Bristol stood at 42%. For 2015, the rate reported for Manchester stood at 31%. Sheffield's figure in 2020 was 51%. For 2020, the rate reported for Leeds stood at 48%. Liverpool's figure in 2020 was 39%. Bristol's figure in 2020 was 55%. For 2015, the rate reported for Liverpool stood at 28%. For 2015, the rate reported for Leeds stood at 35%. In 2015, Sheffield registered 38%.\n\nTaken together, the observations provide a compact comparison of local recycling behaviour."
+    },
+    {
+      "case_id": "bar_trend_direction_error_2",
+      "chart_type": "bar",
+      "expected_error": "trend_direction_error",
+      "replicate": 2,
+      "essay_file": "essays/bar_trend_direction_error_2.txt",
+      "essay_sha256": "333e61e1a7790f1999270771dc69fd9d9611a6c41ef010d43a347ca0cce4a9b5",
+      "generation_metadata": {
+        "entity": "Manchester",
+        "official_direction": "increase",
+        "claimed_direction": "decrease"
+      },
+      "essay": "The grouped bars show the share of households that recycled in Bristol, Leeds, Liverpool, Manchester and Sheffield in 2015 and 2020.\n\nOverall, Manchester decreased over the period, while the chart continued to show marked differences between the five cities.\n\nFor 2020, the rate reported for Manchester stood at 46%. For 2015, the rate reported for Leeds stood at 35%. Leeds's figure in 2020 was 48%. In 2015, Manchester registered 31%. Bristol's figure in 2015 was 42%. For 2020, the rate reported for Sheffield stood at 51%. Bristol's figure in 2020 was 55%. For 2015, the rate reported for Sheffield stood at 38%. For 2020, the rate reported for Liverpool stood at 39%. Liverpool's figure in 2015 was 28%.\n\nTaken together, the observations provide a compact comparison of local recycling behaviour."
+    },
+    {
+      "case_id": "bar_trend_direction_error_3",
+      "chart_type": "bar",
+      "expected_error": "trend_direction_error",
+      "replicate": 3,
+      "essay_file": "essays/bar_trend_direction_error_3.txt",
+      "essay_sha256": "69fd084268030ee9b022c7b94c0d877ac874dd323e7be27f2b2a3ab8a408d2a3",
+      "generation_metadata": {
+        "entity": "Bristol",
+        "official_direction": "increase",
+        "claimed_direction": "decrease"
+      },
+      "essay": "The grouped bars show the share of households that recycled in Bristol, Leeds, Liverpool, Manchester and Sheffield in 2015 and 2020.\n\nOverall, Bristol decreased over the period, while the chart continued to show marked differences between the five cities.\n\nBristol's figure in 2015 was 42%. In 2015, Liverpool registered 28%. For 2015, the rate reported for Manchester stood at 31%. Liverpool's figure in 2020 was 39%. Bristol's figure in 2020 was 55%. For 2015, the rate reported for Leeds stood at 35%. For 2020, the rate reported for Manchester stood at 46%. For 2015, the rate reported for Sheffield stood at 38%. In 2020, Leeds registered 48%. For 2020, the rate reported for Sheffield stood at 51%.\n\nThe data therefore show measurable variation rather than a uniform pattern across the country."
+    },
+    {
+      "case_id": "bar_comparison_ranking_error_1",
+      "chart_type": "bar",
+      "expected_error": "comparison_ranking_error",
+      "replicate": 1,
+      "essay_file": "essays/bar_comparison_ranking_error_1.txt",
+      "essay_sha256": "5b36d71b1137c6345369107686ff7bc7ab9f73c87d211952121112b951c52508",
+      "generation_metadata": {
+        "entity": "Manchester",
+        "period": "2020",
+        "rank": "highest",
+        "official_entity": "Bristol"
+      },
+      "essay": "The grouped bars show the share of households that recycled in Bristol, Leeds, Liverpool, Manchester and Sheffield in 2015 and 2020.\n\nOverall, Manchester recorded the highest recycling rate in 2020, while the cities remained separated by clear differences.\n\nLiverpool's figure in 2015 was 28%. For 2015, the rate reported for Leeds stood at 35%. Leeds's figure in 2020 was 48%. Manchester's figure in 2020 was 46%. Sheffield's figure in 2020 was 51%. Manchester's figure in 2015 was 31%. For 2015, the rate reported for Sheffield stood at 38%. Liverpool's figure in 2020 was 39%. For 2015, the rate reported for Bristol stood at 42%. Bristol's figure in 2020 was 55%.\n\nThese percentages allow both changes over time and differences between places to be compared directly."
+    },
+    {
+      "case_id": "bar_comparison_ranking_error_2",
+      "chart_type": "bar",
+      "expected_error": "comparison_ranking_error",
+      "replicate": 2,
+      "essay_file": "essays/bar_comparison_ranking_error_2.txt",
+      "essay_sha256": "5599bf4f11a39f42c54db58541fa7b50a23b12aa083521d10ca9c1e80cf294f1",
+      "generation_metadata": {
+        "entity": "Leeds",
+        "period": "2015",
+        "rank": "highest",
+        "official_entity": "Bristol"
+      },
+      "essay": "The grouped bars show the share of households that recycled in Bristol, Leeds, Liverpool, Manchester and Sheffield in 2015 and 2020.\n\nOverall, Leeds recorded the highest recycling rate in 2015, while the cities remained separated by clear differences.\n\nSheffield's figure in 2020 was 51%. In 2015, Bristol registered 42%. For 2015, the rate reported for Leeds stood at 35%. In 2020, Bristol registered 55%. For 2015, the rate reported for Sheffield stood at 38%. Liverpool's figure in 2020 was 39%. For 2015, the rate reported for Manchester stood at 31%. For 2020, the rate reported for Manchester stood at 46%. Liverpool's figure in 2015 was 28%. For 2020, the rate reported for Leeds stood at 48%.\n\nThe data therefore show measurable variation rather than a uniform pattern across the country."
+    },
+    {
+      "case_id": "bar_comparison_ranking_error_3",
+      "chart_type": "bar",
+      "expected_error": "comparison_ranking_error",
+      "replicate": 3,
+      "essay_file": "essays/bar_comparison_ranking_error_3.txt",
+      "essay_sha256": "d4d9df69f318ba11d0fe5b5c0ad34e9994268eb50fa9624c72b1cb57a339df26",
+      "generation_metadata": {
+        "entity": "Sheffield",
+        "period": "2020",
+        "rank": "lowest",
+        "official_entity": "Liverpool"
+      },
+      "essay": "The chart presents household recycling rates for five cities in the United Kingdom at two points in time, 2015 and 2020.\n\nOverall, Sheffield recorded the lowest recycling rate in 2020, while the cities remained separated by clear differences.\n\nLeeds's figure in 2015 was 35%. In 2020, Leeds registered 48%. For 2020, the rate reported for Bristol stood at 55%. In 2015, Liverpool registered 28%. Sheffield's figure in 2015 was 38%. For 2015, the rate reported for Manchester stood at 31%. Sheffield's figure in 2020 was 51%. Manchester's figure in 2020 was 46%. For 2020, the rate reported for Liverpool stood at 39%. Bristol's figure in 2015 was 42%.\n\nThese percentages allow both changes over time and differences between places to be compared directly."
+    },
+    {
+      "case_id": "bar_key_feature_omission_1",
+      "chart_type": "bar",
+      "expected_error": "key_feature_omission",
+      "replicate": 1,
+      "essay_file": "essays/bar_key_feature_omission_1.txt",
+      "essay_sha256": "f29ac4ac505e220ea9d91af487a7de1c3aa5c41d94fa4e4f72e100908fb2a250",
+      "generation_metadata": {
+        "omitted_entity": "Liverpool"
+      },
+      "essay": "The grouped bars show the share of households that recycled in Bristol, Leeds, Liverpool, Manchester and Sheffield in 2015 and 2020.\n\nOverall, there were clear differences between the cities, while the second observation generally occupied a higher part of the scale.\n\nIn 2015, Manchester registered 31%. Leeds's figure in 2015 was 35%. Leeds's figure in 2020 was 48%. In 2015, Sheffield registered 38%. In 2020, Manchester registered 46%. Bristol's figure in 2015 was 42%. For 2020, the rate reported for Sheffield stood at 51%. Bristol's figure in 2020 was 55%.\n\nThese percentages allow both changes over time and differences between places to be compared directly."
+    },
+    {
+      "case_id": "bar_key_feature_omission_2",
+      "chart_type": "bar",
+      "expected_error": "key_feature_omission",
+      "replicate": 2,
+      "essay_file": "essays/bar_key_feature_omission_2.txt",
+      "essay_sha256": "b8d55bb76b0a841302e72ffa8f9229aa882cc4261d4178604e32783079ef2b29",
+      "generation_metadata": {
+        "omitted_entity": "Sheffield"
+      },
+      "essay": "The chart presents household recycling rates for five cities in the United Kingdom at two points in time, 2015 and 2020.\n\nOverall, the figures varied by location and the distance between neighbouring cities was often modest.\n\nIn 2015, Bristol registered 42%. Liverpool's figure in 2020 was 39%. Manchester's figure in 2020 was 46%. For 2015, the rate reported for Manchester stood at 31%. Liverpool's figure in 2015 was 28%. In 2020, Leeds registered 48%. In 2015, Leeds registered 35%. For 2020, the rate reported for Bristol stood at 55%.\n\nTaken together, the observations provide a compact comparison of local recycling behaviour."
+    },
+    {
+      "case_id": "bar_key_feature_omission_3",
+      "chart_type": "bar",
+      "expected_error": "key_feature_omission",
+      "replicate": 3,
+      "essay_file": "essays/bar_key_feature_omission_3.txt",
+      "essay_sha256": "45eb9813a85df4e9835b6a5b254edae41d57c8dadf340ebdc483bd2cae379c91",
+      "generation_metadata": {
+        "omitted_entity": "Manchester"
+      },
+      "essay": "The bar chart compares the percentages of households recycling waste in five British cities in 2015 and 2020.\n\nOverall, there were clear differences between the cities, while the second observation generally occupied a higher part of the scale.\n\nFor 2020, the rate reported for Leeds stood at 48%. Liverpool's figure in 2015 was 28%. Liverpool's figure in 2020 was 39%. For 2020, the rate reported for Bristol stood at 55%. Bristol's figure in 2015 was 42%. Sheffield's figure in 2015 was 38%. For 2020, the rate reported for Sheffield stood at 51%. Leeds's figure in 2015 was 35%.\n\nTaken together, the observations provide a compact comparison of local recycling behaviour."
+    },
+    {
+      "case_id": "line_value_inaccuracy_1",
+      "chart_type": "line",
+      "expected_error": "value_inaccuracy",
+      "replicate": 1,
+      "essay_file": "essays/line_value_inaccuracy_1.txt",
+      "essay_sha256": "9ce6de31e6eb07f6df015165d6f9be874e29b5b1aaff46e9655093cb953efba1",
+      "generation_metadata": {
+        "sampled_midpoint": "2016",
+        "entity": "Bus",
+        "period": "2020",
+        "official": 1.3,
+        "claimed": 1.7
+      },
+      "essay": "The graph plots the number of passengers using three forms of public transport on an average day from 2010 to 2020.\n\nOverall, the lines did not remain in their initial order, and the gap between services changed over time.\n\nIn 2010, Bus served 1.8 million passengers per day, compared with 1.7 million in 2020. In 2010, Rail served 1.1 million passengers per day, compared with 2.2 million in 2020. The figures for Metro were 0.8 million at the beginning and 1.9 million at the end. In 2016, the figure for Bus was 1.6 million. At 2016, Metro stood at 1.5 million passengers. In 2016, the figure for Rail was 1.8 million.\n\nThe intermediate observations help to show how the ordering developed rather than only giving two isolated totals."
+    },
+    {
+      "case_id": "line_value_inaccuracy_2",
+      "chart_type": "line",
+      "expected_error": "value_inaccuracy",
+      "replicate": 2,
+      "essay_file": "essays/line_value_inaccuracy_2.txt",
+      "essay_sha256": "bea5d602d046f2cbc3e78aff37db5be4af57c5677605fe20a2454e20a915ea8c",
+      "generation_metadata": {
+        "sampled_midpoint": "2018",
+        "entity": "Bus",
+        "period": "2010",
+        "official": 1.8,
+        "claimed": 1.5
+      },
+      "essay": "The line graph compares average daily passenger numbers for bus, rail and metro services between 2010 and 2020, measured in millions.\n\nOverall, passenger use was distributed differently across the three modes by the end of the period.\n\nMetro carried 0.8 million passengers in 2010 and 1.9 million in 2020. Bus carried 1.5 million passengers in 2010 and 1.3 million in 2020. Rail carried 1.1 million passengers in 2010 and 2.2 million in 2020. At 2018, Rail stood at 2.0 million passengers. In 2018, the figure for Bus was 1.5 million. Metro recorded 1.7 million daily users in 2018.\n\nThese figures make the changing balance among the transport services visible across the decade."
+    },
+    {
+      "case_id": "line_value_inaccuracy_3",
+      "chart_type": "line",
+      "expected_error": "value_inaccuracy",
+      "replicate": 3,
+      "essay_file": "essays/line_value_inaccuracy_3.txt",
+      "essay_sha256": "d9d77942acebd2a182ea43af1b574d6c1ff58c703b6de2efc26a72b40ef37a34",
+      "generation_metadata": {
+        "sampled_midpoint": "2018",
+        "entity": "Rail",
+        "period": "2010",
+        "official": 1.1,
+        "claimed": 0.8
+      },
+      "essay": "The graph plots the number of passengers using three forms of public transport on an average day from 2010 to 2020.\n\nOverall, the lines did not remain in their initial order, and the gap between services changed over time.\n\nThe figures for Bus were 1.8 million at the beginning and 1.3 million at the end. In 2010, Metro served 0.8 million passengers per day, compared with 1.9 million in 2020. The figures for Rail were 0.8 million at the beginning and 2.2 million at the end. Rail recorded 2.0 million daily users in 2018. Bus recorded 1.5 million daily users in 2018. In 2018, the figure for Metro was 1.7 million.\n\nThese figures make the changing balance among the transport services visible across the decade."
+    },
+    {
+      "case_id": "line_entity_misalignment_1",
+      "chart_type": "line",
+      "expected_error": "entity_misalignment",
+      "replicate": 1,
+      "essay_file": "essays/line_entity_misalignment_1.txt",
+      "essay_sha256": "2cf3b3e1af3810b47687016a01aa2d4fdd39f562813000afd6be8d333eecf240",
+      "generation_metadata": {
+        "sampled_midpoint": "2018",
+        "entities": [
+          "Rail",
+          "Bus"
+        ],
+        "period": "2018"
+      },
+      "essay": "The line graph compares average daily passenger numbers for bus, rail and metro services between 2010 and 2020, measured in millions.\n\nOverall, the lines did not remain in their initial order, and the gap between services changed over time.\n\nIn 2010, Bus served 1.8 million passengers per day, compared with 1.3 million in 2020. Rail carried 1.1 million passengers in 2010 and 2.2 million in 2020. In 2010, Metro served 0.8 million passengers per day, compared with 1.9 million in 2020. At 2018, Bus stood at 2.0 million passengers. Rail recorded 1.5 million daily users in 2018. In 2018, the figure for Metro was 1.7 million.\n\nThese figures make the changing balance among the transport services visible across the decade."
+    },
+    {
+      "case_id": "line_entity_misalignment_2",
+      "chart_type": "line",
+      "expected_error": "entity_misalignment",
+      "replicate": 2,
+      "essay_file": "essays/line_entity_misalignment_2.txt",
+      "essay_sha256": "86c9f32854c563ab8f7cd02b397dbac0073f375eb4fbfd788a496329bdd6be74",
+      "generation_metadata": {
+        "sampled_midpoint": "2016",
+        "entities": [
+          "Bus",
+          "Rail"
+        ],
+        "period": "2016"
+      },
+      "essay": "The line graph compares average daily passenger numbers for bus, rail and metro services between 2010 and 2020, measured in millions.\n\nOverall, the lines did not remain in their initial order, and the gap between services changed over time.\n\nThe figures for Metro were 0.8 million at the beginning and 1.9 million at the end. The figures for Rail were 1.1 million at the beginning and 2.2 million at the end. The figures for Bus were 1.8 million at the beginning and 1.3 million at the end. In 2016, the figure for Metro was 1.5 million. In 2016, the figure for Bus was 1.8 million. Rail recorded 1.6 million daily users in 2016.\n\nThe recorded points provide enough detail to compare the services at both the beginning and the end."
+    },
+    {
+      "case_id": "line_entity_misalignment_3",
+      "chart_type": "line",
+      "expected_error": "entity_misalignment",
+      "replicate": 3,
+      "essay_file": "essays/line_entity_misalignment_3.txt",
+      "essay_sha256": "1b06b33302edc84963e236aa334e39aa9174b727e64347d64fb07726b73c0c0a",
+      "generation_metadata": {
+        "sampled_midpoint": "2018",
+        "entities": [
+          "Bus",
+          "Metro"
+        ],
+        "period": "2018"
+      },
+      "essay": "The line graph compares average daily passenger numbers for bus, rail and metro services between 2010 and 2020, measured in millions.\n\nOverall, passenger use was distributed differently across the three modes by the end of the period.\n\nThe figures for Metro were 0.8 million at the beginning and 1.9 million at the end. The figures for Rail were 1.1 million at the beginning and 2.2 million at the end. The figures for Bus were 1.8 million at the beginning and 1.3 million at the end. At 2018, Rail stood at 2.0 million passengers. Bus recorded 1.7 million daily users in 2018. At 2018, Metro stood at 1.5 million passengers.\n\nThe intermediate observations help to show how the ordering developed rather than only giving two isolated totals."
+    },
+    {
+      "case_id": "line_trend_direction_error_1",
+      "chart_type": "line",
+      "expected_error": "trend_direction_error",
+      "replicate": 1,
+      "essay_file": "essays/line_trend_direction_error_1.txt",
+      "essay_sha256": "cbd771700430c41c80811df5d7569463441937fb6627edc0ac4d36f50ee2ae59",
+      "generation_metadata": {
+        "sampled_midpoint": "2014",
+        "entity": "Rail",
+        "official_direction": "increase",
+        "claimed_direction": "decrease"
+      },
+      "essay": "The line chart illustrates changes in daily bus, rail and metro use over the period 2010-2020, with figures given in millions.\n\nOverall, Rail fell over the period, while the relative positions of the three services changed during the decade.\n\nBus carried 1.8 million passengers in 2010 and 1.3 million in 2020. Metro carried 0.8 million passengers in 2010 and 1.9 million in 2020. The figures for Rail were 1.1 million at the beginning and 2.2 million at the end. At 2014, Metro stood at 1.2 million passengers. In 2014, the figure for Rail was 1.5 million. Bus recorded 1.7 million daily users in 2014.\n\nThese figures make the changing balance among the transport services visible across the decade."
+    },
+    {
+      "case_id": "line_trend_direction_error_2",
+      "chart_type": "line",
+      "expected_error": "trend_direction_error",
+      "replicate": 2,
+      "essay_file": "essays/line_trend_direction_error_2.txt",
+      "essay_sha256": "b54363e63bc201d023ad2e2853982fd56b94e392fb8f20d02357fe2116524dd9",
+      "generation_metadata": {
+        "sampled_midpoint": "2016",
+        "entity": "Rail",
+        "official_direction": "increase",
+        "claimed_direction": "decrease"
+      },
+      "essay": "The line graph compares average daily passenger numbers for bus, rail and metro services between 2010 and 2020, measured in millions.\n\nOverall, Rail declined over the period, while the relative positions of the three services changed during the decade.\n\nRail carried 1.1 million passengers in 2010 and 2.2 million in 2020. In 2010, Bus served 1.8 million passengers per day, compared with 1.3 million in 2020. Metro carried 0.8 million passengers in 2010 and 1.9 million in 2020. In 2016, the figure for Rail was 1.8 million. At 2016, Metro stood at 1.5 million passengers. At 2016, Bus stood at 1.6 million passengers.\n\nThe recorded points provide enough detail to compare the services at both the beginning and the end."
+    },
+    {
+      "case_id": "line_trend_direction_error_3",
+      "chart_type": "line",
+      "expected_error": "trend_direction_error",
+      "replicate": 3,
+      "essay_file": "essays/line_trend_direction_error_3.txt",
+      "essay_sha256": "d097b6ce87219828a4771c4f084f3f2cb0518760f38698deed9378503b456b67",
+      "generation_metadata": {
+        "sampled_midpoint": "2016",
+        "entity": "Bus",
+        "official_direction": "decrease",
+        "claimed_direction": "increase"
+      },
+      "essay": "The line graph compares average daily passenger numbers for bus, rail and metro services between 2010 and 2020, measured in millions.\n\nOverall, Bus climbed over the period, while the relative positions of the three services changed during the decade.\n\nIn 2010, Bus served 1.8 million passengers per day, compared with 1.3 million in 2020. The figures for Rail were 1.1 million at the beginning and 2.2 million at the end. In 2010, Metro served 0.8 million passengers per day, compared with 1.9 million in 2020. In 2016, the figure for Metro was 1.5 million. In 2016, the figure for Bus was 1.6 million. At 2016, Rail stood at 1.8 million passengers.\n\nThe intermediate observations help to show how the ordering developed rather than only giving two isolated totals."
+    },
+    {
+      "case_id": "line_comparison_ranking_error_1",
+      "chart_type": "line",
+      "expected_error": "comparison_ranking_error",
+      "replicate": 1,
+      "essay_file": "essays/line_comparison_ranking_error_1.txt",
+      "essay_sha256": "9a83275d8b425236aa25b4922e9615a9a46ec1f8fc8fc1d38c89b42290a27ef5",
+      "generation_metadata": {
+        "sampled_midpoint": "2014",
+        "entity": "Metro",
+        "period": "2020",
+        "rank": "highest",
+        "official_entity": "Rail"
+      },
+      "essay": "The graph plots the number of passengers using three forms of public transport on an average day from 2010 to 2020.\n\nOverall, Metro was the highest transport mode in 2020, while the ordering of the three services changed elsewhere in the period.\n\nBus carried 1.8 million passengers in 2010 and 1.3 million in 2020. In 2010, Rail served 1.1 million passengers per day, compared with 2.2 million in 2020. Metro carried 0.8 million passengers in 2010 and 1.9 million in 2020. In 2014, the figure for Metro was 1.2 million. In 2014, the figure for Rail was 1.5 million. Bus recorded 1.7 million daily users in 2014.\n\nThe intermediate observations help to show how the ordering developed rather than only giving two isolated totals."
+    },
+    {
+      "case_id": "line_comparison_ranking_error_2",
+      "chart_type": "line",
+      "expected_error": "comparison_ranking_error",
+      "replicate": 2,
+      "essay_file": "essays/line_comparison_ranking_error_2.txt",
+      "essay_sha256": "0988b28e63f7de47e4055f6959a32e199999d7d4ec9bb64179aa4555eb746a37",
+      "generation_metadata": {
+        "sampled_midpoint": "2016",
+        "entity": "Metro",
+        "period": "2010",
+        "rank": "highest",
+        "official_entity": "Bus"
+      },
+      "essay": "The graph plots the number of passengers using three forms of public transport on an average day from 2010 to 2020.\n\nOverall, Metro was the highest transport mode in 2010, while the ordering of the three services changed elsewhere in the period.\n\nIn 2010, Rail served 1.1 million passengers per day, compared with 2.2 million in 2020. The figures for Metro were 0.8 million at the beginning and 1.9 million at the end. Bus carried 1.8 million passengers in 2010 and 1.3 million in 2020. Rail recorded 1.8 million daily users in 2016. At 2016, Metro stood at 1.5 million passengers. Bus recorded 1.6 million daily users in 2016.\n\nThe recorded points provide enough detail to compare the services at both the beginning and the end."
+    },
+    {
+      "case_id": "line_comparison_ranking_error_3",
+      "chart_type": "line",
+      "expected_error": "comparison_ranking_error",
+      "replicate": 3,
+      "essay_file": "essays/line_comparison_ranking_error_3.txt",
+      "essay_sha256": "58329dc5489ec6a629f1ba9f95963a3851676897b3528fca090b853c29148d32",
+      "generation_metadata": {
+        "sampled_midpoint": "2014",
+        "entity": "Metro",
+        "period": "2020",
+        "rank": "highest",
+        "official_entity": "Rail"
+      },
+      "essay": "The line graph compares average daily passenger numbers for bus, rail and metro services between 2010 and 2020, measured in millions.\n\nOverall, Metro was the highest transport mode in 2020, while the ordering of the three services changed elsewhere in the period.\n\nThe figures for Bus were 1.8 million at the beginning and 1.3 million at the end. In 2010, Rail served 1.1 million passengers per day, compared with 2.2 million in 2020. Metro carried 0.8 million passengers in 2010 and 1.9 million in 2020. At 2014, Bus stood at 1.7 million passengers. In 2014, the figure for Rail was 1.5 million. Metro recorded 1.2 million daily users in 2014.\n\nThe intermediate observations help to show how the ordering developed rather than only giving two isolated totals."
+    },
+    {
+      "case_id": "line_key_feature_omission_1",
+      "chart_type": "line",
+      "expected_error": "key_feature_omission",
+      "replicate": 1,
+      "essay_file": "essays/line_key_feature_omission_1.txt",
+      "essay_sha256": "adf6153e0b7a4c140b29926192865f1a7a5dc2097022a3900bd9a39cf629dbcf",
+      "generation_metadata": {
+        "sampled_midpoint": "2012",
+        "omitted_entity": "Rail"
+      },
+      "essay": "The graph plots the number of passengers using three forms of public transport on an average day from 2010 to 2020.\n\nOverall, the three services followed visibly different paths and their relative positions changed during the decade.\n\nIn 2010, Metro served 0.8 million passengers per day, compared with 1.9 million in 2020. The figures for Bus were 1.8 million at the beginning and 1.3 million at the end. In 2012, the figure for Bus was 1.9 million. Metro recorded 1.0 million daily users in 2012.\n\nThese figures make the changing balance among the transport services visible across the decade."
+    },
+    {
+      "case_id": "line_key_feature_omission_2",
+      "chart_type": "line",
+      "expected_error": "key_feature_omission",
+      "replicate": 2,
+      "essay_file": "essays/line_key_feature_omission_2.txt",
+      "essay_sha256": "4fd5805d67d257555c1197362f0565c0b3093623033c0c830b614fa196bfe199",
+      "generation_metadata": {
+        "sampled_midpoint": "2016",
+        "omitted_entity": "Bus"
+      },
+      "essay": "The graph plots the number of passengers using three forms of public transport on an average day from 2010 to 2020.\n\nOverall, passenger use was distributed differently across the three modes by the end of the period.\n\nMetro carried 0.8 million passengers in 2010 and 1.9 million in 2020. Rail carried 1.1 million passengers in 2010 and 2.2 million in 2020. In 2016, the figure for Metro was 1.5 million. In 2016, the figure for Rail was 1.8 million.\n\nThe intermediate observations help to show how the ordering developed rather than only giving two isolated totals."
+    },
+    {
+      "case_id": "line_key_feature_omission_3",
+      "chart_type": "line",
+      "expected_error": "key_feature_omission",
+      "replicate": 3,
+      "essay_file": "essays/line_key_feature_omission_3.txt",
+      "essay_sha256": "4c05b7195910385ec0154f525c29c2b75440dd5e3c96f90e300796a5657abb0a",
+      "generation_metadata": {
+        "sampled_midpoint": "2016",
+        "omitted_entity": "Bus"
+      },
+      "essay": "The line graph compares average daily passenger numbers for bus, rail and metro services between 2010 and 2020, measured in millions.\n\nOverall, the three services followed visibly different paths and their relative positions changed during the decade.\n\nIn 2010, Metro served 0.8 million passengers per day, compared with 1.9 million in 2020. Rail carried 1.1 million passengers in 2010 and 2.2 million in 2020. In 2016, the figure for Metro was 1.5 million. In 2016, the figure for Rail was 1.8 million.\n\nThe intermediate observations help to show how the ordering developed rather than only giving two isolated totals."
+    },
+    {
+      "case_id": "pie_value_inaccuracy_1",
+      "chart_type": "pie",
+      "expected_error": "value_inaccuracy",
+      "replicate": 1,
+      "essay_file": "essays/pie_value_inaccuracy_1.txt",
+      "essay_sha256": "d07a8141b62c2ea443ee72921088ab00c046560f99297d011ac1ff6c63d5920d",
+      "generation_metadata": {
+        "entity": "Housing",
+        "official": 32,
+        "claimed": 37
+      },
+      "essay": "The chart shows how an average household in Canada allocated its spending in 2024.\n\nOverall, a few categories accounted for substantial portions of the budget, while the remaining shares were more limited.\n\nHouseholds devoted 12% of expenditure to Leisure. Utilities represented 10% of the budget. Other represented 8% of the budget. Households devoted 21% of expenditure to Food. The share allocated to Housing was 37%. Transport represented 17% of the budget.\n\nThis distribution makes it possible to compare major commitments with smaller items of expenditure."
+    },
+    {
+      "case_id": "pie_value_inaccuracy_2",
+      "chart_type": "pie",
+      "expected_error": "value_inaccuracy",
+      "replicate": 2,
+      "essay_file": "essays/pie_value_inaccuracy_2.txt",
+      "essay_sha256": "492dc9070b084182d58ed2118046e9e872dd9fc236e6387761b5bc80f593bbb1",
+      "generation_metadata": {
+        "entity": "Leisure",
+        "official": 12,
+        "claimed": 8
+      },
+      "essay": "The chart shows how an average household in Canada allocated its spending in 2024.\n\nOverall, a few categories accounted for substantial portions of the budget, while the remaining shares were more limited.\n\nThe share allocated to Other was 8%. The share allocated to Utilities was 10%. The share allocated to Leisure was 8%. Food represented 21% of the budget. Households devoted 32% of expenditure to Housing. Transport represented 17% of the budget.\n\nThis distribution makes it possible to compare major commitments with smaller items of expenditure."
+    },
+    {
+      "case_id": "pie_value_inaccuracy_3",
+      "chart_type": "pie",
+      "expected_error": "value_inaccuracy",
+      "replicate": 3,
+      "essay_file": "essays/pie_value_inaccuracy_3.txt",
+      "essay_sha256": "c297220a74c8e8479e07e3dd6c0f27c4f46d80d8a75c61e97d43e13bd1d88f81",
+      "generation_metadata": {
+        "entity": "Food",
+        "official": 21,
+        "claimed": 17
+      },
+      "essay": "The pie chart breaks down average Canadian household expenditure in 2024 across six spending categories.\n\nOverall, spending was spread unevenly, with several medium-sized components and a smaller group of minor items.\n\nThe share allocated to Food was 17%. Households devoted 10% of expenditure to Utilities. Households devoted 8% of expenditure to Other. Transport represented 17% of the budget. Households devoted 32% of expenditure to Housing. The share allocated to Leisure was 12%.\n\nThis distribution makes it possible to compare major commitments with smaller items of expenditure."
+    },
+    {
+      "case_id": "pie_entity_misalignment_1",
+      "chart_type": "pie",
+      "expected_error": "entity_misalignment",
+      "replicate": 1,
+      "essay_file": "essays/pie_entity_misalignment_1.txt",
+      "essay_sha256": "759515126e6c87f3d13c2a1451de75b97c7270d6fd5c109a7ae603c0197f1482",
+      "generation_metadata": {
+        "entities": [
+          "Food",
+          "Transport"
+        ]
+      },
+      "essay": "The circular chart presents the percentage distribution of Canadian household expenditure among six categories in 2024.\n\nOverall, spending was spread unevenly, with several medium-sized components and a smaller group of minor items.\n\nThe share allocated to Leisure was 12%. Households devoted 10% of expenditure to Utilities. The share allocated to Food was 17%. Other represented 8% of the budget. Households devoted 32% of expenditure to Housing. Households devoted 21% of expenditure to Transport.\n\nThe proportions give a direct view of how the household budget was divided during the year."
+    },
+    {
+      "case_id": "pie_entity_misalignment_2",
+      "chart_type": "pie",
+      "expected_error": "entity_misalignment",
+      "replicate": 2,
+      "essay_file": "essays/pie_entity_misalignment_2.txt",
+      "essay_sha256": "679e4b1cbe17c944b0e3c8ef7f3dc49447f94e67e20a0060664eb21557b9be59",
+      "generation_metadata": {
+        "entities": [
+          "Leisure",
+          "Transport"
+        ]
+      },
+      "essay": "The circular chart presents the percentage distribution of Canadian household expenditure among six categories in 2024.\n\nOverall, spending was spread unevenly, with several medium-sized components and a smaller group of minor items.\n\nHouseholds devoted 21% of expenditure to Food. Households devoted 10% of expenditure to Utilities. Households devoted 8% of expenditure to Other. Leisure represented 17% of the budget. The share allocated to Transport was 12%. Housing represented 32% of the budget.\n\nThe proportions give a direct view of how the household budget was divided during the year."
+    },
+    {
+      "case_id": "pie_entity_misalignment_3",
+      "chart_type": "pie",
+      "expected_error": "entity_misalignment",
+      "replicate": 3,
+      "essay_file": "essays/pie_entity_misalignment_3.txt",
+      "essay_sha256": "c8611d8c0849c66238b7c53033c79d8348accf6c046d264bb43cca6ebf675884",
+      "generation_metadata": {
+        "entities": [
+          "Utilities",
+          "Other"
+        ]
+      },
+      "essay": "The chart shows how an average household in Canada allocated its spending in 2024.\n\nOverall, the household budget was divided into clearly unequal shares rather than being distributed evenly.\n\nThe share allocated to Transport was 17%. The share allocated to Food was 21%. Utilities represented 8% of the budget. The share allocated to Housing was 32%. Other represented 10% of the budget. Leisure represented 12% of the budget.\n\nThe proportions give a direct view of how the household budget was divided during the year."
+    },
+    {
+      "case_id": "pie_trend_direction_error_1",
+      "chart_type": "pie",
+      "expected_error": "trend_direction_error",
+      "replicate": 1,
+      "essay_file": "essays/pie_trend_direction_error_1.txt",
+      "essay_sha256": "8dda50e655c124bca7b9163b5982033a51f74d65b10ba45176e42bbfe32a12db",
+      "generation_metadata": {
+        "entity": "Other",
+        "claimed_direction": "remained stable",
+        "expected_applicability": "not_applicable_single_period_pie"
+      },
+      "essay": "The chart shows how an average household in Canada allocated its spending in 2024.\n\nOverall, Other remained stable over the period, while expenditure was distributed unevenly across the six categories.\n\nHouseholds devoted 10% of expenditure to Utilities. Households devoted 21% of expenditure to Food. Other represented 8% of the budget. The share allocated to Transport was 17%. Housing represented 32% of the budget. Leisure represented 12% of the budget.\n\nThis distribution makes it possible to compare major commitments with smaller items of expenditure."
+    },
+    {
+      "case_id": "pie_trend_direction_error_2",
+      "chart_type": "pie",
+      "expected_error": "trend_direction_error",
+      "replicate": 2,
+      "essay_file": "essays/pie_trend_direction_error_2.txt",
+      "essay_sha256": "4f3b0ab9f545c9c7715db089aa639a3a21cb089c570ce4b29705febe88ec725c",
+      "generation_metadata": {
+        "entity": "Other",
+        "claimed_direction": "decreased",
+        "expected_applicability": "not_applicable_single_period_pie"
+      },
+      "essay": "The circular chart presents the percentage distribution of Canadian household expenditure among six categories in 2024.\n\nOverall, Other decreased over the period, while expenditure was distributed unevenly across the six categories.\n\nOther represented 8% of the budget. Households devoted 21% of expenditure to Food. Utilities represented 10% of the budget. Leisure represented 12% of the budget. Households devoted 32% of expenditure to Housing. The share allocated to Transport was 17%.\n\nThe proportions give a direct view of how the household budget was divided during the year."
+    },
+    {
+      "case_id": "pie_trend_direction_error_3",
+      "chart_type": "pie",
+      "expected_error": "trend_direction_error",
+      "replicate": 3,
+      "essay_file": "essays/pie_trend_direction_error_3.txt",
+      "essay_sha256": "65721c88fc6a435a3992f3f28cbfbe23aeb2fa4163c040bc4fef058660736700",
+      "generation_metadata": {
+        "entity": "Housing",
+        "claimed_direction": "increased",
+        "expected_applicability": "not_applicable_single_period_pie"
+      },
+      "essay": "The pie chart breaks down average Canadian household expenditure in 2024 across six spending categories.\n\nOverall, Housing increased over the period, while expenditure was distributed unevenly across the six categories.\n\nHouseholds devoted 32% of expenditure to Housing. Households devoted 21% of expenditure to Food. Transport represented 17% of the budget. The share allocated to Leisure was 12%. Households devoted 10% of expenditure to Utilities. Other represented 8% of the budget.\n\nThe proportions give a direct view of how the household budget was divided during the year."
+    },
+    {
+      "case_id": "pie_comparison_ranking_error_1",
+      "chart_type": "pie",
+      "expected_error": "comparison_ranking_error",
+      "replicate": 1,
+      "essay_file": "essays/pie_comparison_ranking_error_1.txt",
+      "essay_sha256": "efe50b928100ed1b9157501886aa6cf521369d985928d884e8b74f0158decaa6",
+      "generation_metadata": {
+        "entity": "Utilities",
+        "rank": "largest",
+        "official_entity": "Housing"
+      },
+      "essay": "The pie chart breaks down average Canadian household expenditure in 2024 across six spending categories.\n\nOverall, Utilities was the largest component of household expenditure, while the remaining categories occupied unequal shares.\n\nHouseholds devoted 32% of expenditure to Housing. Transport represented 17% of the budget. The share allocated to Utilities was 10%. Households devoted 21% of expenditure to Food. Other represented 8% of the budget. Households devoted 12% of expenditure to Leisure.\n\nThe proportions give a direct view of how the household budget was divided during the year."
+    },
+    {
+      "case_id": "pie_comparison_ranking_error_2",
+      "chart_type": "pie",
+      "expected_error": "comparison_ranking_error",
+      "replicate": 2,
+      "essay_file": "essays/pie_comparison_ranking_error_2.txt",
+      "essay_sha256": "bf9e0fefda218559f67ce129d9e9c4a1d00a2cfb0ea984d2f703e705f9bba497",
+      "generation_metadata": {
+        "entity": "Other",
+        "rank": "largest",
+        "official_entity": "Housing"
+      },
+      "essay": "The chart shows how an average household in Canada allocated its spending in 2024.\n\nOverall, Other was the largest component of household expenditure, while the remaining categories occupied unequal shares.\n\nHouseholds devoted 12% of expenditure to Leisure. Households devoted 21% of expenditure to Food. The share allocated to Housing was 32%. Other represented 8% of the budget. The share allocated to Utilities was 10%. Transport represented 17% of the budget.\n\nTogether, the listed components account for the complete household budget shown in the chart."
+    },
+    {
+      "case_id": "pie_comparison_ranking_error_3",
+      "chart_type": "pie",
+      "expected_error": "comparison_ranking_error",
+      "replicate": 3,
+      "essay_file": "essays/pie_comparison_ranking_error_3.txt",
+      "essay_sha256": "f402023841e1c11156b0632abdaa30dcf23eb7a3d5f8f2e989ec5659cd578a36",
+      "generation_metadata": {
+        "entity": "Transport",
+        "rank": "largest",
+        "official_entity": "Housing"
+      },
+      "essay": "The pie chart breaks down average Canadian household expenditure in 2024 across six spending categories.\n\nOverall, Transport was the largest component of household expenditure, while the remaining categories occupied unequal shares.\n\nFood represented 21% of the budget. Households devoted 17% of expenditure to Transport. Utilities represented 10% of the budget. Households devoted 32% of expenditure to Housing. Households devoted 12% of expenditure to Leisure. Households devoted 8% of expenditure to Other.\n\nThis distribution makes it possible to compare major commitments with smaller items of expenditure."
+    },
+    {
+      "case_id": "pie_key_feature_omission_1",
+      "chart_type": "pie",
+      "expected_error": "key_feature_omission",
+      "replicate": 1,
+      "essay_file": "essays/pie_key_feature_omission_1.txt",
+      "essay_sha256": "5fd7f51d762e9e61e2c893d08032f04ae9f9de090dee0348abc2a4f472670cc4",
+      "generation_metadata": {
+        "omitted_entity": "Food"
+      },
+      "essay": "The pie chart breaks down average Canadian household expenditure in 2024 across six spending categories.\n\nOverall, a few categories accounted for substantial portions of the budget, while the remaining shares were more limited.\n\nThe share allocated to Housing was 32%. The share allocated to Leisure was 12%. Households devoted 10% of expenditure to Utilities. Transport represented 17% of the budget. Other represented 8% of the budget.\n\nTogether, the listed components account for the complete household budget shown in the chart."
+    },
+    {
+      "case_id": "pie_key_feature_omission_2",
+      "chart_type": "pie",
+      "expected_error": "key_feature_omission",
+      "replicate": 2,
+      "essay_file": "essays/pie_key_feature_omission_2.txt",
+      "essay_sha256": "924b88f4ddec7c94b64630260c09de710db94dd1ea2028c0c5937b40e5251ba1",
+      "generation_metadata": {
+        "omitted_entity": "Other"
+      },
+      "essay": "The circular chart presents the percentage distribution of Canadian household expenditure among six categories in 2024.\n\nOverall, the household budget was divided into clearly unequal shares rather than being distributed evenly.\n\nHouseholds devoted 17% of expenditure to Transport. The share allocated to Utilities was 10%. Households devoted 21% of expenditure to Food. The share allocated to Leisure was 12%. The share allocated to Housing was 32%.\n\nTogether, the listed components account for the complete household budget shown in the chart."
+    },
+    {
+      "case_id": "pie_key_feature_omission_3",
+      "chart_type": "pie",
+      "expected_error": "key_feature_omission",
+      "replicate": 3,
+      "essay_file": "essays/pie_key_feature_omission_3.txt",
+      "essay_sha256": "99976ef8962be61ce745b6b8eef54ef5ccba5ea6d8ce3c2386eda16ed7af1f7c",
+      "generation_metadata": {
+        "omitted_entity": "Leisure"
+      },
+      "essay": "The chart shows how an average household in Canada allocated its spending in 2024.\n\nOverall, a few categories accounted for substantial portions of the budget, while the remaining shares were more limited.\n\nHouseholds devoted 17% of expenditure to Transport. The share allocated to Other was 8%. The share allocated to Utilities was 10%. Households devoted 21% of expenditure to Food. Housing represented 32% of the budget.\n\nTogether, the listed components account for the complete household budget shown in the chart."
+    }
+  ]
+}

@@ -42,17 +42,6 @@ class SpatialSampleEssayTests(unittest.TestCase):
         Image.new("RGB", (640, 480), "white").save(path)
         return path
 
-    def complete_flowchart(self) -> dict:
-        return {
-            "nodes": [
-                {"type": "introduction"},
-                {"type": "overview"},
-                {"type": "key_details_a"},
-                {"type": "key_details_b"},
-            ],
-            "edges": [],
-        }
-
     def test_process_image_is_sent_to_qwen_vision(self):
         essay = " ".join(["process"] * 160)
         completions = FakeCompletions(essay)
@@ -64,7 +53,6 @@ class SpatialSampleEssayTests(unittest.TestCase):
                 image_path=self.make_image(folder),
                 chart_type="process",
                 requirement="Describe the glass recycling process.",
-                flowchart=self.complete_flowchart(),
                 client=client,
             )
 
@@ -75,20 +63,21 @@ class SpatialSampleEssayTests(unittest.TestCase):
         self.assertIn("process diagram", content[0]["text"])
         self.assertTrue(content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
 
-    def test_incomplete_plan_returns_structure_choice_before_model_call(self):
-        completions = FakeCompletions("unused")
+    def test_spatial_sample_essay_uses_standard_structure_without_a_plan(self):
+        essay = " ".join(["map"] * 150)
+        completions = FakeCompletions(essay)
         client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
         with tempfile.TemporaryDirectory() as folder:
             response = generate_spatial_sample_essay(
                 image_path=self.make_image(folder),
                 chart_type="map",
                 requirement="Describe the changes.",
-                flowchart={"nodes": [{"type": "presentation"}], "edges": []},
                 client=client,
             )
 
-        self.assertTrue(response.requires_choice)
-        self.assertEqual(completions.call_count, 0)
+        self.assertTrue(response.success, response.error)
+        prompt = completions.kwargs["messages"][0]["content"][0]["text"]
+        self.assertIn("paraphrased introduction, a clear overview", prompt)
 
     def test_map_prompt_requests_spatial_change_analysis(self):
         essay = " ".join(["map"] * 150)
@@ -101,7 +90,6 @@ class SpatialSampleEssayTests(unittest.TestCase):
                 image_path=self.make_image(folder),
                 chart_type="map",
                 requirement="Describe the changes to the town.",
-                flowchart=self.complete_flowchart(),
                 client=client,
             )
 
@@ -156,7 +144,6 @@ class SpatialSampleEssayTests(unittest.TestCase):
                         image_path=self.make_image(folder),
                         chart_type=task_type,
                         requirement="Write an IELTS Academic Task 1 report.",
-                        flowchart=self.complete_flowchart(),
                         client=client,
                     )
 

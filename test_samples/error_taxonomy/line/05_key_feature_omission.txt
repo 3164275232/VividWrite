@@ -1,0 +1,7 @@
+The line graph compares average daily passenger numbers on public transport between 2010 and 2020. The figures are shown in millions.
+
+Overall, bus and rail followed contrasting patterns during the period. Bus use became less common, whereas rail attracted a substantially larger number of passengers by the final year.
+
+In 2010, buses carried an average of 1.8 million passengers per day. Bus use gradually changed over the following decade and reached 1.3 million in 2020. Rail recorded 1.1 million passengers in 2010.
+
+By 2020, the rail figure had reached 2.2 million. The relationship between these two modes therefore reversed: bus led rail at the beginning, but rail finished well ahead at the end of the period.

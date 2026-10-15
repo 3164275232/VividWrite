@@ -1,0 +1,7 @@
+The line graph shows average daily use of bus, rail and metro services between 2010 and 2020, in millions of passengers.
+
+Overall, the lines followed contrasting paths, producing a different ordering by the final observation.
+
+Rail opened the period at 1.1 million and closed it at 2.2 million. At the outset, Metro carried 0.8 million passengers and ultimately reached 1.9 million. Bus began with 1.8 million passengers and ended at 1.3 million. The Rail figure in 2014 was 1.2 million. The Metro figure in 2014 was 1.5 million. The Bus figure in 2014 was 1.7 million.
+
+Together, these recorded points show how the balance between the services developed during the decade.
